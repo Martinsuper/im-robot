@@ -11,7 +11,7 @@
 | `npm run build` | 通过 |
 | `cargo fmt --check` | 通过 |
 | `cargo clippy --all-targets --all-features -- -D warnings` | 通过 |
-| `cargo test` | 通过，18 个 Rust 单测 |
+| `cargo test` | 通过，20 个 Rust 单测 |
 | `npm run test:e2e` | 通过，4 个 Web 预览场景 |
 | `npm run tauri dev` | 通过，桌面开发版可启动 |
 
@@ -77,4 +77,6 @@
 - 优化 Markdown：GFM 表格、代码块复制、安全外链和自适应图片。
 - 新增面板 Tab 导航、周期提醒和离线系统 TTS 回复朗读；朗读会跳过 emoji，Web 预览保留 Web Speech API 回退。
 - 面板关闭改为隐藏；如果精灵此前已隐藏，关闭面板会自动恢复精灵，避免失去可见入口。
+- 新增专注模式：15 / 25 / 45 / 60 分钟计时、暂停、继续、结束、完成通知、今日累计，以及 5 / 10 / 15 分钟休息倒计时。
+- 新增受控回复保存：系统保存对话框、扩展名白名单和覆盖前确认。
 - 新增 Playwright Web 预览 E2E 和跨平台桌面冒烟清单。

@@ -13,6 +13,7 @@ test("bubble preview exposes text, file and screenshot entry points", async ({ p
   await expect(page.getByRole("button", { name: "选择文件" })).toBeVisible();
   await expect(page.getByRole("button", { name: "截图提问" })).toBeVisible();
   await expect(page.getByRole("button", { name: "朗读回复" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存回复" })).toBeVisible();
 });
 
 test("panel preview exposes settings and network update entry point", async ({ page }) => {
@@ -24,6 +25,10 @@ test("panel preview exposes settings and network update entry point", async ({ p
   await expect(page.getByText("截图时按需申请")).toBeVisible();
   await page.getByRole("button", { name: "提醒" }).click();
   await expect(page.getByLabel("重复规则")).toHaveValue("none");
+  await expect(page.getByRole("heading", { name: "专注模式" })).toBeVisible();
+  await expect(page.getByLabel("专注时长")).toHaveValue("25");
+  await page.getByRole("button", { name: "历史" }).click();
+  await expect(page.getByText("今日专注")).toBeVisible();
 });
 
 test("capture preview exposes selection controls", async ({ page }) => {

@@ -439,6 +439,14 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 .reminder-list span { color: #98a3aa; font-size: 9px; }
 .reminder-list button { flex: 0 0 auto; min-height: 23px; color: #58796d; background: #e6eeea; }
 .reminder-error { margin: 6px 0 0; color: #b85a51; font-size: 10px; line-height: 1.35; }
+.focus-card { margin-bottom: 10px; border-bottom: 1px solid rgba(61, 83, 94, .08); padding-bottom: 10px; }
+.focus-card .section-heading strong { color: var(--panel-accent); font-size: 15px; font-variant-numeric: tabular-nums; }
+.focus-controls { display: flex; flex-wrap: wrap; gap: 5px; }
+.focus-controls select, .focus-controls button { min-height: 28px; border-radius: 7px; padding: 0 8px; font-size: 10px; }
+.focus-controls select { flex: 1; border: 1px solid rgba(61, 83, 94, .12); color: #526476; background: #fff; }
+.focus-controls button { border: 0; color: #fff; background: #58796d; font-weight: 800; }
+.focus-summary { display: flex; justify-content: space-between; margin-bottom: 8px; border-radius: 8px; padding: 8px; color: #81908c; background: #f6f8f6; font-size: 10px; }
+.focus-summary strong { color: var(--panel-accent); }
 .permission-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; }
 .permission-list div { display: grid; gap: 2px; border-radius: 8px; padding: 7px; background: #f6f8f6; font-size: 10px; }
 .permission-list span { color: #8a989c; }

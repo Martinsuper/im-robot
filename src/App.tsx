@@ -15,7 +15,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { initialPetState, reducePetState } from "./features/pet/petState";
 import ReactMarkdown from "react-markdown";
@@ -184,6 +184,12 @@ function PetWindow() {
       if (event.payload.type === "ambient-nudge") {
         showTransient({ type: "AMBIENT_NUDGE" }, 1800);
       }
+      if (event.payload.type === "focus-started") {
+        dispatch({ type: "WORK_STARTED" });
+      }
+      if (event.payload.type === "focus-completed") {
+        showTransient({ type: "CHAT_COMPLETED" }, 2600);
+      }
     });
 
     return () => {
@@ -294,6 +300,7 @@ function BubbleWindow() {
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speechError, setSpeechError] = useState("");
+  const [saveError, setSaveError] = useState("");
   const [requestId, setRequestId] = useState<string>();
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
@@ -520,6 +527,28 @@ function BubbleWindow() {
     setScreenshot(undefined);
   }
 
+  async function saveResult() {
+    setSaveError("");
+    if (!isTauriRuntime) {
+      setSaveError("桌面版中可保存回复到本地文件。");
+      return;
+    }
+    const path = await save({
+      defaultPath: "piko-response.md",
+      filters: [{ name: "文本文件", extensions: ["txt", "md", "json", "csv", "py", "js", "ts", "html", "css", "rs", "toml", "log"] }],
+    });
+    if (!path) return;
+    try {
+      await runCommand("save_generated_text", { path, content: message, overwrite: false });
+    } catch (error) {
+      if (String(error).includes("目标文件已存在") && window.confirm("目标文件已存在，是否覆盖？")) {
+        await runCommand("save_generated_text", { path, content: message, overwrite: true });
+        return;
+      }
+      setSaveError(String(error));
+    }
+  }
+
   return (
     <main className={`bubble-shell bubble-shell--${theme}`}>
       <header className="bubble-header">
@@ -615,12 +644,16 @@ function BubbleWindow() {
           <button type="button" disabled={!message} onClick={() => void toggleSpeech()}>
             {isSpeaking ? "停止朗读" : "朗读回复"}
           </button>
+          <button type="button" disabled={!message} onClick={() => void saveResult()}>
+            保存回复
+          </button>
           <button type="button" onClick={() => runCommand("open_panel")}>
             打开面板
           </button>
         </div>
       </footer>
       {speechError && <p className="speech-error" role="alert">{speechError}</p>}
+      {saveError && <p className="speech-error" role="alert">{saveError}</p>}
     </main>
   );
 }
@@ -728,6 +761,8 @@ function PanelWindow() {
   const [reminderDueAt, setReminderDueAt] = useState(defaultReminderTime);
   const [reminderRepeat, setReminderRepeat] = useState<ReminderRepeat>("none");
   const [reminderError, setReminderError] = useState("");
+  const [focusMinutes, setFocusMinutes] = useState(25);
+  const [focusState, setFocusState] = useState<FocusSnapshot>(defaultFocusSnapshot);
   const statuses = useMemo(
     () => [
       ["桌面精灵", "在线"],
@@ -751,6 +786,7 @@ function PanelWindow() {
     });
     void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
     void runCommand<Reminder[]>("list_reminders", undefined, []).then(setReminders);
+    void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
     void runCommand<string>("screen_capture_permission_status", undefined, "截图时按需申请").then(
       setScreenCapturePermission,
     );
@@ -768,9 +804,17 @@ function PanelWindow() {
     const unlistenHistory = listen("chat-history-updated", () => {
       void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
     });
+    const unlistenFocus = listen<FocusSnapshot>("focus-updated", (event) => {
+      setFocusState(event.payload);
+    });
+    const refreshFocus = window.setInterval(() => {
+      void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
+    }, 1000);
     return () => {
       void unlisten.then((dispose) => dispose());
       void unlistenHistory.then((dispose) => dispose());
+      void unlistenFocus.then((dispose) => dispose());
+      window.clearInterval(refreshFocus);
     };
   }, []);
 
@@ -861,6 +905,10 @@ function PanelWindow() {
     } catch (error) {
       setReminderError(String(error));
     }
+  }
+
+  async function updateFocus(command: string, args?: Record<string, unknown>) {
+    setFocusState(await runCommand<FocusSnapshot>(command, args, defaultFocusSnapshot));
   }
 
   async function savePreferences() {
@@ -1127,6 +1175,35 @@ function PanelWindow() {
       </section>
 
       <section className={panelSectionClass("reminders")}>
+        <div className="focus-card">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">FOCUS TIMER</p>
+              <h2>{focusState.kind === "break" ? "休息倒计时" : "专注模式"}</h2>
+            </div>
+            <strong>{formatFocusRemaining(focusState.remainingSeconds)}</strong>
+          </div>
+          {focusState.status === "idle" ? (
+            <div className="focus-controls">
+              <select value={focusMinutes} onChange={(event) => setFocusMinutes(Number(event.currentTarget.value))} aria-label="专注时长">
+                {[15, 25, 45, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
+              </select>
+              <button type="button" onClick={() => void updateFocus("start_focus", { minutes: focusMinutes })}>开始专注</button>
+              {[5, 10, 15].map((minutes) => (
+                <button key={minutes} type="button" onClick={() => void updateFocus("start_break", { minutes })}>
+                  休息 {minutes}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="focus-controls">
+              <button type="button" onClick={() => void updateFocus(focusState.status === "paused" ? "resume_focus" : "pause_focus")}>
+                {focusState.status === "paused" ? "继续" : "暂停"}
+              </button>
+              <button type="button" onClick={() => void updateFocus("stop_focus")}>结束</button>
+            </div>
+          )}
+        </div>
         <p className="eyebrow">REMINDERS</p>
         <h2>提醒事项</h2>
         <form className="reminder-form" onSubmit={createReminder}>
@@ -1183,6 +1260,10 @@ function PanelWindow() {
       </section>
 
       <section className={panelSectionClass("history")}>
+        <div className="focus-summary">
+          <span>今日专注</span>
+          <strong>{focusState.todayMinutes} 分钟</strong>
+        </div>
         <div className="section-heading">
           <div>
             <p className="eyebrow">CHAT HISTORY</p>
@@ -1290,7 +1371,23 @@ type ChatEvent =
 type PetVisualEvent =
   | { type: "attachment-ready" }
   | { type: "reminder-fired"; message: string }
-  | { type: "ambient-nudge" };
+  | { type: "ambient-nudge" }
+  | { type: "focus-started" }
+  | { type: "focus-completed" };
+
+interface FocusSnapshot {
+  status: "idle" | "running" | "paused";
+  kind: "focus" | "break";
+  remainingSeconds: number;
+  todayMinutes: number;
+}
+
+const defaultFocusSnapshot: FocusSnapshot = {
+  status: "idle",
+  kind: "focus",
+  remainingSeconds: 0,
+  todayMinutes: 0,
+};
 
 const defaultAiSettings: AiSettings = {
   provider: "openai-compatible",
@@ -1358,6 +1455,12 @@ function formatReminderTime(timestamp: number) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(timestamp * 1000);
+}
+
+function formatFocusRemaining(seconds: number) {
+  const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
+  const remainder = (seconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${remainder}`;
 }
 
 function normalizeCaptureSelection(startX: number, startY: number, endX: number, endY: number) {

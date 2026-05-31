@@ -235,6 +235,7 @@ struct FocusRecord {
 #[serde(rename_all = "camelCase")]
 struct FocusSnapshot {
     status: String,
+    kind: String,
     remaining_seconds: u64,
     today_minutes: u64,
 }
@@ -242,6 +243,7 @@ struct FocusSnapshot {
 #[derive(Clone, Debug)]
 struct ActiveFocus {
     status: String,
+    kind: String,
     end_at: u64,
     remaining_seconds: u64,
     minutes: u64,
@@ -1289,6 +1291,169 @@ fn watch_reminders(app: &AppHandle) {
     });
 }
 
+fn focus_snapshot(app: &AppHandle, focus: &FocusTimer) -> Result<FocusSnapshot, String> {
+    let now = unix_timestamp();
+    let active = focus.0.lock().map_err(|_| "无法读取专注状态".to_string())?;
+    let (status, kind, remaining_seconds) = active
+        .as_ref()
+        .map(|active| {
+            let remaining = if active.status == "running" {
+                active.end_at.saturating_sub(now)
+            } else {
+                active.remaining_seconds
+            };
+            (active.status.clone(), active.kind.clone(), remaining)
+        })
+        .unwrap_or_else(|| ("idle".to_string(), "focus".to_string(), 0));
+    Ok(FocusSnapshot {
+        status,
+        kind,
+        remaining_seconds,
+        today_minutes: today_focus_minutes(&read_focus_records(app), now),
+    })
+}
+
+fn emit_focus_updated(app: &AppHandle, focus: &FocusTimer) {
+    if let Ok(snapshot) = focus_snapshot(app, focus) {
+        let _ = app.emit_to("panel", "focus-updated", snapshot);
+    }
+}
+
+#[tauri::command]
+fn get_focus_state(app: AppHandle, focus: State<'_, FocusTimer>) -> Result<FocusSnapshot, String> {
+    focus_snapshot(&app, &focus)
+}
+
+#[tauri::command]
+fn start_focus(
+    app: AppHandle,
+    focus: State<'_, FocusTimer>,
+    minutes: u64,
+) -> Result<FocusSnapshot, String> {
+    if !matches!(minutes, 15 | 25 | 45 | 60) {
+        return Err("专注时长仅支持 15、25、45 或 60 分钟".to_string());
+    }
+    start_timer(&focus, "focus", minutes)?;
+    let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::FocusStarted);
+    emit_focus_updated(&app, &focus);
+    focus_snapshot(&app, &focus)
+}
+
+fn start_timer(focus: &FocusTimer, kind: &str, minutes: u64) -> Result<(), String> {
+    *focus.0.lock().map_err(|_| "无法更新专注状态".to_string())? = Some(ActiveFocus {
+        status: "running".to_string(),
+        kind: kind.to_string(),
+        end_at: unix_timestamp() + minutes * 60,
+        remaining_seconds: minutes * 60,
+        minutes,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn start_break(
+    app: AppHandle,
+    focus: State<'_, FocusTimer>,
+    minutes: u64,
+) -> Result<FocusSnapshot, String> {
+    if !matches!(minutes, 5 | 10 | 15) {
+        return Err("休息时长仅支持 5、10 或 15 分钟".to_string());
+    }
+    start_timer(&focus, "break", minutes)?;
+    emit_focus_updated(&app, &focus);
+    focus_snapshot(&app, &focus)
+}
+
+#[tauri::command]
+fn pause_focus(app: AppHandle, focus: State<'_, FocusTimer>) -> Result<FocusSnapshot, String> {
+    let now = unix_timestamp();
+    {
+        let mut active = focus.0.lock().map_err(|_| "无法更新专注状态".to_string())?;
+        let active = active
+            .as_mut()
+            .ok_or_else(|| "当前没有专注计时".to_string())?;
+        if active.status == "running" {
+            active.remaining_seconds = active.end_at.saturating_sub(now);
+            active.status = "paused".to_string();
+        }
+    }
+    emit_focus_updated(&app, &focus);
+    focus_snapshot(&app, &focus)
+}
+
+#[tauri::command]
+fn resume_focus(app: AppHandle, focus: State<'_, FocusTimer>) -> Result<FocusSnapshot, String> {
+    {
+        let mut active = focus.0.lock().map_err(|_| "无法更新专注状态".to_string())?;
+        let active = active
+            .as_mut()
+            .ok_or_else(|| "当前没有专注计时".to_string())?;
+        if active.status == "paused" {
+            active.end_at = unix_timestamp() + active.remaining_seconds;
+            active.status = "running".to_string();
+        }
+    }
+    emit_focus_updated(&app, &focus);
+    focus_snapshot(&app, &focus)
+}
+
+#[tauri::command]
+fn stop_focus(app: AppHandle, focus: State<'_, FocusTimer>) -> Result<FocusSnapshot, String> {
+    *focus.0.lock().map_err(|_| "无法更新专注状态".to_string())? = None;
+    emit_focus_updated(&app, &focus);
+    focus_snapshot(&app, &focus)
+}
+
+fn process_focus_timer(app: &AppHandle, focus: &FocusTimer) -> Result<bool, String> {
+    let now = unix_timestamp();
+    let completed = {
+        let mut active = focus.0.lock().map_err(|_| "无法读取专注状态".to_string())?;
+        if active
+            .as_ref()
+            .is_some_and(|active| active.status == "running" && active.end_at <= now)
+        {
+            active.take()
+        } else {
+            None
+        }
+    };
+    let Some(completed) = completed else {
+        return Ok(false);
+    };
+
+    if completed.kind == "focus" {
+        let mut records = read_focus_records(app);
+        records.push(FocusRecord {
+            completed_at: now,
+            minutes: completed.minutes,
+        });
+        persist_focus_records(app, &records)?;
+    }
+    let message = if completed.kind == "break" {
+        "休息结束，可以开始下一轮专注了。"
+    } else {
+        "专注结束，休息一下吧。"
+    };
+    let _ = app
+        .notification()
+        .builder()
+        .title("Piko 专注")
+        .body(message)
+        .show();
+    let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::FocusCompleted);
+    emit_focus_updated(app, focus);
+    Ok(true)
+}
+
+fn watch_focus_timer(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || loop {
+        let focus = app.state::<FocusTimer>();
+        let _ = process_focus_timer(&app, &focus);
+        thread::sleep(Duration::from_secs(1));
+    });
+}
+
 fn watch_ambient_nudges(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || loop {
@@ -1303,6 +1468,28 @@ fn watch_ambient_nudges(app: &AppHandle) {
             let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::AmbientNudge);
         }
     });
+}
+
+fn validate_save_path(path: &Path) -> Result<(), String> {
+    const ALLOWED_EXTENSIONS: [&str; 12] = [
+        "txt", "md", "json", "csv", "py", "js", "ts", "html", "css", "rs", "toml", "log",
+    ];
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|extension| ALLOWED_EXTENSIONS.contains(&extension.as_str()))
+        .ok_or_else(|| "不支持该文件类型".to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn save_generated_text(path: String, content: String, overwrite: bool) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    validate_save_path(&path)?;
+    if path.exists() && !overwrite {
+        return Err("目标文件已存在，需要确认覆盖".to_string());
+    }
+    fs::write(path, content).map_err(|error| format!("保存文件失败：{error}"))
 }
 
 fn read_text_attachment(path: &Path) -> Result<(TextAttachment, AttachmentPreview), String> {
@@ -1844,6 +2031,7 @@ pub fn run() {
         .manage(ChatRequests::default())
         .manage(ChatContext::default())
         .manage(LocalTts::default())
+        .manage(FocusTimer::default())
         .manage(TextAttachmentStore::default())
         .manage(ScreenCaptureStore::default())
         .plugin(tauri_plugin_opener::init())
@@ -1865,6 +2053,7 @@ pub fn run() {
             enable_pet_background_drag(app.handle());
             enable_bubble_background_drag(app.handle());
             watch_reminders(app.handle());
+            watch_focus_timer(app.handle());
             watch_ambient_nudges(app.handle());
             Ok(())
         })
@@ -1887,11 +2076,18 @@ pub fn run() {
             clear_chat_history,
             speak_local_text,
             stop_local_speech,
+            get_focus_state,
+            start_focus,
+            start_break,
+            pause_focus,
+            resume_focus,
+            stop_focus,
             list_reminders,
             create_reminder,
             delete_reminder,
             prepare_text_attachment,
             clear_text_attachment,
+            save_generated_text,
             update_quiet_mode,
             update_preferences,
             update_ai_settings,
@@ -1910,8 +2106,9 @@ mod tests {
     use super::{
         append_session_chat_history, build_attachment_prompt, collect_due_reminders,
         extract_chat_deltas, monitor_contains, next_repeat_due, normalize_base_url,
-        read_text_attachment, should_bypass_system_proxy, text_for_speech, version_parts,
-        AppSettings, ChatEvent, ChatHistoryEntry, Reminder, TextAttachment,
+        read_text_attachment, should_bypass_system_proxy, text_for_speech, today_focus_minutes,
+        validate_save_path, version_parts, AppSettings, ChatEvent, ChatHistoryEntry, FocusRecord,
+        Reminder, TextAttachment,
     };
     use std::{
         fs,
@@ -1944,6 +2141,34 @@ mod tests {
             text_for_speech("完成啦 🎉 继续处理 👩🏽‍💻，保留中文和标点。"),
             "完成啦  继续处理 ，保留中文和标点。"
         );
+    }
+
+    #[test]
+    fn validates_generated_text_save_extensions() {
+        assert!(validate_save_path(PathBuf::from("answer.md").as_path()).is_ok());
+        assert!(validate_save_path(PathBuf::from("script.rs").as_path()).is_ok());
+        assert!(validate_save_path(PathBuf::from("archive.zip").as_path()).is_err());
+        assert!(validate_save_path(PathBuf::from("README").as_path()).is_err());
+    }
+
+    #[test]
+    fn sums_only_today_completed_focus_minutes() {
+        let records = vec![
+            FocusRecord {
+                completed_at: 86_400,
+                minutes: 25,
+            },
+            FocusRecord {
+                completed_at: 86_500,
+                minutes: 15,
+            },
+            FocusRecord {
+                completed_at: 172_800,
+                minutes: 60,
+            },
+        ];
+
+        assert_eq!(today_focus_minutes(&records, 86_600), 40);
     }
 
     #[cfg(target_os = "macos")]

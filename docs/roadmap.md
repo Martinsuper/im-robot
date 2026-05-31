@@ -374,6 +374,8 @@ fn execute_tool(call: ToolCall) -> Result<Value, String>;
 
 ### 2.5 番茄钟 / 专注模式
 
+**状态：** ✅ 已完成（2026-06-01）。
+
 **问题：** 用户希望用 Piko 帮助管理专注时间。
 
 **实现方案：**
@@ -402,6 +404,8 @@ fn execute_tool(call: ToolCall) -> Result<Value, String>;
 ---
 
 ### 2.6 文件写入
+
+**状态：** ✅ 已完成（2026-06-01）。
 
 **问题：** AI 生成的代码、文章等内容无法直接保存为文件。
 
