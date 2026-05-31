@@ -99,12 +99,24 @@ function PetWindow() {
     dispatch({ type: isResting ? "WAKE" : "REST" });
   }
 
+  const DRAG_THRESHOLD_PX = 4;
+  const [dragOrigin, setDragOrigin] = useState<{ x: number; y: number } | null>(null);
+
   return (
     <main
       className="pet-stage"
       aria-label={`桌面精灵 ${companionName}`}
+      onMouseDown={(event) => {
+        if (!isTauriRuntime) return;
+        setDragOrigin({ x: event.screenX, y: event.screenY });
+      }}
+      onMouseUp={() => setDragOrigin(null)}
       onMouseMove={(event) => {
         if ((event.buttons & 1) === 0 || !isTauriRuntime) return;
+        if (!dragOrigin) return;
+        const dx = event.screenX - dragOrigin.x;
+        const dy = event.screenY - dragOrigin.y;
+        if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
         event.preventDefault();
         void runCommand("move_pet", { x: event.screenX - 78, y: event.screenY - 70 });
       }}

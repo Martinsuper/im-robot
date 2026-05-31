@@ -182,7 +182,7 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   border-color: rgba(87, 121, 109, .48);
   box-shadow: 0 0 0 3px rgba(87, 121, 109, .08);
 }
-.prompt-form input { min-height: 34px; border-radius: 10px; padding: 0 10px; font-size: 11px; }
+.prompt-form input { min-height: 34px; border-radius: 10px; padding: 0 10px; font-size: 11px; flex: 1 1 auto; }
 .prompt-form button, .section-heading button, .settings-form > button {
   border: 0;
   color: #fff;
@@ -191,7 +191,7 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   font-weight: 800;
   transition: background 160ms ease, opacity 160ms ease;
 }
-.prompt-form button { min-height: 34px; border-radius: 10px; padding: 0 13px; }
+.prompt-form button { min-height: 34px; border-radius: 10px; padding: 0 13px; flex: 0 0 auto; white-space: nowrap; }
 .prompt-form button:hover, .section-heading button:hover, .settings-form > button:hover { background: #48675c; }
 .prompt-form button:disabled, .section-heading button:disabled, .settings-form > button:disabled { cursor: not-allowed; opacity: .42; }
 .bubble-footer { align-items: center; color: #98a3aa; font-size: 9px; }
