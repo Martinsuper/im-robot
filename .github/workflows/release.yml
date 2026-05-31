@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     strategy:
       fail-fast: false
       matrix:
@@ -55,27 +55,50 @@ jobs:
       - name: Build release
         run: npm run tauri build -- --target ${{ matrix.target }}
 
-      - name: Upload macOS artifacts
+      - name: Collect macOS artifacts
         if: runner.os == 'macOS'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+        run: |
+          mkdir -p upload
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg upload/ 2>/dev/null || true
+          cp -r src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app upload/ 2>/dev/null || true
 
-      - name: Upload Windows artifacts
+      - name: Collect Windows artifacts
         if: runner.os == 'Windows'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
-            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path upload
+          Copy-Item src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi upload/ -ErrorAction SilentlyContinue
+          Copy-Item src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe upload/ -ErrorAction SilentlyContinue
 
-      - name: Upload Linux artifacts
+      - name: Collect Linux artifacts
         if: runner.os == 'Linux'
+        run: |
+          mkdir -p upload
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb upload/ 2>/dev/null || true
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm upload/ 2>/dev/null || true
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage upload/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: upload/
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
-            src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm
-            src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: release-assets/**/*
+          generate_release_notes: true
