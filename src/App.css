@@ -104,7 +104,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .bubble-shell, .panel-shell { min-height: 100vh; color: #263449; background: #f7f8f5; }
 .bubble-shell {
   display: grid;
-  grid-template-rows: auto minmax(36px, 1fr) auto auto;
+  grid-template-rows: auto minmax(36px, 1fr) auto auto auto;
   gap: 9px;
   max-height: 100vh;
   padding: 11px 12px 10px;
@@ -139,6 +139,37 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 }
 
 .bubble-message { min-height: 0; margin: 0; color: #526476; font-size: 12px; line-height: 1.5; overflow-y: auto; white-space: pre-wrap; }
+.attachment-dropzone {
+  display: grid;
+  gap: 5px;
+  border: 1px dashed rgba(87, 121, 109, .28);
+  border-radius: 9px;
+  padding: 7px 8px;
+  color: #81908c;
+  background: rgba(238, 243, 233, .46);
+  font-size: 10px;
+  line-height: 1.4;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+.attachment-dropzone.is-dragging { border-color: #58796d; background: #e6eeea; }
+.attachment-dropzone p { margin: 0; }
+.attachment-dropzone > p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.attachment-heading div { display: grid; min-width: 0; gap: 1px; }
+.attachment-heading strong { overflow: hidden; color: #526476; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-heading span { color: #98a3aa; }
+.attachment-heading button, .attachment-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #58796d;
+  background: rgba(255, 255, 255, .72);
+  font-size: 9px;
+  font-weight: 800;
+}
+.attachment-actions { display: flex; gap: 4px; }
+.attachment-actions button.is-active { color: #fff; background: #58796d; }
+.attachment-error { color: #b85a51; }
 .prompt-form { display: flex; gap: 6px; }
 .prompt-form input, .settings-form input, .settings-form select {
   width: 100%;
@@ -168,7 +199,9 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 .bubble-footer button:disabled { cursor: not-allowed; opacity: .4; }
 .bubble-footer__actions { display: flex; align-items: center; gap: 7px; }
 
-.panel-shell { min-height: 100vh; padding: 16px; }
+.panel-shell { --panel-tint: #eef3e9; --panel-accent: #58796d; min-height: 100vh; padding: 16px; }
+.panel-shell--blue { --panel-tint: #e9f3f5; --panel-accent: #4f7e8a; }
+.panel-shell--peach { --panel-tint: #f7ede5; --panel-accent: #a96f58; }
 .panel-header { margin-bottom: 12px; padding: 0 2px; }
 .panel-header p:last-child { max-width: 270px; margin-bottom: 0; color: #81908c; font-size: 11px; line-height: 1.45; }
 .status-pill, .trait-list span {
@@ -190,7 +223,7 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   border: 1px solid rgba(61, 83, 94, .08);
   border-radius: 16px;
   padding: 10px 12px 10px 8px;
-  background: linear-gradient(135deg, #eef3e9, #f7f5ed);
+  background: linear-gradient(135deg, var(--panel-tint), #f7f5ed);
 }
 .companion-card__portrait { height: 118px; overflow: hidden; }
 .companion-card__portrait .pet-sprite-frame { transform: scale(.92); transform-origin: left top; }
@@ -224,6 +257,55 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 .settings-form > button { min-height: 31px; border-radius: 8px; }
 .settings-form > button:disabled { cursor: wait; }
 .connection-status { margin: 0; color: #58796d; font-size: 10px; line-height: 1.3; overflow-wrap: anywhere; }
+.settings-form .setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  color: #687a7b;
+}
+.settings-form .setting-toggle input { width: 14px; min-height: 14px; accent-color: var(--panel-accent); }
+.reminder-form { display: grid; gap: 5px; }
+.reminder-form > input, .reminder-form div input {
+  width: 100%;
+  min-height: 29px;
+  border: 1px solid rgba(61, 83, 94, .12);
+  border-radius: 7px;
+  padding: 0 7px;
+  color: #34495e;
+  background: #fff;
+  font-size: 11px;
+}
+.reminder-form div { display: grid; grid-template-columns: 1fr auto; gap: 5px; }
+.reminder-form button, .reminder-list button {
+  border: 0;
+  border-radius: 7px;
+  padding: 0 9px;
+  color: #fff;
+  background: #58796d;
+  font-size: 10px;
+  font-weight: 800;
+}
+.reminder-form button:disabled { cursor: not-allowed; opacity: .42; }
+.reminder-list {
+  display: grid;
+  gap: 4px;
+  max-height: 116px;
+  margin: 7px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.reminder-list li { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-radius: 7px; padding: 7px; background: #f6f8f6; }
+.reminder-list div { display: grid; min-width: 0; gap: 2px; }
+.reminder-list strong { overflow: hidden; color: #526476; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.reminder-list span { color: #98a3aa; font-size: 9px; }
+.reminder-list button { flex: 0 0 auto; min-height: 23px; color: #58796d; background: #e6eeea; }
+.reminder-error { margin: 6px 0 0; color: #b85a51; font-size: 10px; line-height: 1.35; }
+.permission-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; }
+.permission-list div { display: grid; gap: 2px; border-radius: 8px; padding: 7px; background: #f6f8f6; font-size: 10px; }
+.permission-list span { color: #8a989c; }
+.permission-list strong { color: var(--panel-accent); font-size: 10px; overflow-wrap: anywhere; }
 
 @keyframes sprite-frames {
   from { background-position: 0 calc(-208px * var(--sprite-row)); }

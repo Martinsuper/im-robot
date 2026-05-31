@@ -27,7 +27,7 @@
         "label": "bubble",
         "title": "Piko Quick Chat",
         "width": 360,
-        "height": 214,
+        "height": 272,
         "resizable": false,
         "decorations": false,
         "transparent": true,

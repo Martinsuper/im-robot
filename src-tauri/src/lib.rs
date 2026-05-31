@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -16,12 +16,16 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, State, WindowEvent,
 };
+use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
 
 const PET_MARGIN: i32 = 16;
 const PET_MOVE_DEBOUNCE_MS: u64 = 220;
 const KEYRING_SERVICE: &str = "com.duanluyao.imrobot";
 const KEYRING_ACCOUNT: &str = "provider-api-key";
+const MAX_TEXT_ATTACHMENT_BYTES: u64 = 1024 * 1024;
+const MAX_TEXT_ATTACHMENT_PREVIEW_CHARS: usize = 240;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct PetPosition {
@@ -33,6 +37,12 @@ struct PetPosition {
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
     quiet_mode: String,
+    #[serde(default = "default_companion_name")]
+    companion_name: String,
+    #[serde(default = "default_theme")]
+    theme: String,
+    #[serde(default)]
+    sensing_paused: bool,
     #[serde(default)]
     ai: AiSettings,
     #[serde(default)]
@@ -58,6 +68,14 @@ struct AiSettingsInput {
     temperature: f32,
     timeout_seconds: u64,
     api_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreferencesInput {
+    companion_name: String,
+    theme: String,
+    sensing_paused: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -105,14 +123,59 @@ enum ChatEvent {
 #[derive(Default)]
 struct ChatRequests(Mutex<HashMap<String, Arc<AtomicBool>>>);
 
+#[derive(Clone, Debug)]
+struct TextAttachment {
+    display_name: String,
+    content: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AttachmentPreview {
+    display_name: String,
+    byte_size: u64,
+    char_count: usize,
+    preview: String,
+}
+
+#[derive(Default)]
+struct TextAttachmentStore(Mutex<Option<TextAttachment>>);
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Reminder {
+    id: String,
+    title: String,
+    due_at: u64,
+    status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReminderInput {
+    title: String,
+    due_at: u64,
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             quiet_mode: "balanced".to_string(),
+            companion_name: default_companion_name(),
+            theme: default_theme(),
+            sensing_paused: false,
             ai: AiSettings::default(),
             has_api_key: false,
         }
     }
+}
+
+fn default_companion_name() -> String {
+    "Piko".to_string()
+}
+
+fn default_theme() -> String {
+    "sage".to_string()
 }
 
 impl Default for AiSettings {
@@ -148,6 +211,13 @@ fn chat_history_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|directory| directory.join("chat-history.json"))
 }
 
+fn reminders_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("reminders.json"))
+}
+
 fn read_chat_history(app: &AppHandle) -> Vec<ChatHistoryEntry> {
     chat_history_path(app)
         .and_then(|path| fs::read_to_string(path).ok())
@@ -173,6 +243,41 @@ fn append_chat_history(app: &AppHandle, entry: ChatHistoryEntry) -> Result<(), S
     history.insert(0, entry);
     history.truncate(MAX_CHAT_HISTORY);
     persist_chat_history(app, &history)
+}
+
+fn read_reminders(app: &AppHandle) -> Vec<Reminder> {
+    reminders_path(app)
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), String> {
+    let path = reminders_path(app).ok_or_else(|| "无法获取提醒记录路径".to_string())?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| "无法获取提醒记录目录".to_string())?;
+    let json = serde_json::to_string(reminders).map_err(|error| error.to_string())?;
+
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    fs::write(path, json).map_err(|error| error.to_string())
+}
+
+fn unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn reminder_id() -> String {
+    format!(
+        "reminder-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    )
 }
 
 fn read_settings(app: &AppHandle) -> AppSettings {
@@ -484,6 +589,157 @@ fn clear_chat_history(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn list_reminders(app: AppHandle) -> Vec<Reminder> {
+    let mut reminders = read_reminders(&app);
+    reminders.sort_by_key(|reminder| reminder.due_at);
+    reminders
+}
+
+#[tauri::command]
+fn create_reminder(app: AppHandle, input: ReminderInput) -> Result<Reminder, String> {
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err("提醒内容不能为空".to_string());
+    }
+    if title.chars().count() > 120 {
+        return Err("提醒内容不能超过 120 个字符".to_string());
+    }
+    if input.due_at <= unix_timestamp() {
+        return Err("提醒时间必须晚于当前时间".to_string());
+    }
+
+    let reminder = Reminder {
+        id: reminder_id(),
+        title: title.to_string(),
+        due_at: input.due_at,
+        status: "pending".to_string(),
+    };
+    let mut reminders = read_reminders(&app);
+    reminders.push(reminder.clone());
+    persist_reminders(&app, &reminders)?;
+    Ok(reminder)
+}
+
+#[tauri::command]
+fn delete_reminder(app: AppHandle, id: String) -> Result<(), String> {
+    let mut reminders = read_reminders(&app);
+    let previous_len = reminders.len();
+    reminders.retain(|reminder| reminder.id != id);
+    if reminders.len() == previous_len {
+        return Err("未找到该提醒".to_string());
+    }
+    persist_reminders(&app, &reminders)
+}
+
+fn collect_due_reminders(reminders: &mut [Reminder], now: u64) -> Vec<Reminder> {
+    let mut due = Vec::new();
+    for reminder in reminders {
+        if reminder.status == "pending" && reminder.due_at <= now {
+            reminder.status = "triggered".to_string();
+            due.push(reminder.clone());
+        }
+    }
+    due
+}
+
+fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String> {
+    let now = unix_timestamp();
+    let mut reminders = read_reminders(app);
+    let due = collect_due_reminders(&mut reminders, now);
+    if due.is_empty() {
+        return Ok(due);
+    }
+
+    persist_reminders(app, &reminders)?;
+    for reminder in &due {
+        let _ = app
+            .notification()
+            .builder()
+            .title("Piko 提醒")
+            .body(&reminder.title)
+            .show();
+    }
+    let _ = app.emit_to("panel", "reminders-updated", ());
+    Ok(due)
+}
+
+fn watch_reminders(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || loop {
+        let _ = process_due_reminders(&app);
+        thread::sleep(Duration::from_secs(1));
+    });
+}
+
+fn read_text_attachment(path: &Path) -> Result<(TextAttachment, AttachmentPreview), String> {
+    const ALLOWED_EXTENSIONS: [&str; 5] = ["txt", "md", "json", "csv", "log"];
+
+    let metadata = fs::metadata(path).map_err(|_| "无法读取该文件".to_string())?;
+    if !metadata.is_file() {
+        return Err("请拖入单个文本文件".to_string());
+    }
+    if metadata.len() > MAX_TEXT_ATTACHMENT_BYTES {
+        return Err("文件过大，请选择不超过 1 MiB 的文本文件".to_string());
+    }
+
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|extension| ALLOWED_EXTENSIONS.contains(&extension.as_str()))
+        .ok_or_else(|| "仅支持 .txt、.md、.json、.csv 和 .log 文件".to_string())?;
+    let display_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| "无法识别文件名".to_string())?
+        .to_string();
+    let content = fs::read_to_string(path).map_err(|_| "文件不是有效的 UTF-8 文本".to_string())?;
+    let char_count = content.chars().count();
+    let mut preview = content
+        .chars()
+        .take(MAX_TEXT_ATTACHMENT_PREVIEW_CHARS)
+        .collect::<String>();
+    if char_count > MAX_TEXT_ATTACHMENT_PREVIEW_CHARS {
+        preview.push('…');
+    }
+
+    Ok((
+        TextAttachment {
+            display_name: display_name.clone(),
+            content,
+        },
+        AttachmentPreview {
+            display_name,
+            byte_size: metadata.len(),
+            char_count,
+            preview,
+        },
+    ))
+}
+
+#[tauri::command]
+fn prepare_text_attachment(
+    attachments: State<'_, TextAttachmentStore>,
+    path: String,
+) -> Result<AttachmentPreview, String> {
+    let (attachment, preview) = read_text_attachment(Path::new(&path))?;
+    *attachments
+        .0
+        .lock()
+        .map_err(|_| "无法保存附件状态".to_string())? = Some(attachment);
+    Ok(preview)
+}
+
+#[tauri::command]
+fn clear_text_attachment(attachments: State<'_, TextAttachmentStore>) -> Result<(), String> {
+    *attachments
+        .0
+        .lock()
+        .map_err(|_| "无法清除附件状态".to_string())? = None;
+    Ok(())
+}
+
+#[tauri::command]
 fn update_quiet_mode(app: AppHandle, quiet_mode: String) -> Result<AppSettings, String> {
     if !["active", "balanced", "minimal"].contains(&quiet_mode.as_str()) {
         return Err("Unsupported quiet mode".to_string());
@@ -491,6 +747,27 @@ fn update_quiet_mode(app: AppHandle, quiet_mode: String) -> Result<AppSettings, 
 
     let mut settings = read_settings(&app);
     settings.quiet_mode = quiet_mode;
+    persist_settings(&app, &settings);
+    Ok(settings)
+}
+
+#[tauri::command]
+fn update_preferences(app: AppHandle, input: PreferencesInput) -> Result<AppSettings, String> {
+    let companion_name = input.companion_name.trim();
+    if companion_name.is_empty() {
+        return Err("精灵名称不能为空".to_string());
+    }
+    if companion_name.chars().count() > 24 {
+        return Err("精灵名称不能超过 24 个字符".to_string());
+    }
+    if !["sage", "blue", "peach"].contains(&input.theme.as_str()) {
+        return Err("不支持的主题色".to_string());
+    }
+
+    let mut settings = read_settings(&app);
+    settings.companion_name = companion_name.to_string();
+    settings.theme = input.theme;
+    settings.sensing_paused = input.sensing_paused;
     persist_settings(&app, &settings);
     Ok(settings)
 }
@@ -572,6 +849,7 @@ async fn stream_chat(
     app: &AppHandle,
     request_id: &str,
     prompt: &str,
+    history_prompt: &str,
     cancelled: &AtomicBool,
 ) -> Result<bool, String> {
     let settings = read_settings(app);
@@ -654,7 +932,7 @@ async fn stream_chat(
         app,
         ChatHistoryEntry {
             id: request_id.to_string(),
-            prompt: prompt.trim().to_string(),
+            prompt: history_prompt.to_string(),
             response: assistant_response,
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -676,13 +954,68 @@ async fn stream_chat(
     Ok(false)
 }
 
+fn build_attachment_prompt(
+    prompt: &str,
+    attachment_action: Option<&str>,
+    attachment: Option<&TextAttachment>,
+) -> Result<(String, String), String> {
+    let prompt = prompt.trim();
+    let Some(action) = attachment_action else {
+        if prompt.is_empty() {
+            return Err("问题不能为空".to_string());
+        }
+        return Ok((prompt.to_string(), prompt.to_string()));
+    };
+    let attachment = attachment.ok_or_else(|| "请先拖入一个文本文件".to_string())?;
+    let instruction = match action {
+        "summarize" => "请总结附件内容，先给出要点，再给出简短结论。",
+        "translate" => "请将附件内容翻译成中文；如果原文已经是中文，则翻译成英文。",
+        "explain" => "请解释附件内容，指出结构、关键概念和需要注意的地方。",
+        _ => return Err("不支持的附件处理动作".to_string()),
+    };
+    let user_note = if prompt.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n用户补充要求：{prompt}")
+    };
+    Ok((
+        format!(
+            "{instruction}\n\n附件名称：{}\n\n附件正文：\n{}{}",
+            attachment.display_name, attachment.content, user_note
+        ),
+        format!(
+            "[附件{}] {}",
+            attachment_action_label(action),
+            attachment.display_name
+        ),
+    ))
+}
+
+fn attachment_action_label(action: &str) -> &str {
+    match action {
+        "summarize" => "总结",
+        "translate" => "翻译",
+        "explain" => "解释",
+        _ => "处理",
+    }
+}
+
 #[tauri::command]
 async fn chat_start(
     app: AppHandle,
     requests: State<'_, ChatRequests>,
+    attachments: State<'_, TextAttachmentStore>,
     request_id: String,
     prompt: String,
+    attachment_action: Option<String>,
 ) -> Result<(), String> {
+    let attachment = attachments
+        .0
+        .lock()
+        .map_err(|_| "无法读取附件状态".to_string())?
+        .clone();
+    let (model_prompt, history_prompt) =
+        build_attachment_prompt(&prompt, attachment_action.as_deref(), attachment.as_ref())?;
     let cancelled = Arc::new(AtomicBool::new(false));
     requests
         .0
@@ -690,7 +1023,14 @@ async fn chat_start(
         .map_err(|_| "无法记录当前生成任务".to_string())?
         .insert(request_id.clone(), Arc::clone(&cancelled));
 
-    let result = stream_chat(&app, &request_id, &prompt, &cancelled).await;
+    let result = stream_chat(
+        &app,
+        &request_id,
+        &model_prompt,
+        &history_prompt,
+        &cancelled,
+    )
+    .await;
     if let Ok(mut active) = requests.0.lock() {
         active.remove(&request_id);
     }
@@ -785,7 +1125,13 @@ fn configure_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error:
 pub fn run() {
     tauri::Builder::default()
         .manage(ChatRequests::default())
+        .manage(TextAttachmentStore::default())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             configure_tray(app)?;
             configure_global_shortcut(app)?;
@@ -793,6 +1139,7 @@ pub fn run() {
             restore_pet_position(app.handle());
             watch_pet_position(app.handle());
             enable_pet_background_drag(app.handle());
+            watch_reminders(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -804,7 +1151,13 @@ pub fn run() {
             get_settings,
             list_chat_history,
             clear_chat_history,
+            list_reminders,
+            create_reminder,
+            delete_reminder,
+            prepare_text_attachment,
+            clear_text_attachment,
             update_quiet_mode,
+            update_preferences,
             update_ai_settings,
             list_models,
             chat_start,
@@ -817,8 +1170,14 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_chat_deltas, monitor_contains, normalize_base_url, should_bypass_system_proxy,
-        AppSettings, ChatEvent,
+        build_attachment_prompt, collect_due_reminders, extract_chat_deltas, monitor_contains,
+        normalize_base_url, read_text_attachment, should_bypass_system_proxy, AppSettings,
+        ChatEvent, Reminder, TextAttachment,
+    };
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
     };
     use tauri::{PhysicalPosition, PhysicalSize};
 
@@ -842,7 +1201,11 @@ mod tests {
 
     #[test]
     fn defaults_to_balanced_quiet_mode() {
-        assert_eq!(AppSettings::default().quiet_mode, "balanced");
+        let settings = AppSettings::default();
+        assert_eq!(settings.quiet_mode, "balanced");
+        assert_eq!(settings.companion_name, "Piko");
+        assert_eq!(settings.theme, "sage");
+        assert!(!settings.sensing_paused);
     }
 
     #[test]
@@ -882,5 +1245,103 @@ mod tests {
 
         assert_eq!(json["type"], "completed");
         assert_eq!(json["requestId"], "request-1");
+    }
+
+    #[test]
+    fn prepares_a_text_attachment_preview_without_exposing_its_path() {
+        let path = temp_attachment_path("md");
+        fs::write(&path, "第一行\n第二行").expect("fixture should be writable");
+
+        let (attachment, preview) =
+            read_text_attachment(&path).expect("markdown attachment should be accepted");
+
+        assert_eq!(attachment.content, "第一行\n第二行");
+        assert_eq!(
+            preview.display_name,
+            path.file_name().unwrap().to_string_lossy()
+        );
+        assert_eq!(preview.char_count, 7);
+        assert!(!preview
+            .preview
+            .contains(path.parent().unwrap().to_string_lossy().as_ref()));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_an_unsupported_attachment_extension() {
+        let path = temp_attachment_path("png");
+        fs::write(&path, "not really an image").expect("fixture should be writable");
+
+        assert!(read_text_attachment(&path).is_err());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_an_attachment_larger_than_one_mibibyte() {
+        let path = temp_attachment_path("txt");
+        fs::write(&path, vec![b'a'; 1024 * 1024 + 1]).expect("fixture should be writable");
+
+        assert!(read_text_attachment(&path).is_err());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn requires_an_explicit_action_before_including_attachment_content() {
+        let attachment = TextAttachment {
+            display_name: "notes.md".to_string(),
+            content: "private body".to_string(),
+        };
+
+        let (plain_prompt, _) =
+            build_attachment_prompt("hello", None, Some(&attachment)).expect("plain chat works");
+        assert_eq!(plain_prompt, "hello");
+
+        let (attachment_prompt, history_prompt) =
+            build_attachment_prompt("", Some("summarize"), Some(&attachment))
+                .expect("confirmed attachment action works");
+        assert!(attachment_prompt.contains("private body"));
+        assert_eq!(history_prompt, "[附件总结] notes.md");
+    }
+
+    #[test]
+    fn triggers_only_due_pending_reminders_once() {
+        let mut reminders = vec![
+            Reminder {
+                id: "due".to_string(),
+                title: "到期".to_string(),
+                due_at: 9,
+                status: "pending".to_string(),
+            },
+            Reminder {
+                id: "future".to_string(),
+                title: "稍后".to_string(),
+                due_at: 11,
+                status: "pending".to_string(),
+            },
+            Reminder {
+                id: "done".to_string(),
+                title: "完成".to_string(),
+                due_at: 8,
+                status: "triggered".to_string(),
+            },
+        ];
+
+        let due = collect_due_reminders(&mut reminders, 10);
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].id, "due");
+        assert_eq!(reminders[0].status, "triggered");
+        assert!(collect_due_reminders(&mut reminders, 10).is_empty());
+    }
+
+    fn temp_attachment_path(extension: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "piko-attachment-{}-{}.{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+            extension
+        ))
     }
 }

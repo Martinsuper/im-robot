@@ -10,6 +10,8 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { initialPetState, reducePetState } from "./features/pet/petState";
 import "./App.css";
 
@@ -65,7 +67,14 @@ function PetSprite({
 
 function PetWindow() {
   const [petState, dispatch] = useReducer(reducePetState, initialPetState);
+  const [companionName, setCompanionName] = useState("Piko");
   const isResting = petState.mode === "resting";
+
+  useEffect(() => {
+    void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
+      setCompanionName(settings.companionName);
+    });
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -93,7 +102,7 @@ function PetWindow() {
   return (
     <main
       className="pet-stage"
-      aria-label="桌面精灵 Piko"
+      aria-label={`桌面精灵 ${companionName}`}
       onMouseMove={(event) => {
         if ((event.buttons & 1) === 0 || !isTauriRuntime) return;
         event.preventDefault();
@@ -138,11 +147,23 @@ function PetWindow() {
 function BubbleWindow() {
   const [prompt, setPrompt] = useState("");
   const [message, setMessage] = useState("你好，我是 Piko。今天想一起完成什么？");
+  const [companionName, setCompanionName] = useState("Piko");
   const [isThinking, setIsThinking] = useState(false);
+  const [attachment, setAttachment] = useState<AttachmentPreview>();
+  const [attachmentAction, setAttachmentAction] = useState<AttachmentAction>("summarize");
+  const [attachmentError, setAttachmentError] = useState("");
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [requestId, setRequestId] = useState<string>();
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
   const previewReplyTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
+      setCompanionName(settings.companionName);
+      setMessage(`你好，我是 ${settings.companionName}。今天想一起完成什么？`);
+    });
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -179,9 +200,37 @@ function BubbleWindow() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+
+    const unlisten = getCurrentWindow().onDragDropEvent((event) => {
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        setIsDraggingFile(true);
+        return;
+      }
+      setIsDraggingFile(false);
+      if (event.payload.type !== "drop") return;
+      if (event.payload.paths.length !== 1) {
+        setAttachmentError("一次只能处理一个文本文件。");
+        return;
+      }
+
+      setAttachmentError("");
+      void runCommand<AttachmentPreview>("prepare_text_attachment", {
+        path: event.payload.paths[0],
+      })
+        .then(setAttachment)
+        .catch((error) => setAttachmentError(String(error)));
+    });
+
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!prompt.trim()) return;
+    if (!prompt.trim() && !attachment) return;
 
     const currentPrompt = prompt.trim();
     const currentRequestId = crypto.randomUUID();
@@ -202,6 +251,7 @@ function BubbleWindow() {
     void runCommand<void>("chat_start", {
       requestId: currentRequestId,
       prompt: currentPrompt,
+      attachmentAction: attachment ? attachmentAction : undefined,
     }).catch((error) => {
       setIsThinking(false);
       setMessage(`模型服务连接失败：${String(error)}`);
@@ -224,13 +274,19 @@ function BubbleWindow() {
     await navigator.clipboard.writeText(message);
   }
 
+  async function clearAttachment() {
+    await runCommand("clear_text_attachment");
+    setAttachment(undefined);
+    setAttachmentError("");
+  }
+
   return (
     <main className="bubble-shell">
       <header className="bubble-header">
         <div className="companion-heading">
           <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
           <div>
-            <p className="eyebrow">PIKO · QUICK CHAT</p>
+            <p className="eyebrow">{companionName.toUpperCase()} · QUICK CHAT</p>
             <h1>{isThinking ? "正在思考..." : "今天想做点什么？"}</h1>
           </div>
         </div>
@@ -239,15 +295,48 @@ function BubbleWindow() {
         </button>
       </header>
       <p className="bubble-message">{message}</p>
+      <section className={`attachment-dropzone${isDraggingFile ? " is-dragging" : ""}`}>
+        {attachment ? (
+          <>
+            <div className="attachment-heading">
+              <div>
+                <strong>{attachment.displayName}</strong>
+                <span>
+                  {formatBytes(attachment.byteSize)} · {attachment.charCount} 字符
+                </span>
+              </div>
+              <button type="button" onClick={() => void clearAttachment()}>
+                移除
+              </button>
+            </div>
+            <p>{attachment.preview || "空文件"}</p>
+            <div className="attachment-actions" aria-label="附件处理方式">
+              {attachmentActionOptions.map(({ label, value }) => (
+                <button
+                  className={attachmentAction === value ? "is-active" : ""}
+                  key={value}
+                  type="button"
+                  onClick={() => setAttachmentAction(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p>{isDraggingFile ? "松开即可读取文本文件" : "拖入 .txt、.md、.json、.csv 或 .log 文件"}</p>
+        )}
+        {attachmentError && <span className="attachment-error">{attachmentError}</span>}
+      </section>
       <form className="prompt-form" onSubmit={submit}>
         <input
           autoFocus
           value={prompt}
           onChange={(event) => setPrompt(event.currentTarget.value)}
-          placeholder="输入问题，或描述一个任务"
+          placeholder={attachment ? "可补充处理要求" : "输入问题，或描述一个任务"}
           aria-label="发送给 Piko 的问题"
         />
-        <button type="submit" disabled={!prompt.trim() || isThinking}>
+        <button type="submit" disabled={(!prompt.trim() && !attachment) || isThinking}>
           发送
         </button>
       </form>
@@ -274,16 +363,27 @@ function BubbleWindow() {
 function PanelWindow() {
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
+  const [companionName, setCompanionName] = useState("Piko");
+  const [theme, setTheme] = useState<Theme>("sage");
+  const [sensingPaused, setSensingPaused] = useState(false);
+  const [autostartEnabled, setAutostartEnabled] = useState(false);
+  const [preferencesStatus, setPreferencesStatus] = useState("");
+  const [notificationPermission, setNotificationPermission] = useState("按需申请");
+  const [updateStatus, setUpdateStatus] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
   const [isTesting, setIsTesting] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [reminderTitle, setReminderTitle] = useState("");
+  const [reminderDueAt, setReminderDueAt] = useState(defaultReminderTime);
+  const [reminderError, setReminderError] = useState("");
   const statuses = useMemo(
     () => [
       ["桌面精灵", "在线"],
       ["AI 对话", connectionStatus],
-      ["文件处理", "规划中"],
-      ["提醒", "规划中"],
+      ["文件处理", "可用"],
+      ["提醒", "可用"],
     ],
     [connectionStatus],
   );
@@ -292,9 +392,27 @@ function PanelWindow() {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
       setQuietMode(settings.quietMode);
       setAiSettings(settings.ai);
+      setCompanionName(settings.companionName);
+      setTheme(settings.theme);
+      setSensingPaused(settings.sensingPaused);
       setConnectionStatus(settings.hasApiKey ? "已配置密钥" : "等待测试");
     });
     void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
+    void runCommand<Reminder[]>("list_reminders", undefined, []).then(setReminders);
+    if (isTauriRuntime) {
+      void isEnabled().then(setAutostartEnabled);
+      void isPermissionGranted().then((granted) => {
+        setNotificationPermission(granted ? "已授权" : "按需申请");
+      });
+    }
+
+    if (!isTauriRuntime) return;
+    const unlisten = listen("reminders-updated", () => {
+      void runCommand<Reminder[]>("list_reminders", undefined, []).then(setReminders);
+    });
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
   }, []);
 
   function updateQuietMode(mode: QuietMode) {
@@ -343,8 +461,80 @@ function PanelWindow() {
     setChatHistory([]);
   }
 
+  async function createReminder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const dueAt = Math.floor(new Date(reminderDueAt).getTime() / 1000);
+    if (!reminderTitle.trim() || !Number.isFinite(dueAt)) return;
+
+    setReminderError("");
+    try {
+      if (isTauriRuntime && !(await isPermissionGranted())) {
+        const permission = await requestPermission();
+        if (permission !== "granted") {
+          setReminderError("未授予通知权限，提醒会保存，但系统可能无法弹出通知。");
+        } else {
+          setNotificationPermission("已授权");
+        }
+      }
+      const reminder = await runCommand<Reminder>(
+        "create_reminder",
+        { input: { title: reminderTitle, dueAt } },
+        {
+          id: crypto.randomUUID(),
+          title: reminderTitle.trim(),
+          dueAt,
+          status: "pending",
+        },
+      );
+      setReminders((current) => [...current, reminder].sort((left, right) => left.dueAt - right.dueAt));
+      setReminderTitle("");
+      setReminderDueAt(defaultReminderTime());
+    } catch (error) {
+      setReminderError(String(error));
+    }
+  }
+
+  async function deleteReminder(id: string) {
+    try {
+      await runCommand("delete_reminder", { id });
+      setReminders((current) => current.filter((reminder) => reminder.id !== id));
+    } catch (error) {
+      setReminderError(String(error));
+    }
+  }
+
+  async function savePreferences() {
+    setPreferencesStatus("");
+    try {
+      const settings = await runCommand<AppSettings>(
+        "update_preferences",
+        { input: { companionName, theme, sensingPaused } },
+        { ...defaultAppSettings, companionName, theme, sensingPaused, ai: aiSettings },
+      );
+      setCompanionName(settings.companionName);
+      setTheme(settings.theme);
+      setSensingPaused(settings.sensingPaused);
+      setPreferencesStatus("已保存");
+    } catch (error) {
+      setPreferencesStatus(String(error));
+    }
+  }
+
+  async function toggleAutostart() {
+    try {
+      if (autostartEnabled) {
+        await disable();
+      } else {
+        await enable();
+      }
+      setAutostartEnabled(!autostartEnabled);
+    } catch (error) {
+      setPreferencesStatus(`开机启动设置失败：${String(error)}`);
+    }
+  }
+
   return (
-    <main className="panel-shell">
+    <main className={`panel-shell panel-shell--${theme}`}>
       <header className="panel-header">
         <div>
           <p className="eyebrow">PIKO · DESKTOP COMPANION</p>
@@ -360,13 +550,38 @@ function PanelWindow() {
         </div>
         <div className="companion-card__copy">
           <p className="eyebrow">NO. 001 · DESKTOP SPIRIT</p>
-          <h2>Piko</h2>
+          <h2>{companionName}</h2>
           <p>像素型桌面精灵。擅长陪伴、对话和处理专注任务。</p>
           <div className="trait-list">
             <span>像素系</span>
             <span>AI 助手</span>
           </div>
         </div>
+      </section>
+
+      <section className="panel-card">
+        <p className="eyebrow">PRIVACY & PERMISSIONS</p>
+        <h2>权限中心</h2>
+        <div className="permission-list">
+          <div><span>通知权限</span><strong>{notificationPermission}</strong></div>
+          <div><span>文件访问</span><strong>仅主动拖入</strong></div>
+          <div><span>屏幕录制</span><strong>截图功能待接入</strong></div>
+          <div><span>主动感知</span><strong>{sensingPaused ? "已暂停" : "未启用持续感知"}</strong></div>
+        </div>
+      </section>
+
+      <section className="panel-card">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">ABOUT</p>
+            <h2>版本信息</h2>
+          </div>
+          <button type="button" onClick={() => setUpdateStatus("尚未配置发布源，当前无法联网检查更新。")}>
+            检查更新
+          </button>
+        </div>
+        <p className="empty-state">Piko Desktop Companion · v0.1.0</p>
+        {updateStatus && <p className="connection-status">{updateStatus}</p>}
       </section>
 
       <section className="panel-card">
@@ -477,6 +692,95 @@ function PanelWindow() {
       </section>
 
       <section className="panel-card">
+        <p className="eyebrow">PREFERENCES</p>
+        <h2>个性化与系统</h2>
+        <div className="settings-form">
+          <label>
+            <span>精灵名称</span>
+            <input
+              value={companionName}
+              maxLength={24}
+              onChange={(event) => setCompanionName(event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>主题色</span>
+            <select value={theme} onChange={(event) => setTheme(event.currentTarget.value as Theme)}>
+              <option value="sage">鼠尾草绿</option>
+              <option value="blue">湖水蓝</option>
+              <option value="peach">暖桃色</option>
+            </select>
+          </label>
+          <label className="setting-toggle">
+            <input
+              type="checkbox"
+              checked={sensingPaused}
+              onChange={(event) => setSensingPaused(event.currentTarget.checked)}
+            />
+            <span>暂停主动感知</span>
+          </label>
+          <label className="setting-toggle">
+            <input
+              type="checkbox"
+              checked={autostartEnabled}
+              onChange={() => void toggleAutostart()}
+            />
+            <span>开机自动启动</span>
+          </label>
+          <button type="button" onClick={() => void savePreferences()}>
+            保存个性化设置
+          </button>
+          {preferencesStatus && <p className="connection-status">{preferencesStatus}</p>}
+        </div>
+      </section>
+
+      <section className="panel-card">
+        <p className="eyebrow">REMINDERS</p>
+        <h2>提醒事项</h2>
+        <form className="reminder-form" onSubmit={createReminder}>
+          <input
+            value={reminderTitle}
+            onChange={(event) => setReminderTitle(event.currentTarget.value)}
+            maxLength={120}
+            placeholder="例如：起来活动一下"
+            aria-label="提醒内容"
+          />
+          <div>
+            <input
+              type="datetime-local"
+              value={reminderDueAt}
+              onChange={(event) => setReminderDueAt(event.currentTarget.value)}
+              aria-label="提醒时间"
+            />
+            <button type="submit" disabled={!reminderTitle.trim() || !reminderDueAt}>
+              添加
+            </button>
+          </div>
+        </form>
+        {reminderError && <p className="reminder-error">{reminderError}</p>}
+        {reminders.length ? (
+          <ul className="reminder-list">
+            {reminders.map((reminder) => (
+              <li key={reminder.id}>
+                <div>
+                  <strong>{reminder.title}</strong>
+                  <span>
+                    {formatReminderTime(reminder.dueAt)} ·{" "}
+                    {reminder.status === "triggered" ? "已提醒" : "等待中"}
+                  </span>
+                </div>
+                <button type="button" onClick={() => void deleteReminder(reminder.id)}>
+                  删除
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-state">暂无提醒。</p>
+        )}
+      </section>
+
+      <section className="panel-card">
         <div className="section-heading">
           <div>
             <p className="eyebrow">CHAT HISTORY</p>
@@ -508,6 +812,9 @@ type QuietMode = "active" | "balanced" | "minimal";
 
 interface AppSettings {
   quietMode: QuietMode;
+  companionName: string;
+  theme: Theme;
+  sensingPaused: boolean;
   ai: AiSettings;
   hasApiKey: boolean;
 }
@@ -531,6 +838,23 @@ interface ChatHistoryEntry {
   createdAt: number;
 }
 
+interface AttachmentPreview {
+  displayName: string;
+  byteSize: number;
+  charCount: number;
+  preview: string;
+}
+
+interface Reminder {
+  id: string;
+  title: string;
+  dueAt: number;
+  status: "pending" | "triggered";
+}
+
+type AttachmentAction = "summarize" | "translate" | "explain";
+type Theme = "sage" | "blue" | "peach";
+
 type ChatEvent =
   | { type: "started"; requestId: string }
   | { type: "delta"; requestId: string; sequence: number; text: string }
@@ -548,6 +872,9 @@ const defaultAiSettings: AiSettings = {
 
 const defaultAppSettings: AppSettings = {
   quietMode: "balanced",
+  companionName: "Piko",
+  theme: "sage",
+  sensingPaused: false,
   ai: defaultAiSettings,
   hasApiKey: false,
 };
@@ -557,6 +884,32 @@ const quietModeOptions: Array<{ label: string; value: QuietMode }> = [
   { label: "平衡", value: "balanced" },
   { label: "极简", value: "minimal" },
 ];
+
+const attachmentActionOptions: Array<{ label: string; value: AttachmentAction }> = [
+  { label: "总结", value: "summarize" },
+  { label: "翻译", value: "translate" },
+  { label: "解释", value: "explain" },
+];
+
+function formatBytes(bytes: number) {
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KiB`;
+}
+
+function defaultReminderTime() {
+  const date = new Date(Date.now() + 10 * 60 * 1000);
+  date.setSeconds(0, 0);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
+  return local.toISOString().slice(0, 16);
+}
+
+function formatReminderTime(timestamp: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp * 1000);
+}
 
 function App() {
   if (windowLabel === "bubble") return <BubbleWindow />;
