@@ -45,6 +45,18 @@
         "minWidth": 360,
         "minHeight": 560,
         "visible": false
+      },
+      {
+        "label": "capture",
+        "title": "Piko Screenshot",
+        "width": 800,
+        "height": 600,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {

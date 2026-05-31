@@ -31,6 +31,7 @@ export type PetEvent =
   | { type: "REST" }
   | { type: "LISTEN" }
   | { type: "INTERACT" }
+  | { type: "AMBIENT_NUDGE" }
   | { type: "ATTACHMENT_READY" }
   | { type: "WORK_STARTED" }
   | { type: "REMINDER_FIRED"; message: string }
@@ -57,6 +58,8 @@ export function reducePetState(state: PetState, event: PetEvent): PetState {
       return { mode: "listening", message: "Piko 正在等你说话。", emotion: "curious", reaction: "notice" };
     case "INTERACT":
       return { mode: "idle", message: "Piko 注意到你了。", emotion: "happy", reaction: "greet" };
+    case "AMBIENT_NUDGE":
+      return { mode: "idle", message: "Piko 安静地陪着你。", emotion: "curious", reaction: "notice" };
     case "ATTACHMENT_READY":
       return { mode: "confirming", message: "Piko 已收到文件，等你选择处理方式。", emotion: "curious", reaction: "notice" };
     case "WORK_STARTED":

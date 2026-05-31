@@ -50,4 +50,12 @@ describe("reducePetState", () => {
       emotion: "worried",
     });
   });
+
+  it("supports low-risk ambient nudges", () => {
+    expect(reducePetState(initialPetState, { type: "AMBIENT_NUDGE" })).toMatchObject({
+      mode: "idle",
+      emotion: "curious",
+      reaction: "notice",
+    });
+  });
 });

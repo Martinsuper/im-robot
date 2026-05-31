@@ -1,6 +1,7 @@
 import {
   CSSProperties,
   FormEvent,
+  MouseEvent,
   useEffect,
   useMemo,
   useReducer,
@@ -12,11 +13,13 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
+import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { initialPetState, reducePetState } from "./features/pet/petState";
 import ReactMarkdown from "react-markdown";
 import "./App.css";
 
-type WindowLabel = "pet" | "bubble" | "panel";
+type WindowLabel = "pet" | "bubble" | "panel" | "capture";
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
@@ -24,7 +27,7 @@ function detectWindowLabel(): WindowLabel {
   if (isTauriRuntime) return getCurrentWindow().label as WindowLabel;
 
   const preview = new URLSearchParams(window.location.search).get("view");
-  return preview === "bubble" || preview === "panel" ? preview : "pet";
+  return preview === "bubble" || preview === "panel" || preview === "capture" ? preview : "pet";
 }
 
 function runCommand<T>(command: string, args?: Record<string, unknown>, fallback?: T) {
@@ -69,6 +72,9 @@ function PetSprite({
 function PetWindow() {
   const [petState, dispatch] = useReducer(reducePetState, initialPetState);
   const [companionName, setCompanionName] = useState("Piko");
+  const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
+  const [sensingPaused, setSensingPaused] = useState(false);
+  const [theme, setTheme] = useState<Theme>("sage");
   const isResting = petState.mode === "resting";
   const resetTimer = useRef<number | undefined>(undefined);
 
@@ -85,6 +91,9 @@ function PetWindow() {
   useEffect(() => {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
       setCompanionName(settings.companionName);
+      setQuietMode(settings.quietMode);
+      setSensingPaused(settings.sensingPaused);
+      setTheme(settings.theme);
     });
   }, []);
 
@@ -118,8 +127,24 @@ function PetWindow() {
       if (event.payload.type === "reminder-fired") {
         showTransient({ type: "REMINDER_FIRED", message: event.payload.message }, 2600);
       }
+      if (event.payload.type === "ambient-nudge") {
+        showTransient({ type: "AMBIENT_NUDGE" }, 1800);
+      }
     });
 
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    const unlisten = listen<AppSettings>("settings-updated", (event) => {
+      setCompanionName(event.payload.companionName);
+      setQuietMode(event.payload.quietMode);
+      setSensingPaused(event.payload.sensingPaused);
+      setTheme(event.payload.theme);
+    });
     return () => {
       void unlisten.then((dispose) => dispose());
     };
@@ -135,13 +160,15 @@ function PetWindow() {
 
   const DRAG_THRESHOLD_PX = 4;
   const [dragOrigin, setDragOrigin] = useState<{ x: number; y: number } | null>(null);
+  const didDrag = useRef(false);
 
   return (
     <main
-      className="pet-stage"
+      className={`pet-stage pet-stage--${theme} pet-stage--${quietMode}${sensingPaused ? " is-sensing-paused" : ""}`}
       aria-label={`桌面精灵 ${companionName}`}
       onMouseDown={(event) => {
         if (!isTauriRuntime) return;
+        didDrag.current = false;
         setDragOrigin({ x: event.screenX, y: event.screenY });
       }}
       onMouseUp={() => setDragOrigin(null)}
@@ -151,6 +178,7 @@ function PetWindow() {
         const dx = event.screenX - dragOrigin.x;
         const dy = event.screenY - dragOrigin.y;
         if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+        didDrag.current = true;
         event.preventDefault();
         void runCommand("move_pet", { x: event.screenX - 78, y: event.screenY - 70 });
       }}
@@ -159,7 +187,12 @@ function PetWindow() {
         className={`pet pet--${petState.mode} pet-reaction--${petState.reaction}`}
         aria-label="拖动 Piko"
         onClick={() => {
+          if (didDrag.current) {
+            didDrag.current = false;
+            return;
+          }
           if (!isResting) showTransient({ type: "INTERACT" });
+          void runCommand("show_bubble");
         }}
       >
         <PetSprite mode={petState.mode} />
@@ -198,10 +231,12 @@ function BubbleWindow() {
   const [prompt, setPrompt] = useState("");
   const [message, setMessage] = useState("你好，我是 Piko。今天想一起完成什么？");
   const [companionName, setCompanionName] = useState("Piko");
+  const [theme, setTheme] = useState<Theme>("sage");
   const [isThinking, setIsThinking] = useState(false);
   const [attachment, setAttachment] = useState<AttachmentPreview>();
   const [attachmentAction, setAttachmentAction] = useState<AttachmentAction>("summarize");
   const [attachmentError, setAttachmentError] = useState("");
+  const [screenshot, setScreenshot] = useState<ScreenshotPreview>();
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [requestId, setRequestId] = useState<string>();
   const activeRequestId = useRef<string | undefined>(undefined);
@@ -211,8 +246,39 @@ function BubbleWindow() {
   useEffect(() => {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
       setCompanionName(settings.companionName);
+      setTheme(settings.theme);
       setMessage(`你好，我是 ${settings.companionName}。今天想一起完成什么？`);
     });
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    const unlisten = listen<AppSettings>("settings-updated", (event) => {
+      setCompanionName(event.payload.companionName);
+      setTheme(event.payload.theme);
+    });
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    const refreshScreenshot = () => {
+      void runCommand<ScreenshotPreview | null>("get_screen_capture_preview", undefined, null)
+        .then((preview) => setScreenshot(preview ?? undefined));
+    };
+    refreshScreenshot();
+    const unlisten = listen<ScreenshotPreview>("screenshot-ready", (event) => {
+      setScreenshot(event.payload);
+    });
+    const unlistenFocus = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) refreshScreenshot();
+    });
+    return () => {
+      void unlisten.then((dispose) => dispose());
+      void unlistenFocus.then((dispose) => dispose());
+    };
   }, []);
 
   useEffect(() => {
@@ -280,7 +346,7 @@ function BubbleWindow() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!prompt.trim() && !attachment) return;
+    if (!prompt.trim() && !attachment && !screenshot) return;
 
     const currentPrompt = prompt.trim();
     const currentRequestId = crypto.randomUUID();
@@ -299,9 +365,12 @@ function BubbleWindow() {
     }
 
     void runCommand<void>("chat_start", {
-      requestId: currentRequestId,
-      prompt: currentPrompt,
-      attachmentAction: attachment ? attachmentAction : undefined,
+      input: {
+        requestId: currentRequestId,
+        prompt: currentPrompt,
+        attachmentAction: attachment ? attachmentAction : undefined,
+        includeScreenshot: Boolean(screenshot),
+      },
     }).catch((error) => {
       setIsThinking(false);
       setMessage(`模型服务连接失败：${String(error)}`);
@@ -330,8 +399,28 @@ function BubbleWindow() {
     setAttachmentError("");
   }
 
+  async function chooseAttachment() {
+    if (!isTauriRuntime) return;
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "文本文件", extensions: ["txt", "md", "json", "csv", "log"] }],
+    });
+    if (!path) return;
+    setAttachmentError("");
+    try {
+      setAttachment(await runCommand<AttachmentPreview>("prepare_text_attachment", { path }));
+    } catch (error) {
+      setAttachmentError(String(error));
+    }
+  }
+
+  async function clearScreenshot() {
+    await runCommand("clear_screen_capture");
+    setScreenshot(undefined);
+  }
+
   return (
-    <main className="bubble-shell">
+    <main className={`bubble-shell bubble-shell--${theme}`}>
       <header className="bubble-header">
         <div className="companion-heading">
           <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
@@ -376,19 +465,38 @@ function BubbleWindow() {
             </div>
           </>
         ) : (
-          <p>{isDraggingFile ? "松开即可读取文本文件" : "拖入 .txt、.md、.json、.csv 或 .log 文件"}</p>
+          <div className="attachment-empty">
+            <p>{isDraggingFile ? "松开即可读取文本文件" : "拖入 .txt、.md、.json、.csv 或 .log 文件"}</p>
+            <button type="button" onClick={() => void chooseAttachment()}>选择文件</button>
+          </div>
         )}
         {attachmentError && <span className="attachment-error">{attachmentError}</span>}
+      </section>
+      <section className="screenshot-card">
+        {screenshot ? (
+          <>
+            <img src={screenshot.dataUrl} alt="待发送的截图预览" />
+            <div>
+              <strong>截图已确认</strong>
+              <span>{screenshot.width} × {screenshot.height}</span>
+              <button type="button" onClick={() => void clearScreenshot()}>移除截图</button>
+            </div>
+          </>
+        ) : (
+          <button type="button" onClick={() => runCommand("begin_screen_capture")}>
+            截图提问
+          </button>
+        )}
       </section>
       <form className="prompt-form" onSubmit={submit}>
         <input
           autoFocus
           value={prompt}
           onChange={(event) => setPrompt(event.currentTarget.value)}
-          placeholder={attachment ? "可补充处理要求" : "输入问题，或描述一个任务"}
+          placeholder={attachment || screenshot ? "可补充处理要求" : "输入问题，或描述一个任务"}
           aria-label="发送给 Piko 的问题"
         />
-        <button type="submit" disabled={(!prompt.trim() && !attachment) || isThinking}>
+        <button type="submit" disabled={(!prompt.trim() && !attachment && !screenshot) || isThinking}>
           发送
         </button>
       </form>
@@ -412,6 +520,87 @@ function BubbleWindow() {
   );
 }
 
+function CaptureWindow() {
+  const [origin, setOrigin] = useState<{ x: number; y: number }>();
+  const [selection, setSelection] = useState<CaptureSelection>();
+  const [error, setError] = useState("");
+  const hasSelection = Boolean(selection && selection.width >= 8 && selection.height >= 8);
+
+  function updateSelection(event: MouseEvent<HTMLElement>) {
+    if (!origin) return;
+    setSelection(normalizeCaptureSelection(origin.x, origin.y, event.clientX, event.clientY));
+  }
+
+  async function confirm() {
+    if (!selection || !hasSelection) return;
+    setError("");
+    try {
+      await runCommand("confirm_screen_capture", { selection });
+    } catch (captureError) {
+      setError(String(captureError));
+    }
+  }
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") void runCommand("cancel_screen_capture");
+      if (event.key === "Enter" && hasSelection) void confirm();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hasSelection, selection]);
+
+  return (
+    <main
+      className="capture-shell"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        if (hasSelection) void confirm();
+      }}
+      onMouseDown={(event) => {
+        if (event.button !== 0) return;
+        setOrigin({ x: event.clientX, y: event.clientY });
+        setSelection({ x: event.clientX, y: event.clientY, width: 0, height: 0 });
+      }}
+      onMouseMove={(event) => {
+        if ((event.buttons & 1) !== 0) updateSelection(event);
+      }}
+      onMouseUp={(event) => {
+        updateSelection(event);
+        setOrigin(undefined);
+      }}
+    >
+      <p className="capture-hint">拖动框选截图区域，确认后才会读取屏幕内容</p>
+      {selection && (
+        <div
+          className="capture-selection"
+          style={{
+            left: selection.x,
+            top: selection.y,
+            width: selection.width,
+            height: selection.height,
+          }}
+        />
+      )}
+      <div className={`capture-actions${hasSelection ? " is-ready" : ""}`} onMouseDown={(event) => event.stopPropagation()}>
+        <div>
+          <strong>{hasSelection ? "截图区域已选择" : "请拖动鼠标框选区域"}</strong>
+          <span>
+            {hasSelection && selection
+              ? `${Math.round(selection.width)} × ${Math.round(selection.height)} · 点击右键确认`
+              : "按 Esc 取消"}
+          </span>
+        </div>
+        <button type="button" onClick={() => runCommand("cancel_screen_capture")}>取消</button>
+        <button className="capture-confirm" type="button" disabled={!hasSelection} onClick={() => void confirm()}>
+          确认截图
+        </button>
+        {error && <span>{error}</span>}
+      </div>
+    </main>
+  );
+}
+
 function PanelWindow() {
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
@@ -421,7 +610,9 @@ function PanelWindow() {
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [preferencesStatus, setPreferencesStatus] = useState("");
   const [notificationPermission, setNotificationPermission] = useState("按需申请");
+  const [screenCapturePermission, setScreenCapturePermission] = useState("截图时按需申请");
   const [updateStatus, setUpdateStatus] = useState("");
+  const [updateUrl, setUpdateUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
   const [isTesting, setIsTesting] = useState(false);
@@ -451,6 +642,9 @@ function PanelWindow() {
     });
     void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
     void runCommand<Reminder[]>("list_reminders", undefined, []).then(setReminders);
+    void runCommand<string>("screen_capture_permission_status", undefined, "截图时按需申请").then(
+      setScreenCapturePermission,
+    );
     if (isTauriRuntime) {
       void isEnabled().then(setAutostartEnabled);
       void isPermissionGranted().then((granted) => {
@@ -462,8 +656,12 @@ function PanelWindow() {
     const unlisten = listen("reminders-updated", () => {
       void runCommand<Reminder[]>("list_reminders", undefined, []).then(setReminders);
     });
+    const unlistenHistory = listen("chat-history-updated", () => {
+      void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
+    });
     return () => {
       void unlisten.then((dispose) => dispose());
+      void unlistenHistory.then((dispose) => dispose());
     };
   }, []);
 
@@ -585,6 +783,23 @@ function PanelWindow() {
     }
   }
 
+  async function checkForUpdates() {
+    setUpdateStatus("正在检查更新...");
+    setUpdateUrl("");
+    try {
+      const update = await runCommand<UpdateInfo>("check_for_updates", undefined, {
+        currentVersion: "0.1.0",
+        latestVersion: "0.1.0",
+        available: false,
+        releaseUrl: "",
+      });
+      setUpdateStatus(update.available ? `发现新版本：${update.latestVersion}` : `已是最新版本：${update.currentVersion}`);
+      setUpdateUrl(update.releaseUrl);
+    } catch (error) {
+      setUpdateStatus(`检查更新失败：${String(error)}`);
+    }
+  }
+
   return (
     <main className={`panel-shell panel-shell--${theme}`}>
       <header className="panel-header">
@@ -617,7 +832,7 @@ function PanelWindow() {
         <div className="permission-list">
           <div><span>通知权限</span><strong>{notificationPermission}</strong></div>
           <div><span>文件访问</span><strong>仅主动拖入</strong></div>
-          <div><span>屏幕录制</span><strong>截图功能待接入</strong></div>
+          <div><span>屏幕录制</span><strong>{screenCapturePermission}</strong></div>
           <div><span>主动感知</span><strong>{sensingPaused ? "已暂停" : "未启用持续感知"}</strong></div>
         </div>
       </section>
@@ -628,12 +843,13 @@ function PanelWindow() {
             <p className="eyebrow">ABOUT</p>
             <h2>版本信息</h2>
           </div>
-          <button type="button" onClick={() => setUpdateStatus("尚未配置发布源，当前无法联网检查更新。")}>
+          <button type="button" onClick={() => void checkForUpdates()}>
             检查更新
           </button>
         </div>
         <p className="empty-state">Piko Desktop Companion · v0.1.0</p>
         {updateStatus && <p className="connection-status">{updateStatus}</p>}
+        {updateUrl && <button className="release-link" type="button" onClick={() => void openUrl(updateUrl)}>打开下载页</button>}
       </section>
 
       <section className="panel-card">
@@ -642,9 +858,10 @@ function PanelWindow() {
             <p className="eyebrow">STATUS</p>
             <h2>当前状态</h2>
           </div>
-          <button type="button" onClick={() => runCommand("show_pet")}>
-            显示精灵
-          </button>
+          <div className="section-heading__actions">
+            <button type="button" onClick={() => runCommand("show_pet")}>显示精灵</button>
+            <button type="button" onClick={() => runCommand("hide_pet")}>隐藏精灵</button>
+          </div>
         </div>
         <div className="status-grid">
           {statuses.map(([label, value]) => (
@@ -883,6 +1100,13 @@ interface ModelInfo {
   id: string;
 }
 
+interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  available: boolean;
+  releaseUrl: string;
+}
+
 interface ChatHistoryEntry {
   id: string;
   prompt: string;
@@ -895,6 +1119,19 @@ interface AttachmentPreview {
   byteSize: number;
   charCount: number;
   preview: string;
+}
+
+interface ScreenshotPreview {
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
+interface CaptureSelection {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 interface Reminder {
@@ -916,7 +1153,8 @@ type ChatEvent =
 
 type PetVisualEvent =
   | { type: "attachment-ready" }
-  | { type: "reminder-fired"; message: string };
+  | { type: "reminder-fired"; message: string }
+  | { type: "ambient-nudge" };
 
 const defaultAiSettings: AiSettings = {
   provider: "openai-compatible",
@@ -967,9 +1205,19 @@ function formatReminderTime(timestamp: number) {
   }).format(timestamp * 1000);
 }
 
+function normalizeCaptureSelection(startX: number, startY: number, endX: number, endY: number) {
+  return {
+    x: Math.min(startX, endX),
+    y: Math.min(startY, endY),
+    width: Math.abs(endX - startX),
+    height: Math.abs(endY - startY),
+  };
+}
+
 function App() {
   if (windowLabel === "bubble") return <BubbleWindow />;
   if (windowLabel === "panel") return <PanelWindow />;
+  if (windowLabel === "capture") return <CaptureWindow />;
   return <PetWindow />;
 }
 

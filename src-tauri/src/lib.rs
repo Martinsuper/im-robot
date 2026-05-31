@@ -1,8 +1,11 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use screenshots::{image::DynamicImage, Screen};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -79,6 +82,15 @@ struct AiSettingsInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ChatStartInput {
+    request_id: String,
+    prompt: String,
+    attachment_action: Option<String>,
+    include_screenshot: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PreferencesInput {
     companion_name: String,
     theme: String,
@@ -89,6 +101,15 @@ struct PreferencesInput {
 #[serde(rename_all = "camelCase")]
 struct ModelInfo {
     id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInfo {
+    current_version: String,
+    latest_version: String,
+    available: bool,
+    release_url: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -149,6 +170,33 @@ struct AttachmentPreview {
 #[derive(Default)]
 struct TextAttachmentStore(Mutex<Option<TextAttachment>>);
 
+#[derive(Clone, Debug)]
+struct ScreenCapture {
+    data_url: String,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureSelection {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScreenshotPreview {
+    data_url: String,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Default)]
+struct ScreenCaptureStore(Mutex<Option<ScreenCapture>>);
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Reminder {
@@ -174,6 +222,7 @@ struct ReminderInput {
 enum PetVisualEvent {
     AttachmentReady,
     ReminderFired { message: String },
+    AmbientNudge,
 }
 
 impl Default for AppSettings {
@@ -684,8 +733,186 @@ fn show_pet(app: AppHandle) {
 }
 
 #[tauri::command]
+fn hide_pet(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("pet") {
+        let _ = window.hide();
+    }
+}
+
+#[tauri::command]
+fn begin_screen_capture(app: AppHandle) -> Result<(), String> {
+    let capture = app
+        .get_webview_window("capture")
+        .ok_or_else(|| "无法打开截图选择窗口".to_string())?;
+    let reference = app
+        .get_webview_window("pet")
+        .and_then(|window| window.current_monitor().ok().flatten())
+        .or_else(|| capture.primary_monitor().ok().flatten())
+        .ok_or_else(|| "无法识别当前显示器".to_string())?;
+
+    capture
+        .set_position(*reference.position())
+        .map_err(|error| error.to_string())?;
+    capture
+        .set_size(*reference.size())
+        .map_err(|error| error.to_string())?;
+    capture.show().map_err(|error| error.to_string())?;
+    capture.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn cancel_screen_capture(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("capture") {
+        let _ = window.hide();
+    }
+}
+
+#[tauri::command]
+fn confirm_screen_capture(
+    app: AppHandle,
+    captures: State<'_, ScreenCaptureStore>,
+    selection: CaptureSelection,
+) -> Result<ScreenshotPreview, String> {
+    if selection.width < 8.0 || selection.height < 8.0 {
+        return Err("请框选一个更大的截图区域".to_string());
+    }
+    let capture = app
+        .get_webview_window("capture")
+        .ok_or_else(|| "无法读取截图选择窗口".to_string())?;
+    let origin = capture
+        .outer_position()
+        .map_err(|error| error.to_string())?;
+    let scale = capture.scale_factor().map_err(|error| error.to_string())?;
+    let x = origin.x + (selection.x * scale).round() as i32;
+    let y = origin.y + (selection.y * scale).round() as i32;
+    let width = (selection.width * scale).round() as u32;
+    let height = (selection.height * scale).round() as u32;
+    let _ = capture.hide();
+    thread::sleep(Duration::from_millis(140));
+
+    let png = (|| {
+        let screen = Screen::from_point(x, y).map_err(|error| format!("无法读取屏幕：{error}"))?;
+        let image = screen
+            .capture_area(
+                x - screen.display_info.x,
+                y - screen.display_info.y,
+                width,
+                height,
+            )
+            .map_err(|error| format!("截图失败，请检查屏幕录制权限：{error}"))?;
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(image)
+            .write_to(&mut png, screenshots::image::ImageOutputFormat::Png)
+            .map_err(|error| format!("无法生成截图预览：{error}"))?;
+        Ok::<_, String>(png.into_inner())
+    })();
+    let png = match png {
+        Ok(png) => png,
+        Err(error) => {
+            let _ = capture.show();
+            let _ = capture.set_focus();
+            return Err(error);
+        }
+    };
+    let data_url = format!("data:image/png;base64,{}", BASE64_STANDARD.encode(png));
+    let preview = ScreenshotPreview {
+        data_url: data_url.clone(),
+        width,
+        height,
+    };
+    *captures
+        .0
+        .lock()
+        .map_err(|_| "无法保存截图状态".to_string())? = Some(ScreenCapture {
+        data_url,
+        width,
+        height,
+    });
+    show_and_focus(&app, "bubble");
+    let _ = app.emit_to("bubble", "screenshot-ready", preview.clone());
+    Ok(preview)
+}
+
+#[tauri::command]
+fn get_screen_capture_preview(
+    captures: State<'_, ScreenCaptureStore>,
+) -> Result<Option<ScreenshotPreview>, String> {
+    Ok(captures
+        .0
+        .lock()
+        .map_err(|_| "无法读取截图状态".to_string())?
+        .as_ref()
+        .map(|capture| ScreenshotPreview {
+            data_url: capture.data_url.clone(),
+            width: capture.width,
+            height: capture.height,
+        }))
+}
+
+#[tauri::command]
+fn clear_screen_capture(captures: State<'_, ScreenCaptureStore>) -> Result<(), String> {
+    *captures
+        .0
+        .lock()
+        .map_err(|_| "无法清除截图状态".to_string())? = None;
+    Ok(())
+}
+
+#[tauri::command]
 fn get_settings(app: AppHandle) -> AppSettings {
     read_settings(&app)
+}
+
+#[tauri::command]
+fn screen_capture_permission_status() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "截图时按需申请，首次使用请允许屏幕录制".to_string()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "截图时按需读取".to_string()
+    }
+}
+
+fn version_parts(version: &str) -> Vec<u64> {
+    version
+        .trim()
+        .trim_start_matches('v')
+        .split('.')
+        .map(|part| part.parse().unwrap_or(0))
+        .collect()
+}
+
+#[tauri::command]
+async fn check_for_updates() -> Result<UpdateInfo, String> {
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let response = reqwest::Client::new()
+        .get("https://api.github.com/repos/Martinsuper/im-robot/releases/latest")
+        .header(reqwest::header::USER_AGENT, "Piko-Desktop-Companion")
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .json::<Value>()
+        .await
+        .map_err(|error| error.to_string())?;
+    let latest_version = response["tag_name"]
+        .as_str()
+        .ok_or_else(|| "发布源没有返回版本号".to_string())?
+        .trim_start_matches('v')
+        .to_string();
+    let release_url = response["html_url"]
+        .as_str()
+        .unwrap_or("https://github.com/Martinsuper/im-robot/releases")
+        .to_string();
+    Ok(UpdateInfo {
+        available: version_parts(&latest_version) > version_parts(&current_version),
+        current_version,
+        latest_version,
+        release_url,
+    })
 }
 
 #[tauri::command]
@@ -788,6 +1015,22 @@ fn watch_reminders(app: &AppHandle) {
     });
 }
 
+fn watch_ambient_nudges(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || loop {
+        let settings = read_settings(&app);
+        let delay = match settings.quiet_mode.as_str() {
+            "active" => 45,
+            "minimal" => 300,
+            _ => 120,
+        };
+        thread::sleep(Duration::from_secs(delay));
+        if !settings.sensing_paused && settings.quiet_mode != "minimal" {
+            let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::AmbientNudge);
+        }
+    });
+}
+
 fn read_text_attachment(path: &Path) -> Result<(TextAttachment, AttachmentPreview), String> {
     const ALLOWED_EXTENSIONS: [&str; 5] = ["txt", "md", "json", "csv", "log"];
 
@@ -867,6 +1110,7 @@ fn update_quiet_mode(app: AppHandle, quiet_mode: String) -> Result<AppSettings, 
     let mut settings = read_settings(&app);
     settings.quiet_mode = quiet_mode;
     persist_settings(&app, &settings);
+    let _ = app.emit_to("pet", "settings-updated", &settings);
     Ok(settings)
 }
 
@@ -888,6 +1132,8 @@ fn update_preferences(app: AppHandle, input: PreferencesInput) -> Result<AppSett
     settings.theme = input.theme;
     settings.sensing_paused = input.sensing_paused;
     persist_settings(&app, &settings);
+    let _ = app.emit_to("pet", "settings-updated", &settings);
+    let _ = app.emit_to("bubble", "settings-updated", &settings);
     Ok(settings)
 }
 
@@ -969,6 +1215,7 @@ async fn stream_chat(
     request_id: &str,
     prompt: &str,
     history_prompt: &str,
+    screenshot: Option<&ScreenCapture>,
     working: bool,
     cancelled: &AtomicBool,
 ) -> Result<bool, String> {
@@ -987,20 +1234,38 @@ async fn stream_chat(
     );
 
     let client = http_client(&settings.ai)?;
+    let user_content = if let Some(screenshot) = screenshot {
+        json!([
+            { "type": "text", "text": prompt.trim() },
+            { "type": "image_url", "image_url": { "url": screenshot.data_url } }
+        ])
+    } else {
+        json!(prompt.trim())
+    };
+    let recent_history = read_chat_history(app);
+    let mut messages = vec![json!({
+        "role": "system",
+        "content": format!(
+            "你是桌面 AI 宠物精灵 {}。回答应清晰、简洁、友好。不要声称已经执行未实际执行的电脑操作。",
+            settings.companion_name
+        )
+    })];
+    for entry in recent_history.iter().take(6).rev() {
+        messages.push(json!({ "role": "user", "content": entry.prompt }));
+        messages.push(json!({ "role": "assistant", "content": entry.response }));
+    }
+    messages.push(json!({ "role": "user", "content": user_content }));
     let response = request_builder(
         &client,
         reqwest::Method::POST,
-        format!("{}/chat/completions", normalize_base_url(&settings.ai.base_url)),
+        format!(
+            "{}/chat/completions",
+            normalize_base_url(&settings.ai.base_url)
+        ),
     )
     .json(&json!({
         "model": settings.ai.model,
-        "messages": [
-            {
-                "role": "system",
-                "content": "你是桌面 AI 宠物精灵 Piko。回答应清晰、简洁、友好。不要声称已经执行未实际执行的电脑操作。"
-            },
-            { "role": "user", "content": prompt.trim() }
-        ],
+        "messages": messages,
         "temperature": settings.ai.temperature,
         "stream": true
     }))
@@ -1061,6 +1326,7 @@ async fn stream_chat(
                 .as_secs(),
         },
     )?;
+    let _ = app.emit_to("panel", "chat-history-updated", ());
 
     if cancelled.load(Ordering::Relaxed) {
         return Ok(true);
@@ -1126,43 +1392,67 @@ async fn chat_start(
     app: AppHandle,
     requests: State<'_, ChatRequests>,
     attachments: State<'_, TextAttachmentStore>,
-    request_id: String,
-    prompt: String,
-    attachment_action: Option<String>,
+    captures: State<'_, ScreenCaptureStore>,
+    input: ChatStartInput,
 ) -> Result<(), String> {
     let attachment = attachments
         .0
         .lock()
         .map_err(|_| "无法读取附件状态".to_string())?
         .clone();
-    let (model_prompt, history_prompt) =
-        build_attachment_prompt(&prompt, attachment_action.as_deref(), attachment.as_ref())?;
-    let working = attachment_action.is_some();
+    let prompt = if input.include_screenshot.unwrap_or(false) && input.prompt.trim().is_empty() {
+        "请描述截图中的内容，并指出值得注意的信息。"
+    } else {
+        &input.prompt
+    };
+    let (model_prompt, history_prompt) = build_attachment_prompt(
+        prompt,
+        input.attachment_action.as_deref(),
+        attachment.as_ref(),
+    )?;
+    let screenshot = if input.include_screenshot.unwrap_or(false) {
+        captures
+            .0
+            .lock()
+            .map_err(|_| "无法读取截图状态".to_string())?
+            .clone()
+            .ok_or_else(|| "请先框选截图区域".to_string())?
+            .into()
+    } else {
+        None
+    };
+    let history_prompt = if screenshot.is_some() {
+        format!("[截图] {history_prompt}")
+    } else {
+        history_prompt
+    };
+    let working = input.attachment_action.is_some() || screenshot.is_some();
     let cancelled = Arc::new(AtomicBool::new(false));
     requests
         .0
         .lock()
         .map_err(|_| "无法记录当前生成任务".to_string())?
-        .insert(request_id.clone(), Arc::clone(&cancelled));
+        .insert(input.request_id.clone(), Arc::clone(&cancelled));
 
     let result = stream_chat(
         &app,
-        &request_id,
+        &input.request_id,
         &model_prompt,
         &history_prompt,
+        screenshot.as_ref(),
         working,
         &cancelled,
     )
     .await;
     if let Ok(mut active) = requests.0.lock() {
-        active.remove(&request_id);
+        active.remove(&input.request_id);
     }
 
     if matches!(result, Ok(true)) {
         emit_chat_event(
             &app,
             ChatEvent::Cancelled {
-                request_id: request_id.clone(),
+                request_id: input.request_id.clone(),
             },
         );
     }
@@ -1170,7 +1460,7 @@ async fn chat_start(
         emit_chat_event(
             &app,
             ChatEvent::Failed {
-                request_id,
+                request_id: input.request_id,
                 message: message.clone(),
             },
         );
@@ -1193,9 +1483,10 @@ fn chat_cancel(requests: State<'_, ChatRequests>, request_id: String) -> Result<
 
 fn configure_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show_pet = MenuItem::with_id(app, "show_pet", "Show Piko", true, None::<&str>)?;
+    let hide_pet = MenuItem::with_id(app, "hide_pet", "Hide Piko", true, None::<&str>)?;
     let open_panel = MenuItem::with_id(app, "open_panel", "Open Assistant", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_pet, &open_panel, &quit])?;
+    let menu = Menu::with_items(app, &[&show_pet, &hide_pet, &open_panel, &quit])?;
 
     TrayIconBuilder::new()
         .icon(app.default_window_icon().expect("application icon").clone())
@@ -1204,6 +1495,11 @@ fn configure_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show_pet" => show_and_focus(app, "pet"),
+            "hide_pet" => {
+                if let Some(window) = app.get_webview_window("pet") {
+                    let _ = window.hide();
+                }
+            }
             "open_panel" => show_and_focus(app, "panel"),
             "quit" => app.exit(0),
             _ => {}
@@ -1249,8 +1545,10 @@ pub fn run() {
     tauri::Builder::default()
         .manage(ChatRequests::default())
         .manage(TextAttachmentStore::default())
+        .manage(ScreenCaptureStore::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
@@ -1266,6 +1564,7 @@ pub fn run() {
             enable_pet_background_drag(app.handle());
             enable_bubble_background_drag(app.handle());
             watch_reminders(app.handle());
+            watch_ambient_nudges(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1273,8 +1572,16 @@ pub fn run() {
             hide_bubble,
             open_panel,
             show_pet,
+            hide_pet,
+            begin_screen_capture,
+            cancel_screen_capture,
+            confirm_screen_capture,
+            get_screen_capture_preview,
+            clear_screen_capture,
             move_pet,
             get_settings,
+            screen_capture_permission_status,
+            check_for_updates,
             list_chat_history,
             clear_chat_history,
             list_reminders,
@@ -1297,8 +1604,8 @@ pub fn run() {
 mod tests {
     use super::{
         build_attachment_prompt, collect_due_reminders, extract_chat_deltas, monitor_contains,
-        normalize_base_url, read_text_attachment, should_bypass_system_proxy, AppSettings,
-        ChatEvent, Reminder, TextAttachment,
+        normalize_base_url, read_text_attachment, should_bypass_system_proxy, version_parts,
+        AppSettings, ChatEvent, Reminder, TextAttachment,
     };
     use std::{
         fs,
@@ -1340,6 +1647,12 @@ mod tests {
             normalize_base_url(" http://localhost:11434/v1/ "),
             "http://localhost:11434/v1"
         );
+    }
+
+    #[test]
+    fn compares_release_version_parts() {
+        assert!(version_parts("v0.2.0") > version_parts("0.1.9"));
+        assert_eq!(version_parts("v1.0.0"), vec![1, 0, 0]);
     }
 
     #[test]
