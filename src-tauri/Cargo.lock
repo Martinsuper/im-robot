@@ -1999,6 +1999,7 @@ name = "im-robot"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "core-graphics 0.23.2",
  "keyring",
  "objc2-app-kit",
  "reqwest",

@@ -739,8 +739,55 @@ fn hide_pet(app: AppHandle) {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn ensure_screen_capture_permission() -> Result<(), String> {
+    let access = core_graphics::access::ScreenCaptureAccess;
+    if access.preflight() || access.request() {
+        Ok(())
+    } else {
+        Err(
+            "Piko 没有屏幕录制权限。请在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Piko，然后重新启动应用。"
+                .to_string(),
+        )
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_screen_capture_permission() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_area_coordinates(
+    origin: PhysicalPosition<i32>,
+    selection: &CaptureSelection,
+    _scale: f64,
+) -> (i32, i32, u32, u32) {
+    (
+        origin.x + selection.x.round() as i32,
+        origin.y + selection.y.round() as i32,
+        selection.width.round() as u32,
+        selection.height.round() as u32,
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn capture_area_coordinates(
+    origin: PhysicalPosition<i32>,
+    selection: &CaptureSelection,
+    scale: f64,
+) -> (i32, i32, u32, u32) {
+    (
+        origin.x + (selection.x * scale).round() as i32,
+        origin.y + (selection.y * scale).round() as i32,
+        (selection.width * scale).round() as u32,
+        (selection.height * scale).round() as u32,
+    )
+}
+
 #[tauri::command]
 fn begin_screen_capture(app: AppHandle) -> Result<(), String> {
+    ensure_screen_capture_permission()?;
     let capture = app
         .get_webview_window("capture")
         .ok_or_else(|| "无法打开截图选择窗口".to_string())?;
@@ -783,10 +830,7 @@ fn confirm_screen_capture(
         .outer_position()
         .map_err(|error| error.to_string())?;
     let scale = capture.scale_factor().map_err(|error| error.to_string())?;
-    let x = origin.x + (selection.x * scale).round() as i32;
-    let y = origin.y + (selection.y * scale).round() as i32;
-    let width = (selection.width * scale).round() as u32;
-    let height = (selection.height * scale).round() as u32;
+    let (x, y, width, height) = capture_area_coordinates(origin, &selection, scale);
     let _ = capture.hide();
     thread::sleep(Duration::from_millis(140));
 
@@ -867,7 +911,12 @@ fn get_settings(app: AppHandle) -> AppSettings {
 fn screen_capture_permission_status() -> String {
     #[cfg(target_os = "macos")]
     {
-        "截图时按需申请，首次使用请允许屏幕录制".to_string()
+        let access = core_graphics::access::ScreenCaptureAccess;
+        if access.preflight() {
+            "已授权".to_string()
+        } else {
+            "截图时按需申请，首次使用请允许屏幕录制".to_string()
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1602,6 +1651,8 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use super::CaptureSelection;
     use super::{
         build_attachment_prompt, collect_due_reminders, extract_chat_deltas, monitor_contains,
         normalize_base_url, read_text_attachment, should_bypass_system_proxy, version_parts,
@@ -1630,6 +1681,24 @@ mod tests {
             PhysicalSize::new(1920, 1080),
             PhysicalPosition::new(99, 210),
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn keeps_macos_capture_coordinates_in_core_graphics_points() {
+        assert_eq!(
+            super::capture_area_coordinates(
+                PhysicalPosition::new(100, 200),
+                &CaptureSelection {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 300.0,
+                    height: 160.0,
+                },
+                2.0,
+            ),
+            (110, 220, 300, 160),
+        );
     }
 
     #[test]

@@ -571,6 +571,7 @@ function CaptureWindow() {
       }}
     >
       <p className="capture-hint">拖动框选截图区域，确认后才会读取屏幕内容</p>
+      {error && <div className="capture-error" role="alert">{error}</div>}
       {selection && (
         <div
           className="capture-selection"
@@ -595,7 +596,6 @@ function CaptureWindow() {
         <button className="capture-confirm" type="button" disabled={!hasSelection} onClick={() => void confirm()}>
           确认截图
         </button>
-        {error && <span>{error}</span>}
       </div>
     </main>
   );

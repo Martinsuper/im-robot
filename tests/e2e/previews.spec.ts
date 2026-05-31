@@ -32,6 +32,7 @@ test("capture preview exposes selection controls", async ({ page }) => {
   await expect(page.getByText("截图区域已选择")).toBeVisible();
   await expect(page.getByRole("button", { name: "确认截图" })).toBeEnabled();
   await expect(page.getByText("200 × 150 · 点击右键确认")).toBeVisible();
+  await expect(page.locator(".capture-actions")).toHaveCSS("bottom", "52px");
   await page.mouse.click(360, 260, { button: "right" });
   await expect(page.getByText("截图区域已选择")).toBeVisible();
 });
