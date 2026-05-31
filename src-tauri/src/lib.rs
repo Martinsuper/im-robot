@@ -109,6 +109,7 @@ struct ChatHistoryEntry {
 enum ChatEvent {
     Started {
         request_id: String,
+        working: bool,
     },
     Delta {
         request_id: String,
@@ -162,6 +163,17 @@ struct Reminder {
 struct ReminderInput {
     title: String,
     due_at: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    tag = "type"
+)]
+enum PetVisualEvent {
+    AttachmentReady,
+    ReminderFired { message: String },
 }
 
 impl Default for AppSettings {
@@ -756,6 +768,13 @@ fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String> {
             .title("Piko 提醒")
             .body(&reminder.title)
             .show();
+        let _ = app.emit_to(
+            "pet",
+            "pet-visual-event",
+            PetVisualEvent::ReminderFired {
+                message: format!("提醒：{}", reminder.title),
+            },
+        );
     }
     let _ = app.emit_to("panel", "reminders-updated", ());
     Ok(due)
@@ -817,6 +836,7 @@ fn read_text_attachment(path: &Path) -> Result<(TextAttachment, AttachmentPrevie
 
 #[tauri::command]
 fn prepare_text_attachment(
+    app: AppHandle,
     attachments: State<'_, TextAttachmentStore>,
     path: String,
 ) -> Result<AttachmentPreview, String> {
@@ -825,6 +845,7 @@ fn prepare_text_attachment(
         .0
         .lock()
         .map_err(|_| "无法保存附件状态".to_string())? = Some(attachment);
+    let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::AttachmentReady);
     Ok(preview)
 }
 
@@ -948,6 +969,7 @@ async fn stream_chat(
     request_id: &str,
     prompt: &str,
     history_prompt: &str,
+    working: bool,
     cancelled: &AtomicBool,
 ) -> Result<bool, String> {
     let settings = read_settings(app);
@@ -960,6 +982,7 @@ async fn stream_chat(
         app,
         ChatEvent::Started {
             request_id: request_id.to_string(),
+            working,
         },
     );
 
@@ -1114,6 +1137,7 @@ async fn chat_start(
         .clone();
     let (model_prompt, history_prompt) =
         build_attachment_prompt(&prompt, attachment_action.as_deref(), attachment.as_ref())?;
+    let working = attachment_action.is_some();
     let cancelled = Arc::new(AtomicBool::new(false));
     requests
         .0
@@ -1126,6 +1150,7 @@ async fn chat_start(
         &request_id,
         &model_prompt,
         &history_prompt,
+        working,
         &cancelled,
     )
     .await;

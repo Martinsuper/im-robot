@@ -11,7 +11,7 @@ describe("reducePetState", () => {
     expect(listening.mode).toBe("listening");
     expect(thinking.mode).toBe("thinking");
     expect(speaking.mode).toBe("speaking");
-    expect(completed).toEqual(initialPetState);
+    expect(completed).toMatchObject({ mode: "success", emotion: "happy", reaction: "celebrate" });
   });
 
   it("supports resting and waking", () => {
@@ -22,10 +22,32 @@ describe("reducePetState", () => {
     expect(awake.mode).toBe("idle");
   });
 
+  it("shows file processing and reminder reactions", () => {
+    expect(reducePetState(initialPetState, { type: "ATTACHMENT_READY" })).toMatchObject({
+      mode: "confirming",
+      emotion: "curious",
+    });
+    expect(reducePetState(initialPetState, { type: "WORK_STARTED" })).toMatchObject({
+      mode: "working",
+      emotion: "curious",
+    });
+    expect(reducePetState(initialPetState, { type: "REMINDER_FIRED", message: "stand up" })).toMatchObject({
+      mode: "success",
+      emotion: "surprised",
+      message: "stand up",
+    });
+  });
+
+  it("resets transient reactions", () => {
+    const completed = reducePetState(initialPetState, { type: "CHAT_COMPLETED" });
+    expect(reducePetState(completed, { type: "RESET" })).toEqual(initialPetState);
+  });
+
   it("surfaces failures", () => {
-    expect(reducePetState(initialPetState, { type: "FAILED", message: "offline" })).toEqual({
+    expect(reducePetState(initialPetState, { type: "FAILED", message: "offline" })).toMatchObject({
       mode: "error",
       message: "offline",
+      emotion: "worried",
     });
   });
 });

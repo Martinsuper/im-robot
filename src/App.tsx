@@ -69,6 +69,17 @@ function PetWindow() {
   const [petState, dispatch] = useReducer(reducePetState, initialPetState);
   const [companionName, setCompanionName] = useState("Piko");
   const isResting = petState.mode === "resting";
+  const resetTimer = useRef<number | undefined>(undefined);
+
+  function resetAfter(delay = 1400) {
+    if (resetTimer.current) window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => dispatch({ type: "RESET" }), delay);
+  }
+
+  function showTransient(event: Parameters<typeof dispatch>[0], delay?: number) {
+    dispatch(event);
+    resetAfter(delay);
+  }
 
   useEffect(() => {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
@@ -80,19 +91,41 @@ function PetWindow() {
     if (!isTauriRuntime) return;
 
     const unlisten = listen<ChatEvent>("chat-event", (event) => {
-      if (event.payload.type === "started") dispatch({ type: "CHAT_SUBMITTED" });
-      if (event.payload.type === "delta") dispatch({ type: "CHAT_STREAM_STARTED" });
-      if (event.payload.type === "completed" || event.payload.type === "cancelled") {
-        dispatch({ type: "CHAT_COMPLETED" });
+      if (event.payload.type === "started") {
+        dispatch({ type: event.payload.working ? "WORK_STARTED" : "CHAT_SUBMITTED" });
       }
+      if (event.payload.type === "delta") dispatch({ type: "CHAT_STREAM_STARTED" });
+      if (event.payload.type === "completed") showTransient({ type: "CHAT_COMPLETED" });
+      if (event.payload.type === "cancelled") dispatch({ type: "RESET" });
       if (event.payload.type === "failed") {
-        dispatch({ type: "FAILED", message: event.payload.message });
+        showTransient({ type: "FAILED", message: event.payload.message }, 2400);
       }
     });
 
     return () => {
       void unlisten.then((dispose) => dispose());
     };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+
+    const unlisten = listen<PetVisualEvent>("pet-visual-event", (event) => {
+      if (event.payload.type === "attachment-ready") {
+        showTransient({ type: "ATTACHMENT_READY" }, 2200);
+      }
+      if (event.payload.type === "reminder-fired") {
+        showTransient({ type: "REMINDER_FIRED", message: event.payload.message }, 2600);
+      }
+    });
+
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
+  useEffect(() => () => {
+    if (resetTimer.current) window.clearTimeout(resetTimer.current);
   }, []);
 
   function toggleRest() {
@@ -122,10 +155,14 @@ function PetWindow() {
       }}
     >
       <div
-        className={`pet pet--${petState.mode}`}
+        className={`pet pet--${petState.mode} pet-reaction--${petState.reaction}`}
         aria-label="拖动 Piko"
+        onClick={() => {
+          if (!isResting) showTransient({ type: "INTERACT" });
+        }}
       >
         <PetSprite mode={petState.mode} />
+        <span className={`pet-emotion pet-emotion--${petState.emotion}`} aria-hidden="true" />
       </div>
       <div className="pet-actions">
         <button
@@ -868,11 +905,15 @@ type AttachmentAction = "summarize" | "translate" | "explain";
 type Theme = "sage" | "blue" | "peach";
 
 type ChatEvent =
-  | { type: "started"; requestId: string }
+  | { type: "started"; requestId: string; working: boolean }
   | { type: "delta"; requestId: string; sequence: number; text: string }
   | { type: "completed"; requestId: string }
   | { type: "cancelled"; requestId: string }
   | { type: "failed"; requestId: string; message: string };
+
+type PetVisualEvent =
+  | { type: "attachment-ready" }
+  | { type: "reminder-fired"; message: string };
 
 const defaultAiSettings: AiSettings = {
   provider: "openai-compatible",
