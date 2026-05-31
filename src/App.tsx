@@ -13,6 +13,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { initialPetState, reducePetState } from "./features/pet/petState";
+import ReactMarkdown from "react-markdown";
 import "./App.css";
 
 type WindowLabel = "pet" | "bubble" | "panel";
@@ -343,7 +344,9 @@ function BubbleWindow() {
           ×
         </button>
       </header>
-      <p className="bubble-message">{message}</p>
+      <div className="bubble-message">
+        <ReactMarkdown>{message}</ReactMarkdown>
+      </div>
       <section className={`attachment-dropzone${isDraggingFile ? " is-dragging" : ""}`}>
         {attachment ? (
           <>

@@ -168,7 +168,72 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   line-height: 1;
 }
 
-.bubble-message { min-height: 0; margin: 0; color: #526476; font-size: 12px; line-height: 1.5; overflow-y: auto; white-space: pre-wrap; }
+.bubble-message {
+  min-height: 0;
+  margin: 0;
+  color: #526476;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-y: auto;
+}
+.bubble-message p { margin: 0 0 6px; }
+.bubble-message p:last-child { margin-bottom: 0; }
+.bubble-message strong { color: #263449; font-weight: 600; }
+.bubble-message em { font-style: italic; }
+.bubble-message ul, .bubble-message ol {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+.bubble-message ul:last-child, .bubble-message ol:last-child { margin-bottom: 0; }
+.bubble-message li { margin-bottom: 2px; }
+.bubble-message code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: rgba(87, 121, 109, .08);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+.bubble-message pre {
+  margin: 0 0 6px;
+  background: #1e2a38;
+  color: #c9d1d9;
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.bubble-message pre:last-child { margin-bottom: 0; }
+.bubble-message pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+}
+.bubble-message h1, .bubble-message h2, .bubble-message h3,
+.bubble-message h4, .bubble-message h5, .bubble-message h6 {
+  margin: 8px 0 4px;
+  color: #263449;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.bubble-message h1 { font-size: 14px; }
+.bubble-message h2 { font-size: 13px; }
+.bubble-message h3 { font-size: 12px; }
+.bubble-message h4, .bubble-message h5, .bubble-message h6 { font-size: 11px; }
+.bubble-message blockquote {
+  margin: 0 0 6px;
+  padding-left: 10px;
+  border-left: 3px solid rgba(87, 121, 109, .3);
+  color: #81908c;
+}
+.bubble-message blockquote:last-child { margin-bottom: 0; }
+.bubble-message hr {
+  border: none;
+  border-top: 1px solid rgba(87, 121, 109, .15);
+  margin: 8px 0;
+}
+.bubble-message a { color: #57796d; text-decoration: underline; }
 .attachment-dropzone {
   display: grid;
   gap: 5px;
