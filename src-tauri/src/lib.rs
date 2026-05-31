@@ -1,19 +1,20 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     fs,
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, State, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -65,14 +66,44 @@ struct ModelInfo {
     id: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
-enum ChatEvent {
-    Started { request_id: String },
-    Delta { request_id: String, text: String },
-    Completed { request_id: String },
-    Failed { request_id: String, message: String },
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatHistoryEntry {
+    id: String,
+    prompt: String,
+    response: String,
+    created_at: u64,
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "type"
+)]
+enum ChatEvent {
+    Started {
+        request_id: String,
+    },
+    Delta {
+        request_id: String,
+        sequence: u64,
+        text: String,
+    },
+    Completed {
+        request_id: String,
+    },
+    Cancelled {
+        request_id: String,
+    },
+    Failed {
+        request_id: String,
+        message: String,
+    },
+}
+
+#[derive(Default)]
+struct ChatRequests(Mutex<HashMap<String, Arc<AtomicBool>>>);
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -89,7 +120,7 @@ impl Default for AiSettings {
         Self {
             provider: "openai-compatible".to_string(),
             base_url: "http://localhost:11434/v1".to_string(),
-            model: "gemma4:e2b".to_string(),
+            model: "gemma4:e4b".to_string(),
             temperature: 0.7,
             timeout_seconds: 120,
         }
@@ -108,6 +139,40 @@ fn app_settings_path(app: &AppHandle) -> Option<PathBuf> {
         .app_config_dir()
         .ok()
         .map(|directory| directory.join("app-settings.json"))
+}
+
+fn chat_history_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("chat-history.json"))
+}
+
+fn read_chat_history(app: &AppHandle) -> Vec<ChatHistoryEntry> {
+    chat_history_path(app)
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+fn persist_chat_history(app: &AppHandle, history: &[ChatHistoryEntry]) -> Result<(), String> {
+    let path = chat_history_path(app).ok_or_else(|| "无法获取历史记录路径".to_string())?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| "无法获取历史记录目录".to_string())?;
+    let json = serde_json::to_string(history).map_err(|error| error.to_string())?;
+
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    fs::write(path, json).map_err(|error| error.to_string())
+}
+
+fn append_chat_history(app: &AppHandle, entry: ChatHistoryEntry) -> Result<(), String> {
+    const MAX_CHAT_HISTORY: usize = 50;
+
+    let mut history = read_chat_history(app);
+    history.insert(0, entry);
+    history.truncate(MAX_CHAT_HISTORY);
+    persist_chat_history(app, &history)
 }
 
 fn read_settings(app: &AppHandle) -> AppSettings {
@@ -181,6 +246,33 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
     Ok(())
 }
 
+fn should_bypass_system_proxy(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.trim_matches(['[', ']']);
+
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+        || host == "::1"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+fn http_client(settings: &AiSettings) -> Result<reqwest::Client, String> {
+    let mut builder =
+        reqwest::Client::builder().timeout(Duration::from_secs(settings.timeout_seconds));
+    if should_bypass_system_proxy(&settings.base_url) {
+        builder = builder.no_proxy();
+    }
+    builder.build().map_err(|error| error.to_string())
+}
+
 fn request_builder(
     client: &reqwest::Client,
     method: reqwest::Method,
@@ -251,37 +343,21 @@ fn restore_pet_position(app: &AppHandle) {
     }
 }
 
-fn snap_pet_to_edge(app: &AppHandle) {
+fn save_current_pet_position(app: &AppHandle) {
     let Some(window) = app.get_webview_window("pet") else {
         return;
     };
     let Ok(position) = window.outer_position() else {
         return;
     };
-    let Ok(window_size) = window.outer_size() else {
-        return;
-    };
-    let Ok(Some(monitor)) = window.current_monitor() else {
-        persist_pet_position(app, position);
-        return;
-    };
+    persist_pet_position(app, position);
+}
 
-    let area = monitor.work_area();
-    let left = area.position.x + PET_MARGIN;
-    let right = area.position.x + area.size.width as i32 - window_size.width as i32 - PET_MARGIN;
-    let top = area.position.y + PET_MARGIN;
-    let bottom = area.position.y + area.size.height as i32 - window_size.height as i32 - PET_MARGIN;
-    let x = if (position.x - left).abs() <= (right - position.x).abs() {
-        left
-    } else {
-        right
-    };
-    let snapped = PhysicalPosition::new(x, position.y.clamp(top, bottom.max(top)));
-
-    if snapped != position {
-        let _ = window.set_position(snapped);
+#[tauri::command]
+fn move_pet(app: AppHandle, x: f64, y: f64) {
+    if let Some(window) = app.get_webview_window("pet") {
+        let _ = window.set_position(LogicalPosition::new(x, y));
     }
-    persist_pet_position(app, snapped);
 }
 
 fn place_bubble_near_pet(app: &AppHandle) {
@@ -338,11 +414,26 @@ fn watch_pet_position(app: &AppHandle) {
         thread::spawn(move || {
             thread::sleep(Duration::from_millis(PET_MOVE_DEBOUNCE_MS));
             if revision.load(Ordering::Relaxed) == current {
-                snap_pet_to_edge(&app);
+                save_current_pet_position(&app);
             }
         });
     });
 }
+
+#[cfg(target_os = "macos")]
+fn enable_pet_background_drag(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("pet") else {
+        return;
+    };
+
+    let _ = window.with_webview(|webview| unsafe {
+        let ns_window: &objc2_app_kit::NSWindow = &*webview.ns_window().cast();
+        ns_window.setMovableByWindowBackground(true);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enable_pet_background_drag(_app: &AppHandle) {}
 
 fn show_and_focus(app: &AppHandle, label: &str) {
     if label == "bubble" {
@@ -383,6 +474,16 @@ fn get_settings(app: AppHandle) -> AppSettings {
 }
 
 #[tauri::command]
+fn list_chat_history(app: AppHandle) -> Vec<ChatHistoryEntry> {
+    read_chat_history(&app)
+}
+
+#[tauri::command]
+fn clear_chat_history(app: AppHandle) -> Result<(), String> {
+    persist_chat_history(&app, &[])
+}
+
+#[tauri::command]
 fn update_quiet_mode(app: AppHandle, quiet_mode: String) -> Result<AppSettings, String> {
     if !["active", "balanced", "minimal"].contains(&quiet_mode.as_str()) {
         return Err("Unsupported quiet mode".to_string());
@@ -417,10 +518,7 @@ fn update_ai_settings(app: AppHandle, input: AiSettingsInput) -> Result<AppSetti
 async fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
     let settings = read_settings(&app);
     validate_ai_settings(&settings.ai)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(settings.ai.timeout_seconds))
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = http_client(&settings.ai)?;
     let response = request_builder(
         &client,
         reqwest::Method::GET,
@@ -465,25 +563,31 @@ fn extract_chat_deltas(line: &str) -> Vec<String> {
         .collect()
 }
 
-async fn stream_chat(app: &AppHandle, request_id: &str, prompt: &str) -> Result<(), String> {
-    let settings = read_settings(&app);
+fn emit_chat_event(app: &AppHandle, event: ChatEvent) {
+    let _ = app.emit_to("bubble", "chat-event", event.clone());
+    let _ = app.emit_to("pet", "chat-event", event);
+}
+
+async fn stream_chat(
+    app: &AppHandle,
+    request_id: &str,
+    prompt: &str,
+    cancelled: &AtomicBool,
+) -> Result<bool, String> {
+    let settings = read_settings(app);
     validate_ai_settings(&settings.ai)?;
     if prompt.trim().is_empty() {
         return Err("问题不能为空".to_string());
     }
 
-    let _ = app.emit_to(
-        "bubble",
-        "chat-event",
+    emit_chat_event(
+        app,
         ChatEvent::Started {
             request_id: request_id.to_string(),
         },
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(settings.ai.timeout_seconds))
-        .build()
-        .map_err(|error| error.to_string())?;
+    let client = http_client(&settings.ai)?;
     let response = request_builder(
         &client,
         reqwest::Method::POST,
@@ -508,17 +612,24 @@ async fn stream_chat(app: &AppHandle, request_id: &str, prompt: &str) -> Result<
     .map_err(|error| error.to_string())?;
     let mut response = response;
     let mut buffer = String::new();
+    let mut assistant_response = String::new();
+    let mut sequence = 0;
 
     while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(true);
+        }
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(newline) = buffer.find('\n') {
             let line = buffer.drain(..=newline).collect::<String>();
             for text in extract_chat_deltas(line.trim()) {
-                let _ = app.emit_to(
-                    "bubble",
-                    "chat-event",
+                assistant_response.push_str(&text);
+                sequence += 1;
+                emit_chat_event(
+                    app,
                     ChatEvent::Delta {
                         request_id: request_id.to_string(),
+                        sequence,
                         text,
                     },
                 );
@@ -526,30 +637,95 @@ async fn stream_chat(app: &AppHandle, request_id: &str, prompt: &str) -> Result<
         }
     }
 
-    let _ = app.emit_to(
-        "bubble",
-        "chat-event",
+    for text in extract_chat_deltas(buffer.trim()) {
+        assistant_response.push_str(&text);
+        sequence += 1;
+        emit_chat_event(
+            app,
+            ChatEvent::Delta {
+                request_id: request_id.to_string(),
+                sequence,
+                text,
+            },
+        );
+    }
+
+    append_chat_history(
+        app,
+        ChatHistoryEntry {
+            id: request_id.to_string(),
+            prompt: prompt.trim().to_string(),
+            response: assistant_response,
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        },
+    )?;
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(true);
+    }
+
+    emit_chat_event(
+        app,
         ChatEvent::Completed {
             request_id: request_id.to_string(),
         },
     );
-    Ok(())
+    Ok(false)
 }
 
 #[tauri::command]
-async fn chat_start(app: AppHandle, request_id: String, prompt: String) -> Result<(), String> {
-    let result = stream_chat(&app, &request_id, &prompt).await;
+async fn chat_start(
+    app: AppHandle,
+    requests: State<'_, ChatRequests>,
+    request_id: String,
+    prompt: String,
+) -> Result<(), String> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    requests
+        .0
+        .lock()
+        .map_err(|_| "无法记录当前生成任务".to_string())?
+        .insert(request_id.clone(), Arc::clone(&cancelled));
+
+    let result = stream_chat(&app, &request_id, &prompt, &cancelled).await;
+    if let Ok(mut active) = requests.0.lock() {
+        active.remove(&request_id);
+    }
+
+    if matches!(result, Ok(true)) {
+        emit_chat_event(
+            &app,
+            ChatEvent::Cancelled {
+                request_id: request_id.clone(),
+            },
+        );
+    }
     if let Err(message) = &result {
-        let _ = app.emit_to(
-            "bubble",
-            "chat-event",
+        emit_chat_event(
+            &app,
             ChatEvent::Failed {
                 request_id,
                 message: message.clone(),
             },
         );
     }
-    result
+    result.map(|_| ())
+}
+
+#[tauri::command]
+fn chat_cancel(requests: State<'_, ChatRequests>, request_id: String) -> Result<(), String> {
+    if let Some(cancelled) = requests
+        .0
+        .lock()
+        .map_err(|_| "无法读取当前生成任务".to_string())?
+        .get(&request_id)
+    {
+        cancelled.store(true, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 fn configure_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -585,7 +761,11 @@ fn configure_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn configure_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Space);
+    #[cfg(target_os = "macos")]
+    let primary_modifier = Modifiers::SUPER;
+    #[cfg(not(target_os = "macos"))]
+    let primary_modifier = Modifiers::CONTROL;
+    let shortcut = Shortcut::new(Some(primary_modifier | Modifiers::SHIFT), Code::Space);
 
     app.handle().plugin(
         tauri_plugin_global_shortcut::Builder::new()
@@ -604,14 +784,15 @@ fn configure_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error:
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(ChatRequests::default())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             configure_tray(app)?;
             configure_global_shortcut(app)?;
             persist_settings(app.handle(), &read_settings(app.handle()));
             restore_pet_position(app.handle());
-            snap_pet_to_edge(app.handle());
             watch_pet_position(app.handle());
+            enable_pet_background_drag(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -619,11 +800,15 @@ pub fn run() {
             hide_bubble,
             open_panel,
             show_pet,
+            move_pet,
             get_settings,
+            list_chat_history,
+            clear_chat_history,
             update_quiet_mode,
             update_ai_settings,
             list_models,
-            chat_start
+            chat_start,
+            chat_cancel
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piko desktop application");
@@ -631,7 +816,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_chat_deltas, monitor_contains, normalize_base_url, AppSettings};
+    use super::{
+        extract_chat_deltas, monitor_contains, normalize_base_url, should_bypass_system_proxy,
+        AppSettings, ChatEvent,
+    };
     use tauri::{PhysicalPosition, PhysicalSize};
 
     #[test]
@@ -672,5 +860,27 @@ mod tests {
             vec!["你好".to_string()]
         );
         assert!(extract_chat_deltas("data: [DONE]").is_empty());
+    }
+
+    #[test]
+    fn bypasses_system_proxy_for_local_model_services() {
+        assert!(should_bypass_system_proxy("http://localhost:11434/v1"));
+        assert!(should_bypass_system_proxy("http://127.0.0.1:1234/v1"));
+        assert!(should_bypass_system_proxy("http://[::1]:8000/v1"));
+        assert!(should_bypass_system_proxy(
+            "http://model-server.local:8000/v1"
+        ));
+        assert!(!should_bypass_system_proxy("https://api.example.com/v1"));
+    }
+
+    #[test]
+    fn serializes_chat_event_types_as_camel_case() {
+        let json = serde_json::to_value(ChatEvent::Completed {
+            request_id: "request-1".to_string(),
+        })
+        .expect("chat event should serialize");
+
+        assert_eq!(json["type"], "completed");
+        assert_eq!(json["requestId"], "request-1");
     }
 }

@@ -1,4 +1,12 @@
-import { FormEvent, useEffect, useMemo, useReducer, useState } from "react";
+import {
+  CSSProperties,
+  FormEvent,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -22,47 +30,102 @@ function runCommand<T>(command: string, args?: Record<string, unknown>, fallback
 
 const windowLabel = detectWindowLabel();
 
+const petSpriteStates = {
+  idle: { row: 0, frames: 6, duration: 5500 },
+  listening: { row: 3, frames: 4, duration: 700 },
+  thinking: { row: 8, frames: 6, duration: 1030 },
+  speaking: { row: 3, frames: 4, duration: 700 },
+  working: { row: 7, frames: 6, duration: 820 },
+  success: { row: 4, frames: 5, duration: 840 },
+  confirming: { row: 6, frames: 6, duration: 1010 },
+  resting: { row: 0, frames: 1, duration: 5500 },
+  error: { row: 5, frames: 8, duration: 1220 },
+};
+
+function PetSprite({
+  mode = "idle",
+  compact = false,
+}: {
+  mode?: keyof typeof petSpriteStates;
+  compact?: boolean;
+}) {
+  const sprite = petSpriteStates[mode];
+  const style = {
+    "--sprite-row": sprite.row,
+    "--sprite-frames": sprite.frames,
+    "--sprite-duration": `${sprite.duration}ms`,
+  } as CSSProperties;
+
+  return (
+    <span className={`pet-sprite-frame${compact ? " pet-sprite-frame--compact" : ""}`}>
+      <span className="pet-sprite" style={style} />
+    </span>
+  );
+}
+
 function PetWindow() {
   const [petState, dispatch] = useReducer(reducePetState, initialPetState);
   const isResting = petState.mode === "resting";
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+
+    const unlisten = listen<ChatEvent>("chat-event", (event) => {
+      if (event.payload.type === "started") dispatch({ type: "CHAT_SUBMITTED" });
+      if (event.payload.type === "delta") dispatch({ type: "CHAT_STREAM_STARTED" });
+      if (event.payload.type === "completed" || event.payload.type === "cancelled") {
+        dispatch({ type: "CHAT_COMPLETED" });
+      }
+      if (event.payload.type === "failed") {
+        dispatch({ type: "FAILED", message: event.payload.message });
+      }
+    });
+
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
 
   function toggleRest() {
     dispatch({ type: isResting ? "WAKE" : "REST" });
   }
 
   return (
-    <main className="pet-stage" aria-label="桌面精灵 Piko">
-      <button
+    <main
+      className="pet-stage"
+      aria-label="桌面精灵 Piko"
+      onMouseMove={(event) => {
+        if ((event.buttons & 1) === 0 || !isTauriRuntime) return;
+        event.preventDefault();
+        void runCommand("move_pet", { x: event.screenX - 78, y: event.screenY - 70 });
+      }}
+    >
+      <div
         className={`pet pet--${petState.mode}`}
-        type="button"
-        aria-label="打开 Piko 对话气泡"
-        onClick={() => {
-          dispatch({ type: "LISTEN" });
-          void runCommand("show_bubble");
-        }}
-        onMouseDown={(event) => {
-          if (event.button === 0 && isTauriRuntime) void getCurrentWindow().startDragging();
-        }}
+        aria-label="拖动 Piko"
       >
-        <span className="pet__ear pet__ear--left" />
-        <span className="pet__ear pet__ear--right" />
-        <span className="pet__face">
-          <span className="pet__eye pet__eye--left" />
-          <span className="pet__eye pet__eye--right" />
-          <span className="pet__mouth" />
-          <span className="pet__core" />
-        </span>
-      </button>
+        <PetSprite mode={petState.mode} />
+      </div>
       <div className="pet-actions">
+        <button
+          className="icon-button"
+          type="button"
+          onClick={() => {
+            dispatch({ type: "LISTEN" });
+            void runCommand("show_bubble");
+          }}
+        >
+          对话
+        </button>
         <button
           className="icon-button"
           type="button"
           onClick={toggleRest}
         >
-          {isResting ? "Awake" : "Rest"}
+          {isResting ? "唤醒" : "休息"}
         </button>
         <button className="icon-button" type="button" onClick={() => runCommand("open_panel")}>
-          Panel
+          面板
         </button>
       </div>
       <p className="pet-status" aria-live="polite">
@@ -77,25 +140,35 @@ function BubbleWindow() {
   const [message, setMessage] = useState("你好，我是 Piko。今天想一起完成什么？");
   const [isThinking, setIsThinking] = useState(false);
   const [requestId, setRequestId] = useState<string>();
+  const activeRequestId = useRef<string | undefined>(undefined);
+  const lastSequence = useRef(0);
+  const previewReplyTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
 
     const unlisten = listen<ChatEvent>("chat-event", (event) => {
-      if (event.payload.requestId !== requestId) return;
+      if (event.payload.requestId !== activeRequestId.current) return;
 
-      if (event.payload.type === "Started") {
+      if (event.payload.type === "started") {
+        lastSequence.current = 0;
         setMessage("");
       }
-      if (event.payload.type === "Delta") {
+      if (event.payload.type === "delta") {
+        if (event.payload.sequence <= lastSequence.current) return;
+        lastSequence.current = event.payload.sequence;
         const { text } = event.payload;
         setIsThinking(false);
         setMessage((current) => current + text);
       }
-      if (event.payload.type === "Completed") {
+      if (event.payload.type === "completed") {
         setIsThinking(false);
       }
-      if (event.payload.type === "Failed") {
+      if (event.payload.type === "cancelled") {
+        setIsThinking(false);
+        setMessage((current) => current || "已停止生成。");
+      }
+      if (event.payload.type === "failed") {
         setIsThinking(false);
         setMessage(event.payload.message);
       }
@@ -104,7 +177,7 @@ function BubbleWindow() {
     return () => {
       void unlisten.then((dispose) => dispose());
     };
-  }, [requestId]);
+  }, []);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -114,11 +187,12 @@ function BubbleWindow() {
     const currentRequestId = crypto.randomUUID();
     setIsThinking(true);
     setMessage("Piko 正在连接模型服务...");
+    activeRequestId.current = currentRequestId;
     setRequestId(currentRequestId);
     setPrompt("");
 
     if (!isTauriRuntime) {
-      window.setTimeout(() => {
+      previewReplyTimer.current = window.setTimeout(() => {
         setMessage(`这是浏览器预览回复：${currentPrompt}`);
         setIsThinking(false);
       }, 450);
@@ -134,15 +208,34 @@ function BubbleWindow() {
     });
   }
 
+  function cancel() {
+    if (!requestId) return;
+    if (!isTauriRuntime && previewReplyTimer.current) {
+      window.clearTimeout(previewReplyTimer.current);
+      previewReplyTimer.current = undefined;
+      setIsThinking(false);
+      setMessage("已停止生成。");
+      return;
+    }
+    void runCommand("chat_cancel", { requestId });
+  }
+
+  async function copyResult() {
+    await navigator.clipboard.writeText(message);
+  }
+
   return (
     <main className="bubble-shell">
       <header className="bubble-header">
-        <div>
-          <p className="eyebrow">PIKO QUICK CHAT</p>
-          <h1>{isThinking ? "正在思考..." : "随时可以问我"}</h1>
+        <div className="companion-heading">
+          <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
+          <div>
+            <p className="eyebrow">PIKO · QUICK CHAT</p>
+            <h1>{isThinking ? "正在思考..." : "今天想做点什么？"}</h1>
+          </div>
         </div>
-        <button className="close-button" type="button" onClick={() => runCommand("hide_bubble")}>
-          Close
+        <button className="close-button" type="button" onClick={() => runCommand("hide_bubble")} aria-label="关闭">
+          ×
         </button>
       </header>
       <p className="bubble-message">{message}</p>
@@ -159,10 +252,20 @@ function BubbleWindow() {
         </button>
       </form>
       <footer className="bubble-footer">
-        <span>Command/Ctrl + Shift + Space</span>
-        <button type="button" onClick={() => runCommand("open_panel")}>
-          打开面板
-        </button>
+        <span>⌘ / Ctrl + Shift + Space</span>
+        <div className="bubble-footer__actions">
+          {isThinking && (
+            <button type="button" onClick={cancel}>
+              停止生成
+            </button>
+          )}
+          <button type="button" disabled={!message} onClick={() => void copyResult()}>
+            复制结果
+          </button>
+          <button type="button" onClick={() => runCommand("open_panel")}>
+            打开面板
+          </button>
+        </div>
       </footer>
     </main>
   );
@@ -174,6 +277,7 @@ function PanelWindow() {
   const [apiKey, setApiKey] = useState("");
   const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
   const [isTesting, setIsTesting] = useState(false);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
   const statuses = useMemo(
     () => [
       ["桌面精灵", "在线"],
@@ -190,6 +294,7 @@ function PanelWindow() {
       setAiSettings(settings.ai);
       setConnectionStatus(settings.hasApiKey ? "已配置密钥" : "等待测试");
     });
+    void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
   }, []);
 
   function updateQuietMode(mode: QuietMode) {
@@ -233,22 +338,42 @@ function PanelWindow() {
     }
   }
 
+  async function clearChatHistory() {
+    await runCommand("clear_chat_history");
+    setChatHistory([]);
+  }
+
   return (
     <main className="panel-shell">
       <header className="panel-header">
         <div>
-          <p className="eyebrow">DESKTOP AI PET</p>
-          <h1>Piko 助手面板</h1>
-          <p>M1 桌面体验正在运行。精灵位置会在拖动后吸附至边缘并自动保存。</p>
+          <p className="eyebrow">PIKO · DESKTOP COMPANION</p>
+          <h1>伙伴图鉴</h1>
+          <p>一个安静待在桌面上，也会认真帮忙的小伙伴。</p>
         </div>
-        <span className="status-pill">M1 Desktop</span>
+        <span className="status-pill">在线</span>
       </header>
+
+      <section className="companion-card">
+        <div className="companion-card__portrait">
+          <PetSprite />
+        </div>
+        <div className="companion-card__copy">
+          <p className="eyebrow">NO. 001 · DESKTOP SPIRIT</p>
+          <h2>Piko</h2>
+          <p>像素型桌面精灵。擅长陪伴、对话和处理专注任务。</p>
+          <div className="trait-list">
+            <span>像素系</span>
+            <span>AI 助手</span>
+          </div>
+        </div>
+      </section>
 
       <section className="panel-card">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">SYSTEM STATUS</p>
-            <h2>能力状态</h2>
+            <p className="eyebrow">STATUS</p>
+            <h2>当前状态</h2>
           </div>
           <button type="button" onClick={() => runCommand("show_pet")}>
             显示精灵
@@ -290,7 +415,7 @@ function PanelWindow() {
             <input
               value={aiSettings.model}
               onChange={(event) => updateAiField("model", event.currentTarget.value)}
-              placeholder="gemma4:e2b"
+              placeholder="gemma4:e4b"
             />
           </label>
           <label>
@@ -352,14 +477,29 @@ function PanelWindow() {
       </section>
 
       <section className="panel-card">
-        <p className="eyebrow">NEXT BUILD</p>
-        <h2>下一阶段</h2>
-        <ul className="build-list">
-          <li>增加权限中心和文本文件拖入</li>
-          <li>增加停止生成和对话历史</li>
-          <li>扩展 OpenAI Responses API Provider</li>
-        </ul>
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">CHAT HISTORY</p>
+            <h2>最近对话</h2>
+          </div>
+          <button type="button" disabled={!chatHistory.length} onClick={() => void clearChatHistory()}>
+            清除历史
+          </button>
+        </div>
+        {chatHistory.length ? (
+          <ul className="history-list">
+            {chatHistory.map((entry) => (
+              <li key={entry.id}>
+                <strong>{entry.prompt}</strong>
+                <span>{entry.response || "没有返回文本"}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-state">暂无对话历史。</p>
+        )}
       </section>
+
     </main>
   );
 }
@@ -384,16 +524,24 @@ interface ModelInfo {
   id: string;
 }
 
+interface ChatHistoryEntry {
+  id: string;
+  prompt: string;
+  response: string;
+  createdAt: number;
+}
+
 type ChatEvent =
-  | { type: "Started"; requestId: string }
-  | { type: "Delta"; requestId: string; text: string }
-  | { type: "Completed"; requestId: string }
-  | { type: "Failed"; requestId: string; message: string };
+  | { type: "started"; requestId: string }
+  | { type: "delta"; requestId: string; sequence: number; text: string }
+  | { type: "completed"; requestId: string }
+  | { type: "cancelled"; requestId: string }
+  | { type: "failed"; requestId: string; message: string };
 
 const defaultAiSettings: AiSettings = {
   provider: "openai-compatible",
   baseUrl: "http://localhost:11434/v1",
-  model: "gemma4:e2b",
+  model: "gemma4:e4b",
   temperature: 0.7,
   timeoutSeconds: 120,
 };

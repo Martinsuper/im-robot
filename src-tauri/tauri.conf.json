@@ -15,8 +15,8 @@
       {
         "label": "pet",
         "title": "Piko",
-        "width": 180,
-        "height": 180,
+        "width": 156,
+        "height": 156,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -26,8 +26,8 @@
       {
         "label": "bubble",
         "title": "Piko Quick Chat",
-        "width": 380,
-        "height": 230,
+        "width": 360,
+        "height": 214,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -38,10 +38,10 @@
       {
         "label": "panel",
         "title": "Piko Assistant",
-        "width": 420,
-        "height": 760,
-        "minWidth": 380,
-        "minHeight": 620,
+        "width": 400,
+        "height": 700,
+        "minWidth": 360,
+        "minHeight": 560,
         "visible": false
       }
     ],

@@ -5,6 +5,7 @@
   "windows": ["pet", "bubble", "panel"],
   "permissions": [
     "core:default",
+    "core:window:allow-start-dragging",
     "opener:default"
   ]
 }
