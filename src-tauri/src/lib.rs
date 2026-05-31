@@ -14,7 +14,8 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, State, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, PhysicalSize, State,
+    WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -31,6 +32,12 @@ const MAX_TEXT_ATTACHMENT_PREVIEW_CHARS: usize = 240;
 struct PetPosition {
     x: i32,
     y: i32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct BubbleSize {
+    width: u32,
+    height: u32,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -195,6 +202,13 @@ fn pet_position_path(app: &AppHandle) -> Option<PathBuf> {
         .app_config_dir()
         .ok()
         .map(|directory| directory.join("pet-position.json"))
+}
+
+fn bubble_size_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("bubble-size.json"))
 }
 
 fn app_settings_path(app: &AppHandle) -> Option<PathBuf> {
@@ -409,6 +423,24 @@ fn persist_pet_position(app: &AppHandle, position: PhysicalPosition<i32>) {
     let _ = fs::write(path, json);
 }
 
+fn persist_bubble_size(app: &AppHandle, size: PhysicalSize<u32>) {
+    let Some(path) = bubble_size_path(app) else {
+        return;
+    };
+    let Some(directory) = path.parent() else {
+        return;
+    };
+    let Ok(json) = serde_json::to_string(&BubbleSize {
+        width: size.width,
+        height: size.height,
+    }) else {
+        return;
+    };
+
+    let _ = fs::create_dir_all(directory);
+    let _ = fs::write(path, json);
+}
+
 fn monitor_contains(
     monitor_position: PhysicalPosition<i32>,
     monitor_size: tauri::PhysicalSize<u32>,
@@ -456,6 +488,33 @@ fn save_current_pet_position(app: &AppHandle) {
         return;
     };
     persist_pet_position(app, position);
+}
+
+fn restore_bubble_size(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("bubble") else {
+        return;
+    };
+    let Some(path) = bubble_size_path(app) else {
+        return;
+    };
+    let Ok(json) = fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(saved) = serde_json::from_str::<BubbleSize>(&json) else {
+        return;
+    };
+    let size = PhysicalSize::new(saved.width, saved.height);
+    let _ = window.set_size(size);
+}
+
+fn save_current_bubble_size(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("bubble") else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    persist_bubble_size(app, size);
 }
 
 #[tauri::command]
@@ -525,6 +584,30 @@ fn watch_pet_position(app: &AppHandle) {
     });
 }
 
+fn watch_bubble_resize(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("bubble") else {
+        return;
+    };
+    let revision = Arc::new(AtomicU64::new(0));
+    let app = app.clone();
+
+    window.on_window_event(move |event| {
+        if !matches!(event, WindowEvent::Resized(_)) {
+            return;
+        }
+
+        let revision = Arc::clone(&revision);
+        let current = revision.fetch_add(1, Ordering::Relaxed) + 1;
+        let app = app.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(PET_MOVE_DEBOUNCE_MS));
+            if revision.load(Ordering::Relaxed) == current {
+                save_current_bubble_size(&app);
+            }
+        });
+    });
+}
+
 #[cfg(target_os = "macos")]
 fn enable_pet_background_drag(app: &AppHandle) {
     let Some(window) = app.get_webview_window("pet") else {
@@ -539,6 +622,21 @@ fn enable_pet_background_drag(app: &AppHandle) {
 
 #[cfg(not(target_os = "macos"))]
 fn enable_pet_background_drag(_app: &AppHandle) {}
+
+#[cfg(target_os = "macos")]
+fn enable_bubble_background_drag(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("bubble") else {
+        return;
+    };
+
+    let _ = window.with_webview(|webview| unsafe {
+        let ns_window: &objc2_app_kit::NSWindow = &*webview.ns_window().cast();
+        ns_window.setMovableByWindowBackground(true);
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enable_bubble_background_drag(_app: &AppHandle) {}
 
 fn show_and_focus(app: &AppHandle, label: &str) {
     if label == "bubble" {
@@ -1138,7 +1236,10 @@ pub fn run() {
             persist_settings(app.handle(), &read_settings(app.handle()));
             restore_pet_position(app.handle());
             watch_pet_position(app.handle());
+            restore_bubble_size(app.handle());
+            watch_bubble_resize(app.handle());
             enable_pet_background_drag(app.handle());
+            enable_bubble_background_drag(app.handle());
             watch_reminders(app.handle());
             Ok(())
         })
