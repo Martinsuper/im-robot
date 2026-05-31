@@ -7,6 +7,7 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
+    process::{Child, Command},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -152,6 +153,12 @@ enum ChatEvent {
 #[derive(Default)]
 struct ChatRequests(Mutex<HashMap<String, Arc<AtomicBool>>>);
 
+#[derive(Default)]
+struct ChatContext(Mutex<Vec<ChatHistoryEntry>>);
+
+#[derive(Default)]
+struct LocalTts(Mutex<Option<Child>>);
+
 #[derive(Clone, Debug)]
 struct TextAttachment {
     display_name: String,
@@ -204,6 +211,8 @@ struct Reminder {
     title: String,
     due_at: u64,
     status: String,
+    #[serde(default = "default_repeat_rule")]
+    repeat: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,6 +220,38 @@ struct Reminder {
 struct ReminderInput {
     title: String,
     due_at: u64,
+    #[serde(default = "default_repeat_rule")]
+    repeat: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FocusRecord {
+    completed_at: u64,
+    minutes: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FocusSnapshot {
+    status: String,
+    remaining_seconds: u64,
+    today_minutes: u64,
+}
+
+#[derive(Clone, Debug)]
+struct ActiveFocus {
+    status: String,
+    end_at: u64,
+    remaining_seconds: u64,
+    minutes: u64,
+}
+
+#[derive(Default)]
+struct FocusTimer(Mutex<Option<ActiveFocus>>);
+
+fn default_repeat_rule() -> String {
+    "none".to_string()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -223,6 +264,8 @@ enum PetVisualEvent {
     AttachmentReady,
     ReminderFired { message: String },
     AmbientNudge,
+    FocusStarted,
+    FocusCompleted,
 }
 
 impl Default for AppSettings {
@@ -293,6 +336,13 @@ fn reminders_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|directory| directory.join("reminders.json"))
 }
 
+fn focus_records_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("focus-records.json"))
+}
+
 fn read_chat_history(app: &AppHandle) -> Vec<ChatHistoryEntry> {
     chat_history_path(app)
         .and_then(|path| fs::read_to_string(path).ok())
@@ -320,6 +370,13 @@ fn append_chat_history(app: &AppHandle, entry: ChatHistoryEntry) -> Result<(), S
     persist_chat_history(app, &history)
 }
 
+fn append_session_chat_history(history: &mut Vec<ChatHistoryEntry>, entry: ChatHistoryEntry) {
+    const MAX_SESSION_CHAT_HISTORY: usize = 10;
+
+    history.insert(0, entry);
+    history.truncate(MAX_SESSION_CHAT_HISTORY);
+}
+
 fn read_reminders(app: &AppHandle) -> Vec<Reminder> {
     reminders_path(app)
         .and_then(|path| fs::read_to_string(path).ok())
@@ -333,6 +390,24 @@ fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), Stri
         .parent()
         .ok_or_else(|| "无法获取提醒记录目录".to_string())?;
     let json = serde_json::to_string(reminders).map_err(|error| error.to_string())?;
+
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    fs::write(path, json).map_err(|error| error.to_string())
+}
+
+fn read_focus_records(app: &AppHandle) -> Vec<FocusRecord> {
+    focus_records_path(app)
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+fn persist_focus_records(app: &AppHandle, records: &[FocusRecord]) -> Result<(), String> {
+    let path = focus_records_path(app).ok_or_else(|| "无法获取专注记录路径".to_string())?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| "无法获取专注记录目录".to_string())?;
+    let json = serde_json::to_string(records).map_err(|error| error.to_string())?;
 
     fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     fs::write(path, json).map_err(|error| error.to_string())
@@ -353,6 +428,15 @@ fn reminder_id() -> String {
             .unwrap_or_default()
             .as_nanos()
     )
+}
+
+fn today_focus_minutes(records: &[FocusRecord], now: u64) -> u64 {
+    let today = now / 86_400;
+    records
+        .iter()
+        .filter(|record| record.completed_at / 86_400 == today)
+        .map(|record| record.minutes)
+        .sum()
 }
 
 fn read_settings(app: &AppHandle) -> AppSettings {
@@ -669,6 +753,30 @@ fn watch_bubble_resize(app: &AppHandle) {
     });
 }
 
+fn watch_panel_close(app: &AppHandle) {
+    let Some(panel) = app.get_webview_window("panel") else {
+        return;
+    };
+    let app = app.clone();
+
+    panel.on_window_event(move |event| {
+        let WindowEvent::CloseRequested { api, .. } = event else {
+            return;
+        };
+        api.prevent_close();
+        if let Some(panel) = app.get_webview_window("panel") {
+            let _ = panel.hide();
+        }
+        let pet_is_visible = app
+            .get_webview_window("pet")
+            .and_then(|pet| pet.is_visible().ok())
+            .unwrap_or(false);
+        if !pet_is_visible {
+            show_and_focus(&app, "pet");
+        }
+    });
+}
+
 #[cfg(target_os = "macos")]
 fn enable_pet_background_drag(app: &AppHandle) {
     let Some(window) = app.get_webview_window("pet") else {
@@ -970,8 +1078,97 @@ fn list_chat_history(app: AppHandle) -> Vec<ChatHistoryEntry> {
 }
 
 #[tauri::command]
-fn clear_chat_history(app: AppHandle) -> Result<(), String> {
+fn clear_chat_history(app: AppHandle, context: State<'_, ChatContext>) -> Result<(), String> {
+    context
+        .0
+        .lock()
+        .map_err(|_| "无法清除当前对话上下文".to_string())?
+        .clear();
     persist_chat_history(&app, &[])
+}
+
+fn stop_local_tts(tts: &LocalTts) -> Result<(), String> {
+    let mut active = tts
+        .0
+        .lock()
+        .map_err(|_| "无法读取本地朗读状态".to_string())?;
+    if let Some(mut child) = active.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    Ok(())
+}
+
+fn is_emoji_component(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x1F1E6..=0x1F1FF
+            | 0x1F300..=0x1FAFF
+            | 0x2300..=0x23FF
+            | 0x2600..=0x27BF
+            | 0x2B00..=0x2BFF
+            | 0xFE0E..=0xFE0F
+            | 0x200D
+            | 0x20E3
+    )
+}
+
+fn text_for_speech(text: &str) -> String {
+    text.chars()
+        .filter(|character| !is_emoji_component(*character))
+        .collect::<String>()
+}
+
+fn spawn_local_tts(text: &str) -> Result<Child, String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("say")
+            .arg("--")
+            .arg(text)
+            .spawn()
+            .map_err(|error| format!("无法启动 macOS 本地朗读：{error}"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Add-Type -AssemblyName System.Speech; $speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer; $speaker.Speak($env:PIKO_TTS_TEXT)",
+            ])
+            .env("PIKO_TTS_TEXT", text)
+            .spawn()
+            .map_err(|error| format!("无法启动 Windows 本地朗读：{error}"))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("spd-say")
+            .arg("--")
+            .arg(text)
+            .spawn()
+            .map_err(|error| format!("无法启动 Linux 本地朗读，请安装 speech-dispatcher：{error}"))
+    }
+}
+
+#[tauri::command]
+fn speak_local_text(tts: State<'_, LocalTts>, text: String) -> Result<(), String> {
+    let text = text_for_speech(&text);
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("没有可朗读的内容".to_string());
+    }
+    stop_local_tts(&tts)?;
+    let child = spawn_local_tts(text)?;
+    *tts.0
+        .lock()
+        .map_err(|_| "无法更新本地朗读状态".to_string())? = Some(child);
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_local_speech(tts: State<'_, LocalTts>) -> Result<(), String> {
+    stop_local_tts(&tts)
 }
 
 #[tauri::command]
@@ -993,12 +1190,19 @@ fn create_reminder(app: AppHandle, input: ReminderInput) -> Result<Reminder, Str
     if input.due_at <= unix_timestamp() {
         return Err("提醒时间必须晚于当前时间".to_string());
     }
+    if !matches!(
+        input.repeat.as_str(),
+        "none" | "daily" | "weekly" | "weekdays"
+    ) {
+        return Err("不支持的重复提醒规则".to_string());
+    }
 
     let reminder = Reminder {
         id: reminder_id(),
         title: title.to_string(),
         due_at: input.due_at,
         status: "pending".to_string(),
+        repeat: input.repeat,
     };
     let mut reminders = read_reminders(&app);
     reminders.push(reminder.clone());
@@ -1021,11 +1225,32 @@ fn collect_due_reminders(reminders: &mut [Reminder], now: u64) -> Vec<Reminder> 
     let mut due = Vec::new();
     for reminder in reminders {
         if reminder.status == "pending" && reminder.due_at <= now {
-            reminder.status = "triggered".to_string();
             due.push(reminder.clone());
+            if reminder.repeat == "none" {
+                reminder.status = "triggered".to_string();
+            } else {
+                reminder.due_at = next_repeat_due(reminder.due_at, &reminder.repeat, now);
+            }
         }
     }
     due
+}
+
+fn next_repeat_due(mut due_at: u64, repeat: &str, now: u64) -> u64 {
+    loop {
+        due_at += match repeat {
+            "weekly" => 7 * 24 * 60 * 60,
+            _ => 24 * 60 * 60,
+        };
+        if repeat == "weekdays" {
+            while matches!((due_at / 86_400 + 4) % 7, 0 | 6) {
+                due_at += 24 * 60 * 60;
+            }
+        }
+        if due_at > now {
+            return due_at;
+        }
+    }
 }
 
 fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String> {
@@ -1259,15 +1484,28 @@ fn emit_chat_event(app: &AppHandle, event: ChatEvent) {
     let _ = app.emit_to("pet", "chat-event", event);
 }
 
+struct StreamChatInput<'a> {
+    request_id: &'a str,
+    prompt: &'a str,
+    history_prompt: &'a str,
+    screenshot: Option<&'a ScreenCapture>,
+    working: bool,
+    cancelled: &'a AtomicBool,
+}
+
 async fn stream_chat(
     app: &AppHandle,
-    request_id: &str,
-    prompt: &str,
-    history_prompt: &str,
-    screenshot: Option<&ScreenCapture>,
-    working: bool,
-    cancelled: &AtomicBool,
+    context: &ChatContext,
+    input: StreamChatInput<'_>,
 ) -> Result<bool, String> {
+    let StreamChatInput {
+        request_id,
+        prompt,
+        history_prompt,
+        screenshot,
+        working,
+        cancelled,
+    } = input;
     let settings = read_settings(app);
     validate_ai_settings(&settings.ai)?;
     if prompt.trim().is_empty() {
@@ -1291,7 +1529,11 @@ async fn stream_chat(
     } else {
         json!(prompt.trim())
     };
-    let recent_history = read_chat_history(app);
+    let recent_history = context
+        .0
+        .lock()
+        .map_err(|_| "无法读取当前对话上下文".to_string())?
+        .clone();
     let mut messages = vec![json!({
         "role": "system",
         "content": format!(
@@ -1363,18 +1605,21 @@ async fn stream_chat(
         );
     }
 
-    append_chat_history(
-        app,
-        ChatHistoryEntry {
-            id: request_id.to_string(),
-            prompt: history_prompt.to_string(),
-            response: assistant_response,
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        },
-    )?;
+    let history_entry = ChatHistoryEntry {
+        id: request_id.to_string(),
+        prompt: history_prompt.to_string(),
+        response: assistant_response,
+        created_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+    append_chat_history(app, history_entry.clone())?;
+    let mut session_history = context
+        .0
+        .lock()
+        .map_err(|_| "无法更新当前对话上下文".to_string())?;
+    append_session_chat_history(&mut session_history, history_entry);
     let _ = app.emit_to("panel", "chat-history-updated", ());
 
     if cancelled.load(Ordering::Relaxed) {
@@ -1440,6 +1685,7 @@ fn attachment_action_label(action: &str) -> &str {
 async fn chat_start(
     app: AppHandle,
     requests: State<'_, ChatRequests>,
+    context: State<'_, ChatContext>,
     attachments: State<'_, TextAttachmentStore>,
     captures: State<'_, ScreenCaptureStore>,
     input: ChatStartInput,
@@ -1485,12 +1731,15 @@ async fn chat_start(
 
     let result = stream_chat(
         &app,
-        &input.request_id,
-        &model_prompt,
-        &history_prompt,
-        screenshot.as_ref(),
-        working,
-        &cancelled,
+        &context,
+        StreamChatInput {
+            request_id: &input.request_id,
+            prompt: &model_prompt,
+            history_prompt: &history_prompt,
+            screenshot: screenshot.as_ref(),
+            working,
+            cancelled: &cancelled,
+        },
     )
     .await;
     if let Ok(mut active) = requests.0.lock() {
@@ -1593,6 +1842,8 @@ fn configure_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error:
 pub fn run() {
     tauri::Builder::default()
         .manage(ChatRequests::default())
+        .manage(ChatContext::default())
+        .manage(LocalTts::default())
         .manage(TextAttachmentStore::default())
         .manage(ScreenCaptureStore::default())
         .plugin(tauri_plugin_opener::init())
@@ -1610,6 +1861,7 @@ pub fn run() {
             watch_pet_position(app.handle());
             restore_bubble_size(app.handle());
             watch_bubble_resize(app.handle());
+            watch_panel_close(app.handle());
             enable_pet_background_drag(app.handle());
             enable_bubble_background_drag(app.handle());
             watch_reminders(app.handle());
@@ -1633,6 +1885,8 @@ pub fn run() {
             check_for_updates,
             list_chat_history,
             clear_chat_history,
+            speak_local_text,
+            stop_local_speech,
             list_reminders,
             create_reminder,
             delete_reminder,
@@ -1654,9 +1908,10 @@ mod tests {
     #[cfg(target_os = "macos")]
     use super::CaptureSelection;
     use super::{
-        build_attachment_prompt, collect_due_reminders, extract_chat_deltas, monitor_contains,
-        normalize_base_url, read_text_attachment, should_bypass_system_proxy, version_parts,
-        AppSettings, ChatEvent, Reminder, TextAttachment,
+        append_session_chat_history, build_attachment_prompt, collect_due_reminders,
+        extract_chat_deltas, monitor_contains, next_repeat_due, normalize_base_url,
+        read_text_attachment, should_bypass_system_proxy, text_for_speech, version_parts,
+        AppSettings, ChatEvent, ChatHistoryEntry, Reminder, TextAttachment,
     };
     use std::{
         fs,
@@ -1681,6 +1936,14 @@ mod tests {
             PhysicalSize::new(1920, 1080),
             PhysicalPosition::new(99, 210),
         ));
+    }
+
+    #[test]
+    fn removes_emoji_components_before_local_speech() {
+        assert_eq!(
+            text_for_speech("完成啦 🎉 继续处理 👩🏽‍💻，保留中文和标点。"),
+            "完成啦  继续处理 ，保留中文和标点。"
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -1819,18 +2082,21 @@ mod tests {
                 title: "到期".to_string(),
                 due_at: 9,
                 status: "pending".to_string(),
+                repeat: "none".to_string(),
             },
             Reminder {
                 id: "future".to_string(),
                 title: "稍后".to_string(),
                 due_at: 11,
                 status: "pending".to_string(),
+                repeat: "none".to_string(),
             },
             Reminder {
                 id: "done".to_string(),
                 title: "完成".to_string(),
                 due_at: 8,
                 status: "triggered".to_string(),
+                repeat: "none".to_string(),
             },
         ];
 
@@ -1839,6 +2105,49 @@ mod tests {
         assert_eq!(due[0].id, "due");
         assert_eq!(reminders[0].status, "triggered");
         assert!(collect_due_reminders(&mut reminders, 10).is_empty());
+    }
+
+    #[test]
+    fn reschedules_repeating_reminders_after_triggering() {
+        let mut reminders = vec![Reminder {
+            id: "daily".to_string(),
+            title: "每日提醒".to_string(),
+            due_at: 9,
+            status: "pending".to_string(),
+            repeat: "daily".to_string(),
+        }];
+
+        let due = collect_due_reminders(&mut reminders, 10);
+        assert_eq!(due.len(), 1);
+        assert_eq!(reminders[0].status, "pending");
+        assert!(reminders[0].due_at > 10);
+        assert!(collect_due_reminders(&mut reminders, 10).is_empty());
+    }
+
+    #[test]
+    fn weekdays_skip_weekends() {
+        let friday = 86_400;
+        assert_eq!(next_repeat_due(friday, "weekdays", friday), 4 * 86_400);
+    }
+
+    #[test]
+    fn session_chat_history_is_limited_to_ten_entries() {
+        let mut history = Vec::new();
+        for index in 0..12 {
+            append_session_chat_history(
+                &mut history,
+                ChatHistoryEntry {
+                    id: index.to_string(),
+                    prompt: index.to_string(),
+                    response: index.to_string(),
+                    created_at: index,
+                },
+            );
+        }
+
+        assert_eq!(history.len(), 10);
+        assert_eq!(history[0].id, "11");
+        assert_eq!(history[9].id, "2");
     }
 
     fn temp_attachment_path(extension: &str) -> PathBuf {

@@ -64,6 +64,8 @@ react-markdown   — Markdown 渲染
 ## 2. P1：体验打磨
 
 > 让已有功能"好用"，不引入新依赖、不突破安全边界。
+>
+> 状态：✅ 已完成（2026-06-01）。本节保留原始设计和验收标准，便于后续回归。
 
 ### 1.1 多轮对话上下文
 
@@ -221,7 +223,8 @@ npm install remark-gfm
 
 **实现方案：**
 
-- 使用 Web Speech API（`window.speechSynthesis`），无需新增依赖
+- 桌面端使用系统本地 TTS：macOS `say`、Windows `System.Speech`、Linux `spd-say`
+- Web 预览使用 Web Speech API（`window.speechSynthesis`）作为回退，无需网络服务
 - 气泡窗口底部添加 📢 朗读按钮
 - 点击后朗读当前消息内容
 - 朗读过程中按钮变为 ⏹ 停止，点击可中断

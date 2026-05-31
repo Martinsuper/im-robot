@@ -1,7 +1,9 @@
 import {
   CSSProperties,
   FormEvent,
+  isValidElement,
   MouseEvent,
+  ReactNode,
   useEffect,
   useMemo,
   useReducer,
@@ -17,6 +19,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { initialPetState, reducePetState } from "./features/pet/petState";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import "./App.css";
 
 type WindowLabel = "pet" | "bubble" | "panel" | "capture";
@@ -35,6 +38,57 @@ function runCommand<T>(command: string, args?: Record<string, unknown>, fallback
 }
 
 const windowLabel = detectWindowLabel();
+
+function extractMarkdownText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractMarkdownText).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return extractMarkdownText(node.props.children);
+  return "";
+}
+
+function textForSpeech(text: string) {
+  return text
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{1F1E6}-\u{1F1FF}\u200D\uFE0E\uFE0F\u20E3]/gu, "");
+}
+
+function MarkdownContent({ children }: { children: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ children: linkText, href }) => {
+          const isSafe = Boolean(href && /^https?:\/\//i.test(href));
+          return (
+            <a
+              href={isSafe ? href : undefined}
+              onClick={(event) => {
+                event.preventDefault();
+                if (isSafe && href) void openUrl(href);
+              }}
+              rel="noreferrer"
+            >
+              {linkText}
+            </a>
+          );
+        },
+        img: ({ alt, src }) => <img className="markdown-image" alt={alt ?? ""} src={src} />,
+        pre: ({ children: code }) => (
+          <div className="markdown-code-block">
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard.writeText(extractMarkdownText(code).replace(/\n$/, ""))}
+            >
+              复制代码
+            </button>
+            <pre>{code}</pre>
+          </div>
+        ),
+      }}
+    >
+      {children}
+    </ReactMarkdown>
+  );
+}
 
 const petSpriteStates = {
   idle: { row: 0, frames: 6, duration: 5500 },
@@ -238,6 +292,8 @@ function BubbleWindow() {
   const [attachmentError, setAttachmentError] = useState("");
   const [screenshot, setScreenshot] = useState<ScreenshotPreview>();
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speechError, setSpeechError] = useState("");
   const [requestId, setRequestId] = useState<string>();
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
@@ -249,6 +305,13 @@ function BubbleWindow() {
       setTheme(settings.theme);
       setMessage(`你好，我是 ${settings.companionName}。今天想一起完成什么？`);
     });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis?.cancel();
+      if (isTauriRuntime) void runCommand("stop_local_speech");
+    };
   }, []);
 
   useEffect(() => {
@@ -393,6 +456,44 @@ function BubbleWindow() {
     await navigator.clipboard.writeText(message);
   }
 
+  async function toggleSpeech() {
+    setSpeechError("");
+    if (isSpeaking) {
+      if (isTauriRuntime) {
+        await runCommand("stop_local_speech");
+      } else {
+        window.speechSynthesis?.cancel();
+      }
+      setIsSpeaking(false);
+      return;
+    }
+    if (isTauriRuntime) {
+      try {
+        await runCommand("speak_local_text", { text: message });
+        setIsSpeaking(true);
+      } catch (error) {
+        setSpeechError(String(error));
+      }
+      return;
+    }
+    if (!("speechSynthesis" in window)) {
+      setSpeechError("当前环境不支持朗读。");
+      return;
+    }
+    const spokenMessage = textForSpeech(message).trim();
+    if (!spokenMessage) {
+      setSpeechError("没有可朗读的文字内容。");
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(spokenMessage);
+    utterance.lang = "zh-CN";
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    setIsSpeaking(true);
+  }
+
   async function clearAttachment() {
     await runCommand("clear_text_attachment");
     setAttachment(undefined);
@@ -434,7 +535,7 @@ function BubbleWindow() {
         </button>
       </header>
       <div className="bubble-message">
-        <ReactMarkdown>{message}</ReactMarkdown>
+        <MarkdownContent>{message}</MarkdownContent>
       </div>
       <section className={`attachment-dropzone${isDraggingFile ? " is-dragging" : ""}`}>
         {attachment ? (
@@ -511,11 +612,15 @@ function BubbleWindow() {
           <button type="button" disabled={!message} onClick={() => void copyResult()}>
             复制结果
           </button>
+          <button type="button" disabled={!message} onClick={() => void toggleSpeech()}>
+            {isSpeaking ? "停止朗读" : "朗读回复"}
+          </button>
           <button type="button" onClick={() => runCommand("open_panel")}>
             打开面板
           </button>
         </div>
       </footer>
+      {speechError && <p className="speech-error" role="alert">{speechError}</p>}
     </main>
   );
 }
@@ -602,6 +707,7 @@ function CaptureWindow() {
 }
 
 function PanelWindow() {
+  const [panelTab, setPanelTab] = useState<PanelTab>("companion");
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
   const [companionName, setCompanionName] = useState("Piko");
@@ -620,6 +726,7 @@ function PanelWindow() {
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [reminderTitle, setReminderTitle] = useState("");
   const [reminderDueAt, setReminderDueAt] = useState(defaultReminderTime);
+  const [reminderRepeat, setReminderRepeat] = useState<ReminderRepeat>("none");
   const [reminderError, setReminderError] = useState("");
   const statuses = useMemo(
     () => [
@@ -630,6 +737,8 @@ function PanelWindow() {
     ],
     [connectionStatus],
   );
+  const panelSectionClass = (tab: PanelTab, base = "panel-card") =>
+    `${base}${panelTab === tab ? "" : " is-hidden"}`;
 
   useEffect(() => {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
@@ -728,12 +837,13 @@ function PanelWindow() {
       }
       const reminder = await runCommand<Reminder>(
         "create_reminder",
-        { input: { title: reminderTitle, dueAt } },
+        { input: { title: reminderTitle, dueAt, repeat: reminderRepeat } },
         {
           id: crypto.randomUUID(),
           title: reminderTitle.trim(),
           dueAt,
           status: "pending",
+          repeat: reminderRepeat,
         },
       );
       setReminders((current) => [...current, reminder].sort((left, right) => left.dueAt - right.dueAt));
@@ -811,7 +921,20 @@ function PanelWindow() {
         <span className="status-pill">在线</span>
       </header>
 
-      <section className="companion-card">
+      <nav className="panel-tabs" aria-label="面板导航">
+        {panelTabOptions.map(({ label, value }) => (
+          <button
+            className={panelTab === value ? "is-active" : ""}
+            key={value}
+            type="button"
+            onClick={() => setPanelTab(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      <section className={panelSectionClass("companion", "companion-card")}>
         <div className="companion-card__portrait">
           <PetSprite />
         </div>
@@ -826,7 +949,7 @@ function PanelWindow() {
         </div>
       </section>
 
-      <section className="panel-card">
+      <section className={panelSectionClass("about")}>
         <p className="eyebrow">PRIVACY & PERMISSIONS</p>
         <h2>权限中心</h2>
         <div className="permission-list">
@@ -837,7 +960,7 @@ function PanelWindow() {
         </div>
       </section>
 
-      <section className="panel-card">
+      <section className={panelSectionClass("about")}>
         <div className="section-heading">
           <div>
             <p className="eyebrow">ABOUT</p>
@@ -852,7 +975,7 @@ function PanelWindow() {
         {updateUrl && <button className="release-link" type="button" onClick={() => void openUrl(updateUrl)}>打开下载页</button>}
       </section>
 
-      <section className="panel-card">
+      <section className={panelSectionClass("companion")}>
         <div className="section-heading">
           <div>
             <p className="eyebrow">STATUS</p>
@@ -873,7 +996,7 @@ function PanelWindow() {
         </div>
       </section>
 
-      <section className="panel-card">
+      <section className={panelSectionClass("settings")}>
         <p className="eyebrow">MODEL PROVIDER</p>
         <h2>模型服务</h2>
         <div className="settings-form">
@@ -943,7 +1066,7 @@ function PanelWindow() {
         </div>
       </section>
 
-      <section className="panel-card">
+      <section className={panelSectionClass("settings")}>
         <p className="eyebrow">PERSONALITY</p>
         <h2>互动活泼度</h2>
         <div className="segmented-control" aria-label="互动活泼度">
@@ -960,7 +1083,7 @@ function PanelWindow() {
         </div>
       </section>
 
-      <section className="panel-card">
+      <section className={panelSectionClass("settings")}>
         <p className="eyebrow">PREFERENCES</p>
         <h2>个性化与系统</h2>
         <div className="settings-form">
@@ -1003,7 +1126,7 @@ function PanelWindow() {
         </div>
       </section>
 
-      <section className="panel-card">
+      <section className={panelSectionClass("reminders")}>
         <p className="eyebrow">REMINDERS</p>
         <h2>提醒事项</h2>
         <form className="reminder-form" onSubmit={createReminder}>
@@ -1025,6 +1148,15 @@ function PanelWindow() {
               添加
             </button>
           </div>
+          <select
+            value={reminderRepeat}
+            onChange={(event) => setReminderRepeat(event.currentTarget.value as ReminderRepeat)}
+            aria-label="重复规则"
+          >
+            {reminderRepeatOptions.map(({ label, value }) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
         </form>
         {reminderError && <p className="reminder-error">{reminderError}</p>}
         {reminders.length ? (
@@ -1035,7 +1167,8 @@ function PanelWindow() {
                   <strong>{reminder.title}</strong>
                   <span>
                     {formatReminderTime(reminder.dueAt)} ·{" "}
-                    {reminder.status === "triggered" ? "已提醒" : "等待中"}
+                    {reminder.status === "triggered" ? "已提醒" : "等待中"} ·{" "}
+                    {reminderRepeatLabel(reminder.repeat)}
                   </span>
                 </div>
                 <button type="button" onClick={() => void deleteReminder(reminder.id)}>
@@ -1049,7 +1182,7 @@ function PanelWindow() {
         )}
       </section>
 
-      <section className="panel-card">
+      <section className={panelSectionClass("history")}>
         <div className="section-heading">
           <div>
             <p className="eyebrow">CHAT HISTORY</p>
@@ -1139,10 +1272,13 @@ interface Reminder {
   title: string;
   dueAt: number;
   status: "pending" | "triggered";
+  repeat: ReminderRepeat;
 }
 
 type AttachmentAction = "summarize" | "translate" | "explain";
 type Theme = "sage" | "blue" | "peach";
+type PanelTab = "companion" | "settings" | "reminders" | "history" | "about";
+type ReminderRepeat = "none" | "daily" | "weekly" | "weekdays";
 
 type ChatEvent =
   | { type: "started"; requestId: string; working: boolean }
@@ -1178,6 +1314,25 @@ const quietModeOptions: Array<{ label: string; value: QuietMode }> = [
   { label: "平衡", value: "balanced" },
   { label: "极简", value: "minimal" },
 ];
+
+const panelTabOptions: Array<{ label: string; value: PanelTab }> = [
+  { label: "精灵", value: "companion" },
+  { label: "设置", value: "settings" },
+  { label: "提醒", value: "reminders" },
+  { label: "历史", value: "history" },
+  { label: "关于", value: "about" },
+];
+
+const reminderRepeatOptions: Array<{ label: string; value: ReminderRepeat }> = [
+  { label: "仅一次", value: "none" },
+  { label: "每天", value: "daily" },
+  { label: "每周", value: "weekly" },
+  { label: "工作日", value: "weekdays" },
+];
+
+function reminderRepeatLabel(repeat: ReminderRepeat) {
+  return reminderRepeatOptions.find((option) => option.value === repeat)?.label ?? "仅一次";
+}
 
 const attachmentActionOptions: Array<{ label: string; value: AttachmentAction }> = [
   { label: "总结", value: "summarize" },

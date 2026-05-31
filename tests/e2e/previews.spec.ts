@@ -12,13 +12,18 @@ test("bubble preview exposes text, file and screenshot entry points", async ({ p
   await expect(page.getByLabel("发送给 Piko 的问题")).toBeVisible();
   await expect(page.getByRole("button", { name: "选择文件" })).toBeVisible();
   await expect(page.getByRole("button", { name: "截图提问" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "朗读回复" })).toBeVisible();
 });
 
 test("panel preview exposes settings and network update entry point", async ({ page }) => {
   await page.goto("/?view=panel");
+  await expect(page.getByRole("button", { name: "精灵", exact: true })).toHaveClass(/is-active/);
+  await page.getByRole("button", { name: "关于" }).click();
   await expect(page.getByText("权限中心")).toBeVisible();
   await expect(page.getByRole("button", { name: "检查更新" })).toBeVisible();
   await expect(page.getByText("截图时按需申请")).toBeVisible();
+  await page.getByRole("button", { name: "提醒" }).click();
+  await expect(page.getByLabel("重复规则")).toHaveValue("none");
 });
 
 test("capture preview exposes selection controls", async ({ page }) => {

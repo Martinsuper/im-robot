@@ -68,6 +68,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   transition: opacity 160ms ease, transform 160ms ease;
 }
 .pet-emotion:not(.pet-emotion--neutral) { opacity: 1; transform: translateY(0) scale(1); }
+.pet--resting .pet-emotion, .pet-stage--minimal .pet-emotion { opacity: 0; transform: translateY(5px) scale(.72); }
 .pet-emotion--happy::before { content: "♥"; color: #d87979; }
 .pet-emotion--curious::before { content: "?"; color: #6c8c83; }
 .pet-emotion--sleepy::before { content: "z"; color: #7d8fa0; }
@@ -238,6 +239,12 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   margin: 8px 0;
 }
 .bubble-message a { color: #57796d; text-decoration: underline; }
+.bubble-message table { width: 100%; margin: 0 0 6px; border-collapse: collapse; font-size: 11px; }
+.bubble-message th, .bubble-message td { border: 1px solid rgba(87, 121, 109, .18); padding: 4px 5px; text-align: left; }
+.bubble-message th { color: #263449; background: rgba(87, 121, 109, .08); }
+.markdown-code-block { position: relative; }
+.markdown-code-block > button { position: absolute; z-index: 1; top: 6px; right: 6px; border: 0; border-radius: 5px; padding: 3px 5px; color: #c9d1d9; background: rgba(255, 255, 255, .14); font-size: 9px; }
+.markdown-image { display: block; max-width: 100%; height: auto; margin-bottom: 6px; border-radius: 8px; }
 .attachment-dropzone {
   display: grid;
   gap: 5px;
@@ -321,12 +328,17 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 .bubble-footer button { border: 0; padding: 0; color: #58796d; background: transparent; font-size: 10px; font-weight: 800; }
 .bubble-footer button:disabled { cursor: not-allowed; opacity: .4; }
 .bubble-footer__actions { display: flex; align-items: center; gap: 7px; }
+.speech-error { margin: 0; color: #b85a51; font-size: 10px; line-height: 1.35; }
 
 .panel-shell { --panel-tint: #eef3e9; --panel-accent: #58796d; min-height: 100vh; padding: 16px; }
 .panel-shell--blue { --panel-tint: #e9f3f5; --panel-accent: #4f7e8a; }
 .panel-shell--peach { --panel-tint: #f7ede5; --panel-accent: #a96f58; }
 .panel-header { margin-bottom: 12px; padding: 0 2px; }
 .panel-header p:last-child { max-width: 270px; margin-bottom: 0; color: #81908c; font-size: 11px; line-height: 1.45; }
+.panel-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-bottom: 10px; border-radius: 10px; padding: 3px; background: rgba(255, 255, 255, .72); }
+.panel-tabs button { min-height: 27px; border: 0; border-radius: 7px; color: #81908c; background: transparent; font-size: 10px; font-weight: 800; }
+.panel-tabs button.is-active { color: var(--panel-accent); background: var(--panel-tint); }
+.is-hidden { display: none; }
 .status-pill, .trait-list span {
   border-radius: 999px;
   padding: 4px 8px;
@@ -391,7 +403,7 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 }
 .settings-form .setting-toggle input { width: 14px; min-height: 14px; accent-color: var(--panel-accent); }
 .reminder-form { display: grid; gap: 5px; }
-.reminder-form > input, .reminder-form div input {
+.reminder-form > input, .reminder-form div input, .reminder-form select {
   width: 100%;
   min-height: 29px;
   border: 1px solid rgba(61, 83, 94, .12);
