@@ -47,6 +47,29 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .pet-reaction--notice { animation: pet-notice 760ms ease-out; }
 .pet-reaction--celebrate { animation: pet-celebrate 900ms ease-out; }
 
+.pet-clock {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  left: 50%;
+  min-width: 57px;
+  border: 1px solid rgba(70, 91, 96, .2);
+  border-radius: 4px;
+  padding: 2px 3px;
+  color: #f5fbf7;
+  background: rgba(47, 70, 74, .82);
+  box-shadow: 0 2px 5px rgba(31, 41, 55, .2);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  letter-spacing: -.05em;
+  line-height: 1;
+  pointer-events: none;
+  text-align: center;
+  transform: translateX(-50%) translateY(-100%);
+}
+
 .pet-emotion {
   position: absolute;
   top: 3px;

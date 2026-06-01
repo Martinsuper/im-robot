@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("pet preview exposes companion actions", async ({ page }) => {
   await page.goto("/?view=pet");
+  await expect(page.locator(".pet-clock")).toHaveText(/^\d{2}:\d{2}:\d{2}$/);
   await expect(page.getByRole("button", { name: "对话" })).toBeVisible();
   await expect(page.getByRole("button", { name: "休息" })).toBeVisible();
   await expect(page.getByRole("button", { name: "面板" })).toBeVisible();

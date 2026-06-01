@@ -127,12 +127,42 @@ function PetSprite({
   );
 }
 
+function formatCurrentTime() {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date());
+}
+
+function useCurrentTime() {
+  const [currentTime, setCurrentTime] = useState(formatCurrentTime);
+
+  useEffect(() => {
+    let timer: number | undefined;
+
+    const updateTime = () => {
+      setCurrentTime(formatCurrentTime());
+      timer = window.setTimeout(updateTime, 1000 - (Date.now() % 1000));
+    };
+
+    timer = window.setTimeout(updateTime, 1000 - (Date.now() % 1000));
+    return () => {
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
+
+  return currentTime;
+}
+
 function PetWindow() {
   const [petState, dispatch] = useReducer(reducePetState, initialPetState);
   const [companionName, setCompanionName] = useState("Piko");
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [sensingPaused, setSensingPaused] = useState(false);
   const [theme, setTheme] = useState<Theme>("sage");
+  const currentTime = useCurrentTime();
   const isResting = petState.mode === "resting";
   const resetTimer = useRef<number | undefined>(undefined);
 
@@ -266,6 +296,9 @@ function PetWindow() {
         }}
       >
         <PetSprite mode={petState.mode} />
+        <time className="pet-clock" aria-label={`当前时间 ${currentTime}`}>
+          {currentTime}
+        </time>
         <span className={`pet-emotion pet-emotion--${petState.emotion}`} aria-hidden="true" />
       </div>
       <div className="pet-actions">
