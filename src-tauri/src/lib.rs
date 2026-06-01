@@ -127,7 +127,7 @@ struct ChatHistoryEntry {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(
-    rename_all = "camelCase",
+    rename_all = "kebab-case",
     rename_all_fields = "camelCase",
     tag = "type"
 )]
@@ -391,22 +391,47 @@ fn default_repeat_rule() -> String {
 }
 
 impl ReminderPlugin {
-    fn tool_manifest() -> PluginToolManifest {
-        PluginToolManifest {
-            name: "create_reminder".to_string(),
-            description: "创建一条本地提醒".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "required": ["title", "dueAt"],
-                "properties": {
-                    "title": { "type": "string", "maxLength": 120 },
-                    "dueAt": { "type": "string", "description": "ISO 8601 时间，例如 2026-06-02T15:00:00+08:00" },
-                    "repeat": { "enum": ["none", "daily", "weekly", "weekdays"] }
-                }
-            }),
-            risk: "write".to_string(),
-            confirmation: "always".to_string(),
-        }
+    fn tool_manifests() -> Vec<PluginToolManifest> {
+        vec![
+            PluginToolManifest {
+                name: "list_reminders".to_string(),
+                description: "列出全部本地提醒，供查询和删除前定位目标".to_string(),
+                input_schema: json!({ "type": "object", "properties": {} }),
+                risk: "read".to_string(),
+                confirmation: "never".to_string(),
+            },
+            PluginToolManifest {
+                name: "create_reminder".to_string(),
+                description: "创建一条本地提醒".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["title", "dueAt"],
+                    "properties": {
+                        "title": { "type": "string", "maxLength": 120 },
+                        "dueAt": { "type": "string", "description": "ISO 8601 时间，例如 2026-06-02T15:00:00+08:00" },
+                        "repeat": { "enum": ["none", "daily", "weekly", "weekdays"] }
+                    }
+                }),
+                risk: "write".to_string(),
+                confirmation: "always".to_string(),
+            },
+            PluginToolManifest {
+                name: "delete_reminder".to_string(),
+                description: "删除一条本地提醒，必须先确认目标提醒".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {
+                        "id": { "type": "string", "description": "提醒 ID" },
+                        "title": { "type": "string", "description": "用于确认展示的提醒标题" },
+                        "dueAt": { "type": "string", "description": "用于确认展示的提醒时间" },
+                        "repeat": { "enum": ["none", "daily", "weekly", "weekdays"] }
+                    }
+                }),
+                risk: "sensitive".to_string(),
+                confirmation: "always".to_string(),
+            },
+        ]
     }
 }
 
@@ -417,17 +442,27 @@ impl PikoPlugin for ReminderPlugin {
             name: "提醒事项".to_string(),
             version: "1.0.0".to_string(),
             description: "创建和管理本地提醒".to_string(),
-            tools: vec![Self::tool_manifest()],
+            tools: Self::tool_manifests(),
         }
     }
 
     fn execute(&self, app: &AppHandle, tool: &str, input: Value) -> Result<Value, String> {
-        if tool != "create_reminder" {
-            return Err("提醒插件不支持该工具".to_string());
+        match tool {
+            "list_reminders" => {
+                serde_json::to_value(read_reminders(app)).map_err(|error| error.to_string())
+            }
+            "create_reminder" => {
+                let reminder_input = reminder_input_from_value(&input)?;
+                let reminder = create_reminder_record(app, reminder_input)?;
+                serde_json::to_value(reminder).map_err(|error| error.to_string())
+            }
+            "delete_reminder" => {
+                let deleted =
+                    delete_reminder_record(app, reminder_delete_input_from_value(&input)?)?;
+                serde_json::to_value(deleted).map_err(|error| error.to_string())
+            }
+            _ => Err("提醒插件不支持该工具".to_string()),
         }
-        let reminder_input = reminder_input_from_value(&input)?;
-        let reminder = create_reminder_record(app, reminder_input)?;
-        serde_json::to_value(reminder).map_err(|error| error.to_string())
     }
 }
 
@@ -436,7 +471,7 @@ impl CalendarPlugin {
         vec![
             PluginToolManifest {
                 name: "list_events".to_string(),
-                description: "读取本地日程".to_string(),
+                description: "列出全部本地日程，供查询和删除前定位目标".to_string(),
                 input_schema: json!({ "type": "object", "properties": {} }),
                 risk: "read".to_string(),
                 confirmation: "never".to_string(),
@@ -500,6 +535,22 @@ impl CalendarPlugin {
                 risk: "write".to_string(),
                 confirmation: "always".to_string(),
             },
+            PluginToolManifest {
+                name: "delete_event".to_string(),
+                description: "删除一条本地日程，必须先确认目标日程".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {
+                        "id": { "type": "string", "description": "日程 ID" },
+                        "title": { "type": "string", "description": "用于确认展示的日程标题" },
+                        "startAt": { "type": "string", "description": "用于确认展示的日程开始时间" },
+                        "endAt": { "type": "string", "description": "用于确认展示的日程结束时间" }
+                    }
+                }),
+                risk: "sensitive".to_string(),
+                confirmation: "always".to_string(),
+            },
         ]
     }
 }
@@ -539,6 +590,11 @@ impl PikoPlugin for CalendarPlugin {
                 let batch = calendar_event_batch_input_from_value(&input)?;
                 let events = create_calendar_event_batch_record(app, batch)?;
                 serde_json::to_value(events).map_err(|error| error.to_string())
+            }
+            "delete_event" => {
+                let deleted =
+                    delete_calendar_event_record(app, calendar_delete_input_from_value(&input)?)?;
+                serde_json::to_value(deleted).map_err(|error| error.to_string())
             }
             _ => Err("日程插件不支持该工具".to_string()),
         }
@@ -819,13 +875,23 @@ fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), Stri
 
 fn read_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
     calendar_events_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|path| read_calendar_events_from_path(&path))
+        .unwrap_or_default()
+}
+
+fn read_calendar_events_from_path(path: &Path) -> Vec<CalendarEvent> {
+    fs::read_to_string(path)
+        .ok()
         .and_then(|json| serde_json::from_str(&json).ok())
         .unwrap_or_default()
 }
 
 fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<(), String> {
     let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
+    persist_calendar_events_to_path(&path, events)
+}
+
+fn persist_calendar_events_to_path(path: &Path, events: &[CalendarEvent]) -> Result<(), String> {
     let directory = path
         .parent()
         .ok_or_else(|| "无法获取日程记录目录".to_string())?;
@@ -959,7 +1025,17 @@ fn reminder_clock(prompt: &str) -> Option<(u32, u32)> {
     if hour > 23 {
         return None;
     }
-    let minute = if prompt.contains("点半") { 30 } else { 0 };
+    let minute = if prompt.contains("点半") {
+        30
+    } else {
+        prompt
+            .split_once('点')
+            .and_then(|(_, after_hour)| digits_before(after_hour, "分"))
+            .unwrap_or(0)
+    };
+    if minute > 59 {
+        return None;
+    }
     Some((hour, minute))
 }
 
@@ -1062,9 +1138,26 @@ fn calendar_title(prompt: &str) -> Option<String> {
     let title = prompt
         .split_once("安排")
         .map(|(_, title)| title)
+        .or_else(|| {
+            prompt.rsplit_once("的日程").map(|(before_calendar, _)| {
+                let after_end_time = before_calendar
+                    .split_once('到')
+                    .map(|(_, title)| title)
+                    .unwrap_or(before_calendar);
+                let after_hour = after_end_time
+                    .split_once('点')
+                    .map(|(_, title)| title)
+                    .unwrap_or(after_end_time);
+                let after_minute = after_hour
+                    .trim_start_matches(|character: char| character.is_ascii_digit())
+                    .strip_prefix('分')
+                    .unwrap_or(after_hour);
+                after_minute.strip_prefix('半').unwrap_or(after_minute)
+            })
+        })
         .or_else(|| prompt.split_once("日程").map(|(_, title)| title))?
         .trim_matches(|character: char| {
-            character.is_whitespace() || matches!(character, '，' | ',' | '。' | '.')
+            character.is_whitespace() || matches!(character, '，' | ',' | '。' | '.' | '的')
         });
     if title.is_empty() {
         None
@@ -1465,6 +1558,213 @@ fn calendar_event_batch_input_from_value(value: &Value) -> Result<CalendarEventB
     })
 }
 
+fn format_tool_timestamp(value: Option<u64>) -> Option<String> {
+    value.and_then(|timestamp| {
+        Local
+            .timestamp_opt(timestamp as i64, 0)
+            .single()
+            .map(|date_time| date_time.format("%Y-%m-%d %H:%M").to_string())
+    })
+}
+
+fn prompt_asks_for_lookup(prompt: &str) -> bool {
+    let prompt = prompt.trim();
+    let query_words = [
+        "查询",
+        "查看",
+        "列出",
+        "列表",
+        "看看",
+        "看看我",
+        "查一下",
+        "查下",
+        "查查",
+        "有哪些",
+        "有什么",
+        "所有",
+        "全部",
+        "我的",
+    ];
+    prompt.contains("提醒")
+        && !prompt.contains("删除")
+        && !prompt.contains("移除")
+        && !prompt.contains("取消")
+        && query_words.iter().any(|word| prompt.contains(word))
+}
+
+fn prompt_asks_for_calendar_lookup(prompt: &str) -> bool {
+    let prompt = prompt.trim();
+    let query_words = [
+        "查询",
+        "查看",
+        "列出",
+        "列表",
+        "看看",
+        "看看我",
+        "查一下",
+        "查下",
+        "查查",
+        "有哪些",
+        "有什么",
+        "所有",
+        "全部",
+        "我的",
+    ];
+    prompt.contains("日程")
+        && !prompt.contains("删除")
+        && !prompt.contains("移除")
+        && !prompt.contains("取消")
+        && query_words.iter().any(|word| prompt.contains(word))
+}
+
+fn format_reminder_lookup(reminders: &[Reminder]) -> String {
+    if reminders.is_empty() {
+        return "你目前没有提醒。".to_string();
+    }
+
+    let mut lines = vec![format!("我查到了 {} 条提醒：", reminders.len())];
+    for reminder in reminders.iter().take(10) {
+        let due_at =
+            format_tool_timestamp(Some(reminder.due_at)).unwrap_or_else(|| "时间无效".to_string());
+        lines.push(format!(
+            "• {} | {} | 重复：{} | ID：{}",
+            reminder.title,
+            due_at,
+            repeat_rule_label(&reminder.repeat),
+            reminder.id
+        ));
+    }
+    if reminders.len() > 10 {
+        lines.push(format!("• 还有 {} 条提醒未显示。", reminders.len() - 10));
+    }
+    lines.join("\n")
+}
+
+fn format_calendar_lookup(events: &[CalendarEvent]) -> String {
+    if events.is_empty() {
+        return "你目前没有日程。".to_string();
+    }
+
+    let mut lines = vec![format!("我查到了 {} 条日程：", events.len())];
+    for event in events.iter().take(10) {
+        let start =
+            format_tool_timestamp(Some(event.start_at)).unwrap_or_else(|| "时间无效".to_string());
+        let end =
+            format_tool_timestamp(Some(event.end_at)).unwrap_or_else(|| "时间无效".to_string());
+        lines.push(format!(
+            "• {} | {} - {} | ID：{}",
+            event.title, start, end, event.id
+        ));
+    }
+    if events.len() > 10 {
+        lines.push(format!("• 还有 {} 条日程未显示。", events.len() - 10));
+    }
+    lines.join("\n")
+}
+
+fn emit_local_lookup_response(
+    app: &AppHandle,
+    context: &ChatContext,
+    request_id: &str,
+    history_prompt: &str,
+    response: String,
+) -> Result<(), String> {
+    emit_chat_event(
+        app,
+        ChatEvent::Started {
+            request_id: request_id.to_string(),
+            working: false,
+        },
+    );
+    emit_chat_event(
+        app,
+        ChatEvent::Delta {
+            request_id: request_id.to_string(),
+            sequence: 1,
+            text: response.clone(),
+        },
+    );
+
+    let history_entry = ChatHistoryEntry {
+        id: request_id.to_string(),
+        prompt: history_prompt.to_string(),
+        response,
+        created_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    };
+    append_chat_history(app, history_entry.clone())?;
+    let mut session_history = context
+        .0
+        .lock()
+        .map_err(|_| "无法更新当前对话上下文".to_string())?;
+    append_session_chat_history(&mut session_history, history_entry);
+    let _ = app.emit_to("panel", "chat-history-updated", ());
+
+    emit_chat_event(
+        app,
+        ChatEvent::Completed {
+            request_id: request_id.to_string(),
+        },
+    );
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct ReminderDeleteInput {
+    id: String,
+    title: Option<String>,
+    due_at: Option<u64>,
+    repeat: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct CalendarDeleteInput {
+    id: String,
+    title: Option<String>,
+    start_at: Option<u64>,
+    end_at: Option<u64>,
+}
+
+fn reminder_delete_input_from_value(value: &Value) -> Result<ReminderDeleteInput, String> {
+    let id = value["id"]
+        .as_str()
+        .ok_or_else(|| "提醒 ID 不能为空".to_string())?
+        .to_string();
+    Ok(ReminderDeleteInput {
+        id,
+        title: value["title"].as_str().map(str::to_string),
+        due_at: value["dueAt"]
+            .as_str()
+            .and_then(|text| tool_timestamp_str(text)),
+        repeat: value["repeat"].as_str().map(str::to_string),
+    })
+}
+
+fn calendar_delete_input_from_value(value: &Value) -> Result<CalendarDeleteInput, String> {
+    let id = value["id"]
+        .as_str()
+        .ok_or_else(|| "日程 ID 不能为空".to_string())?
+        .to_string();
+    Ok(CalendarDeleteInput {
+        id,
+        title: value["title"].as_str().map(str::to_string),
+        start_at: value["startAt"]
+            .as_str()
+            .and_then(|text| tool_timestamp_str(text)),
+        end_at: value["endAt"]
+            .as_str()
+            .and_then(|text| tool_timestamp_str(text)),
+    })
+}
+
+fn tool_timestamp_str(value: &str) -> Option<u64> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|date_time| date_time.timestamp().max(0) as u64)
+}
+
 fn action_draft_from_tool_call(
     call: &ToolCall,
     now: DateTime<Local>,
@@ -1484,6 +1784,20 @@ fn action_draft_from_tool_call(
                 repeat_rule_label(&input.repeat)
             )
         }
+        ("piko.reminders", "delete_reminder") => {
+            let input = reminder_delete_input_from_value(&call.arguments)?;
+            let title = input.title.unwrap_or_else(|| format!("ID {}", input.id));
+            let due_at = format_tool_timestamp(input.due_at)
+                .map(|value| format!("\n时间：{value}"))
+                .unwrap_or_default();
+            let repeat = input
+                .repeat
+                .as_deref()
+                .map(repeat_rule_label)
+                .map(|label| format!("\n重复：{label}"))
+                .unwrap_or_default();
+            format!("删除提醒「{title}」{due_at}{repeat}")
+        }
         ("piko.calendar", "create_event") => {
             let input = calendar_event_input_from_value(&call.arguments)?;
             let formatted_start = Local
@@ -1502,6 +1816,18 @@ fn action_draft_from_tool_call(
                 "创建日程「{}」\n时间：{formatted_start} - {formatted_end}",
                 input.title
             )
+        }
+        ("piko.calendar", "delete_event") => {
+            let input = calendar_delete_input_from_value(&call.arguments)?;
+            let title = input.title.unwrap_or_else(|| format!("ID {}", input.id));
+            let range = match (
+                format_tool_timestamp(input.start_at),
+                format_tool_timestamp(input.end_at),
+            ) {
+                (Some(start), Some(end)) => format!("\n时间：{start} - {end}"),
+                _ => String::new(),
+            };
+            format!("删除日程「{title}」{range}")
         }
         ("piko.calendar", "create_event_batch") => {
             let batch = calendar_event_batch_input_from_value(&call.arguments)?;
@@ -2376,6 +2702,17 @@ fn create_reminder_record(app: &AppHandle, input: ReminderInput) -> Result<Remin
     Ok(reminder)
 }
 
+fn delete_reminder_record(app: &AppHandle, input: ReminderDeleteInput) -> Result<Reminder, String> {
+    let mut reminders = read_reminders(app);
+    let index = reminders
+        .iter()
+        .position(|reminder| reminder.id == input.id)
+        .ok_or_else(|| "未找到该提醒".to_string())?;
+    let deleted = reminders.remove(index);
+    persist_reminders(app, &reminders)?;
+    Ok(deleted)
+}
+
 #[tauri::command]
 fn create_reminder(app: AppHandle, input: ReminderInput) -> Result<Reminder, String> {
     let reminder = create_reminder_record(&app, input)?;
@@ -2394,17 +2731,52 @@ fn create_calendar_event_record(
     app: &AppHandle,
     input: CalendarEventInput,
 ) -> Result<CalendarEvent, String> {
-    let mut events = read_calendar_events(app);
-    let event = calendar_event_from_input(&events, input)?;
+    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
+    create_calendar_event_record_at_path(&path, input)
+}
+
+fn create_calendar_event_record_at_path(
+    path: &Path,
+    input: CalendarEventInput,
+) -> Result<CalendarEvent, String> {
+    let mut events = read_calendar_events_from_path(path);
+    let event = calendar_event_from_input(input)?;
     events.push(event.clone());
-    persist_calendar_events(app, &events)?;
+    persist_calendar_events_to_path(path, &events)?;
     Ok(event)
 }
 
-fn calendar_event_from_input(
-    existing_events: &[CalendarEvent],
-    input: CalendarEventInput,
+fn delete_calendar_event_record(
+    app: &AppHandle,
+    input: CalendarDeleteInput,
 ) -> Result<CalendarEvent, String> {
+    let mut events = read_calendar_events(app);
+    let index = events
+        .iter()
+        .position(|event| event.id == input.id)
+        .ok_or_else(|| "未找到该日程".to_string())?;
+    let deleted = events.remove(index);
+    persist_calendar_events(app, &events)?;
+    Ok(deleted)
+}
+
+fn calendar_conflict_note(
+    existing_events: &[CalendarEvent],
+    start_at: u64,
+    end_at: u64,
+) -> Option<String> {
+    let conflicts = find_calendar_conflicts(existing_events, start_at, end_at);
+    if conflicts.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "提示：该时间段与已有 {} 条日程重叠，但已继续创建。",
+            conflicts.len()
+        ))
+    }
+}
+
+fn calendar_event_from_input(input: CalendarEventInput) -> Result<CalendarEvent, String> {
     let title = input.title.trim();
     if title.is_empty() {
         return Err("日程标题不能为空".to_string());
@@ -2417,9 +2789,6 @@ fn calendar_event_from_input(
     }
     if input.end_at <= input.start_at {
         return Err("日程结束时间必须晚于开始时间".to_string());
-    }
-    if !find_calendar_conflicts(existing_events, input.start_at, input.end_at).is_empty() {
-        return Err("该时间段与已有日程冲突".to_string());
     }
     Ok(CalendarEvent {
         id: calendar_event_id(),
@@ -2438,7 +2807,7 @@ fn create_calendar_event_batch_record(
     let mut events = read_calendar_events(app);
     let mut created = Vec::with_capacity(batch.events.len());
     for input in batch.events {
-        let event = calendar_event_from_input(&events, input)?;
+        let event = calendar_event_from_input(input)?;
         events.push(event.clone());
         created.push(event);
     }
@@ -2612,8 +2981,37 @@ fn confirm_chat_action(
                 .collect::<Result<Vec<_>, _>>()?,
         );
     }
+    let calendar_events = if draft.plugin_id == "piko.calendar" {
+        read_calendar_events(&app)
+    } else {
+        Vec::new()
+    };
+    let conflict_note = if draft.plugin_id == "piko.calendar" && draft.tool_name == "create_event" {
+        let input = calendar_event_input_from_value(&draft.arguments)?;
+        calendar_conflict_note(&calendar_events, input.start_at, input.end_at)
+    } else if draft.plugin_id == "piko.calendar" && draft.tool_name == "create_event_batch" {
+        let batch = calendar_event_batch_input_from_value(&draft.arguments)?;
+        let conflicts = batch
+            .events
+            .into_iter()
+            .filter_map(|input| {
+                calendar_conflict_note(&calendar_events, input.start_at, input.end_at)
+            })
+            .count();
+        if conflicts > 0 {
+            Some(format!(
+                "提示：其中 {} 条日程与已有安排重叠，但已继续创建。",
+                conflicts
+            ))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let plugin_id = draft.plugin_id.clone();
-    let is_calendar_batch = plugin_id == "piko.calendar" && draft.tool_name == "create_event_batch";
+    let tool_name = draft.tool_name.clone();
+    let is_calendar_batch = plugin_id == "piko.calendar" && tool_name == "create_event_batch";
     let result = registry.execute(
         &app,
         ToolCall {
@@ -2624,12 +3022,18 @@ fn confirm_chat_action(
     )?;
     let (message, event_name) = match plugin_id.as_str() {
         "piko.calendar" if is_calendar_batch => ("已创建所选日程。", "calendar-events-updated"),
+        "piko.calendar" if tool_name == "delete_event" => {
+            ("日程已删除。", "calendar-events-updated")
+        }
         "piko.calendar" => ("日程已创建。", "calendar-events-updated"),
+        "piko.reminders" if tool_name == "delete_reminder" => ("提醒已删除。", "reminders-updated"),
         _ => ("提醒已创建。", "reminders-updated"),
     };
     let _ = app.emit_to("panel", event_name, ());
     Ok(ActionExecution {
-        message: message.to_string(),
+        message: conflict_note
+            .map(|note| format!("{message}\n{note}"))
+            .unwrap_or_else(|| message.to_string()),
         follow_up_prompt: format!(
             "系统已经执行用户确认的操作。执行结果如下：\n{}\n请用一句简洁的自然语言向用户确认结果，不要再次调用写入工具。",
             serde_json::to_string(&result).map_err(|error| error.to_string())?
@@ -3211,7 +3615,7 @@ fn extract_model_ids(provider: &str, body: &Value) -> Vec<String> {
 fn system_prompt(companion_name: &str) -> String {
     let now = Local::now();
     format!(
-        "你是桌面 AI 宠物精灵 {companion_name}。回答应清晰、简洁、友好。当前本地时间是 {}。可以使用已提供的工具读取日程、检查冲突，或提出提醒和日程草稿。规划多条日程时优先使用批量创建工具。工具中的时间参数必须使用带时区的 ISO 8601 字符串，例如 2026-06-02T15:00:00+08:00，不要自行计算 Unix 时间戳。写入操作必须等待用户确认；不要声称已经执行未实际执行的电脑操作。遇到时间歧义时先向用户追问。",
+        "你是桌面 AI 宠物精灵 {companion_name}。回答应清晰、简洁、友好。当前本地时间是 {}。可以使用已提供的工具读取、创建、检查冲突，或提出提醒和日程草稿。查询提醒时优先调用 list_reminders；查询、删除或定位日程时优先调用 list_events。删除提醒或日程前，先用列表工具找到具体目标，再生成待确认草稿并等待用户确认。规划多条日程时优先使用批量创建工具。工具中的时间参数必须使用带时区的 ISO 8601 字符串，例如 2026-06-02T15:00:00+08:00，不要自行计算 Unix 时间戳。写入和删除操作必须等待用户确认；不要声称已经执行未实际执行的电脑操作。遇到时间歧义时先向用户追问。",
         now.format("%Y-%m-%d %H:%M:%S %:z")
     )
 }
@@ -3594,6 +3998,27 @@ async fn chat_start(
 ) -> Result<(), String> {
     if input.attachment_action.is_none() && !input.include_screenshot.unwrap_or(false) {
         let now = Local::now();
+        let wants_reminder_lookup = prompt_asks_for_lookup(&input.prompt);
+        let wants_calendar_lookup = prompt_asks_for_calendar_lookup(&input.prompt);
+        if wants_reminder_lookup || wants_calendar_lookup {
+            let response = match (wants_reminder_lookup, wants_calendar_lookup) {
+                (true, true) => format!(
+                    "{}\n\n{}",
+                    format_reminder_lookup(&list_reminders(app.clone())),
+                    format_calendar_lookup(&list_calendar_events(app.clone()))
+                ),
+                (true, false) => format_reminder_lookup(&list_reminders(app.clone())),
+                (false, true) => format_calendar_lookup(&list_calendar_events(app.clone())),
+                (false, false) => unreachable!(),
+            };
+            return emit_local_lookup_response(
+                &app,
+                &context,
+                &input.request_id,
+                &input.prompt,
+                response,
+            );
+        }
         if let Some(draft) = build_calendar_action_draft(&input.prompt, now)
             .or_else(|| build_reminder_action_draft(&input.prompt, now))
         {
@@ -3860,19 +4285,22 @@ mod tests {
     use super::{
         action_draft_from_tool_call, append_provider_tool_results, append_provider_tools,
         append_session_chat_history, build_attachment_prompt, build_calendar_action_draft,
-        build_reminder_action_draft, calendar_event_batch_input_from_value,
+        build_reminder_action_draft, calendar_conflict_note, calendar_event_batch_input_from_value,
         calendar_event_input_from_value, chat_request_body, chat_url, collect_due_reminders,
-        decode_openai_tool_calls, extract_chat_deltas, extract_model_ids, find_calendar_conflicts,
+        create_calendar_event_record_at_path, decode_openai_tool_calls, extract_chat_deltas,
+        extract_model_ids, find_calendar_conflicts, format_calendar_lookup, format_reminder_lookup,
         idle_threshold_seconds, models_url, monitor_contains, next_idle_state, next_repeat_due,
-        normalize_base_url, parse_data_url, provider_tools, read_text_attachment, render_icalendar,
-        should_bypass_system_proxy, text_for_speech, today_focus_minutes,
-        update_anthropic_tool_calls, update_gemini_tool_calls, update_openai_tool_calls,
-        validate_ai_settings, validate_declarative_plugin, validate_save_path, version_parts,
-        AiSettings, AppSettings, CalendarEvent, ChatEvent, ChatHistoryEntry,
-        DeclarativePluginPackage, FocusRecord, OpenAiToolCallAccumulator, PluginManifest,
-        PluginRegistry, PluginToolManifest, Reminder, ScreenCapture, TextAttachment, ToolCall,
+        normalize_base_url, parse_data_url, prompt_asks_for_calendar_lookup,
+        prompt_asks_for_lookup, provider_tools, read_calendar_events_from_path,
+        read_text_attachment, render_icalendar, should_bypass_system_proxy, system_prompt,
+        text_for_speech, today_focus_minutes, update_anthropic_tool_calls,
+        update_gemini_tool_calls, update_openai_tool_calls, validate_ai_settings,
+        validate_declarative_plugin, validate_save_path, version_parts, AiSettings, AppSettings,
+        CalendarEvent, ChatEvent, ChatHistoryEntry, DeclarativePluginPackage, FocusRecord,
+        OpenAiToolCallAccumulator, PluginManifest, PluginRegistry, PluginToolManifest, Reminder,
+        ScreenCapture, TextAttachment, ToolCall,
     };
-    use chrono::{Local, TimeZone};
+    use chrono::{Duration as ChronoDuration, Local, TimeZone};
     use std::{
         fs,
         path::PathBuf,
@@ -4206,7 +4634,7 @@ mod tests {
     }
 
     #[test]
-    fn serializes_chat_event_types_as_camel_case() {
+    fn serializes_single_word_chat_event_types() {
         let json = serde_json::to_value(ChatEvent::Completed {
             request_id: "request-1".to_string(),
         })
@@ -4214,6 +4642,83 @@ mod tests {
 
         assert_eq!(json["type"], "completed");
         assert_eq!(json["requestId"], "request-1");
+    }
+
+    #[test]
+    fn serializes_action_proposed_chat_events_for_the_bubble_listener() {
+        let json = serde_json::to_value(ChatEvent::ActionProposed {
+            request_id: "request-1".to_string(),
+            draft: super::ActionDraft {
+                id: "draft-1".to_string(),
+                plugin_id: "piko.calendar".to_string(),
+                tool_name: "create_event".to_string(),
+                summary: "创建日程".to_string(),
+                arguments: serde_json::json!({}),
+                created_at: 1,
+            },
+        })
+        .expect("chat event should serialize");
+
+        assert_eq!(json["type"], "action-proposed");
+        assert_eq!(json["requestId"], "request-1");
+        assert_eq!(json["draft"]["createdAt"], 1);
+    }
+
+    #[test]
+    fn system_prompt_mentions_reminder_and_calendar_lookup_for_deletion() {
+        let prompt = system_prompt("Piko");
+        assert!(prompt.contains("查询提醒时优先调用 list_reminders"));
+        assert!(prompt.contains("查询、删除或定位日程时优先调用 list_events"));
+        assert!(prompt.contains("删除提醒或日程前"));
+    }
+
+    #[test]
+    fn recognizes_reminder_and_calendar_lookup_prompts() {
+        assert!(prompt_asks_for_lookup("帮我查看所有提醒"));
+        assert!(prompt_asks_for_calendar_lookup("帮我看看我的所有日程"));
+        assert!(!prompt_asks_for_lookup("帮我删除这个提醒"));
+        assert!(!prompt_asks_for_calendar_lookup("帮我删除这个日程"));
+    }
+
+    #[test]
+    fn formats_lookup_results_for_reminders_and_calendar_events() {
+        let reminders = vec![Reminder {
+            id: "rem-1".to_string(),
+            title: "提交周报".to_string(),
+            due_at: Local
+                .with_ymd_and_hms(2026, 6, 1, 15, 0, 0)
+                .single()
+                .unwrap()
+                .timestamp() as u64,
+            status: "pending".to_string(),
+            repeat: "daily".to_string(),
+        }];
+        let events = vec![CalendarEvent {
+            id: "evt-1".to_string(),
+            title: "项目评审".to_string(),
+            start_at: Local
+                .with_ymd_and_hms(2026, 6, 1, 16, 0, 0)
+                .single()
+                .unwrap()
+                .timestamp() as u64,
+            end_at: Local
+                .with_ymd_and_hms(2026, 6, 1, 17, 0, 0)
+                .single()
+                .unwrap()
+                .timestamp() as u64,
+            location: None,
+            notes: None,
+        }];
+
+        let reminder_text = format_reminder_lookup(&reminders);
+        assert!(reminder_text.contains("我查到了 1 条提醒"));
+        assert!(reminder_text.contains("提交周报"));
+        assert!(reminder_text.contains("重复：每天"));
+
+        let calendar_text = format_calendar_lookup(&events);
+        assert!(calendar_text.contains("我查到了 1 条日程"));
+        assert!(calendar_text.contains("项目评审"));
+        assert!(calendar_text.contains("2026-06-01 16:00 - 2026-06-01 17:00"));
     }
 
     #[test]
@@ -4328,9 +4833,13 @@ mod tests {
         assert_eq!(manifests.len(), 2);
         assert_eq!(manifests[0].id, "piko.calendar");
         assert_eq!(manifests[1].id, "piko.reminders");
-        assert_eq!(manifests[1].tools[0].name, "create_reminder");
-        assert_eq!(manifests[1].tools[0].risk, "write");
-        assert_eq!(manifests[1].tools[0].confirmation, "always");
+        assert_eq!(manifests[0].tools[0].name, "list_events");
+        assert_eq!(manifests[0].tools[4].name, "delete_event");
+        assert_eq!(manifests[1].tools[0].name, "list_reminders");
+        assert_eq!(manifests[1].tools[2].name, "delete_reminder");
+        assert_eq!(manifests[1].tools[1].risk, "write");
+        assert_eq!(manifests[1].tools[2].risk, "sensitive");
+        assert_eq!(manifests[1].tools[2].confirmation, "always");
     }
 
     #[test]
@@ -4374,6 +4883,76 @@ mod tests {
         assert!(draft
             .summary
             .contains("2026-06-02 15:00 - 2026-06-02 16:00"));
+    }
+
+    #[test]
+    fn builds_a_calendar_action_draft_from_a_trailing_calendar_phrase() {
+        let now = Local
+            .with_ymd_and_hms(2026, 6, 1, 10, 0, 0)
+            .single()
+            .unwrap();
+        let draft =
+            build_calendar_action_draft("帮我创建一个今天晚上8点30分到9点的抢购手机的日程", now)
+                .unwrap();
+
+        assert_eq!(draft.arguments["title"], "抢购手机");
+        assert!(draft
+            .summary
+            .contains("2026-06-01 20:30 - 2026-06-01 21:00"));
+    }
+
+    #[test]
+    fn creates_and_queries_a_calendar_event_from_conversation() {
+        let path = temp_calendar_events_path();
+        let now = Local::now();
+        let draft =
+            build_calendar_action_draft("帮我创建一个明天晚上8点30分到9点的抢购手机的日程", now)
+                .unwrap();
+        let input = calendar_event_input_from_value(&draft.arguments).unwrap();
+
+        let created = create_calendar_event_record_at_path(&path, input).unwrap();
+        let queried = read_calendar_events_from_path(&path);
+
+        assert_eq!(created.title, "抢购手机");
+        assert_eq!(queried.len(), 1);
+        assert_eq!(queried[0].id, created.id);
+        assert_eq!(queried[0].title, "抢购手机");
+        assert_eq!(queried[0].start_at, created.start_at);
+        assert_eq!(queried[0].end_at, created.end_at);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn overlapping_calendar_events_are_created_with_a_hint() {
+        let path = temp_calendar_events_path();
+        let now = Local::now() + ChronoDuration::days(1);
+        let first = calendar_event_input_from_value(&serde_json::json!({
+            "title": "已有日程",
+            "startAt": (now + ChronoDuration::hours(1)).timestamp() as u64,
+            "endAt": (now + ChronoDuration::hours(2)).timestamp() as u64,
+        }))
+        .unwrap();
+        let second = calendar_event_input_from_value(&serde_json::json!({
+            "title": "抢购手机",
+            "startAt": (now + ChronoDuration::hours(1) + ChronoDuration::minutes(30)).timestamp() as u64,
+            "endAt": (now + ChronoDuration::hours(2) + ChronoDuration::minutes(30)).timestamp() as u64,
+        }))
+        .unwrap();
+
+        let created_first = create_calendar_event_record_at_path(&path, first).unwrap();
+        let created_second = create_calendar_event_record_at_path(&path, second).unwrap();
+        let queried = read_calendar_events_from_path(&path);
+
+        assert_eq!(queried.len(), 2);
+        assert_eq!(created_first.title, "已有日程");
+        assert_eq!(created_second.title, "抢购手机");
+        assert!(calendar_conflict_note(
+            &queried[..1],
+            created_second.start_at,
+            created_second.end_at
+        )
+        .is_some());
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -4466,6 +5045,49 @@ mod tests {
         assert_eq!(draft.plugin_id, "piko.calendar");
         assert!(draft.summary.contains("项目评审"));
         assert!(draft.summary.contains("2026-06-01 11:00"));
+    }
+
+    #[test]
+    fn creates_confirmation_drafts_for_deletions() {
+        let now = Local
+            .with_ymd_and_hms(2026, 6, 1, 10, 0, 0)
+            .single()
+            .unwrap();
+        let reminder_draft = action_draft_from_tool_call(
+            &super::ToolCall {
+                plugin_id: "piko.reminders".to_string(),
+                tool_name: "delete_reminder".to_string(),
+                arguments: serde_json::json!({
+                    "id": "reminder-1",
+                    "title": "提交周报",
+                    "dueAt": "2026-06-01T18:00:00+08:00",
+                    "repeat": "none",
+                }),
+            },
+            now,
+        )
+        .unwrap();
+        let calendar_draft = action_draft_from_tool_call(
+            &super::ToolCall {
+                plugin_id: "piko.calendar".to_string(),
+                tool_name: "delete_event".to_string(),
+                arguments: serde_json::json!({
+                    "id": "event-1",
+                    "title": "项目评审",
+                    "startAt": "2026-06-01T11:00:00+08:00",
+                    "endAt": "2026-06-01T12:00:00+08:00",
+                }),
+            },
+            now,
+        )
+        .unwrap();
+
+        assert_eq!(reminder_draft.tool_name, "delete_reminder");
+        assert!(reminder_draft.summary.contains("提交周报"));
+        assert!(reminder_draft.summary.contains("2026-06-01 18:00"));
+        assert_eq!(calendar_draft.tool_name, "delete_event");
+        assert!(calendar_draft.summary.contains("项目评审"));
+        assert!(calendar_draft.summary.contains("2026-06-01 11:00"));
     }
 
     #[test]
@@ -4651,6 +5273,17 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos(),
             extension
+        ))
+    }
+
+    fn temp_calendar_events_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "piko-calendar-events-{}-{}.json",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
         ))
     }
 }

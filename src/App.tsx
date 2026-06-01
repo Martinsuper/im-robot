@@ -26,6 +26,10 @@ type WindowLabel = "pet" | "bubble" | "panel" | "capture";
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
+function countCalendarConflicts(events: CalendarEvent[], startAt: number, endAt: number) {
+  return events.filter((event) => event.startAt < endAt && startAt < event.endAt).length;
+}
+
 function detectWindowLabel(): WindowLabel {
   if (isTauriRuntime) return getCurrentWindow().label as WindowLabel;
 
@@ -865,6 +869,7 @@ function PanelWindow() {
   const [calendarStartAt, setCalendarStartAt] = useState(defaultCalendarStartTime);
   const [calendarEndAt, setCalendarEndAt] = useState(defaultCalendarEndTime);
   const [calendarError, setCalendarError] = useState("");
+  const [calendarNotice, setCalendarNotice] = useState("");
   const [externalPlugins, setExternalPlugins] = useState<InstalledPlugin[]>([]);
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusState, setFocusState] = useState<FocusSnapshot>(defaultFocusSnapshot);
@@ -1034,7 +1039,11 @@ function PanelWindow() {
     const endAt = Math.floor(new Date(calendarEndAt).getTime() / 1000);
     if (!calendarTitle.trim() || !Number.isFinite(startAt) || !Number.isFinite(endAt)) return;
 
+    const conflictCount = countCalendarConflicts(calendarEvents, startAt, endAt);
+    const conflictNotice =
+      conflictCount > 0 ? `提示：该时间段与已有 ${conflictCount} 条日程重叠，但已继续创建。` : "";
     setCalendarError("");
+    setCalendarNotice("");
     try {
       const calendarEvent = await runCommand<CalendarEvent>(
         "create_calendar_event",
@@ -1042,6 +1051,7 @@ function PanelWindow() {
         { id: crypto.randomUUID(), title: calendarTitle.trim(), startAt, endAt },
       );
       setCalendarEvents((current) => [...current, calendarEvent].sort((left, right) => left.startAt - right.startAt));
+      setCalendarNotice(conflictNotice);
       setCalendarTitle("");
       setCalendarStartAt(defaultCalendarStartTime());
       setCalendarEndAt(defaultCalendarEndTime());
@@ -1484,6 +1494,7 @@ function PanelWindow() {
           </div>
         </form>
         {calendarError && <p className="reminder-error">{calendarError}</p>}
+        {calendarNotice && <p className="calendar-notice">{calendarNotice}</p>}
         {calendarEvents.length ? (
           <ul className="reminder-list">
             {calendarEvents.map((event) => (
