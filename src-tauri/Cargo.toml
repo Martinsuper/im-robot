@@ -30,6 +30,7 @@ tauri-plugin-autostart = "^2"
 screenshots = "0.8.10"
 base64 = "0.22"
 tauri-plugin-dialog = "^2"
+chrono = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3"

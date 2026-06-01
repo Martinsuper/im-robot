@@ -245,6 +245,30 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 .markdown-code-block { position: relative; }
 .markdown-code-block > button { position: absolute; z-index: 1; top: 6px; right: 6px; border: 0; border-radius: 5px; padding: 3px 5px; color: #c9d1d9; background: rgba(255, 255, 255, .14); font-size: 9px; }
 .markdown-image { display: block; max-width: 100%; height: auto; margin-bottom: 6px; border-radius: 8px; }
+.action-confirmation {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(87, 121, 109, .2);
+  border-radius: 9px;
+  padding: 8px;
+  color: #526476;
+  background: #eef3e9;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.action-confirmation p { margin: 0; white-space: pre-line; }
+.action-confirmation > strong { color: #34495e; }
+.action-confirmation div { display: flex; gap: 5px; }
+.action-confirmation button {
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #fff;
+  background: #58796d;
+  font-size: 10px;
+  font-weight: 800;
+}
+.action-confirmation button.is-secondary { color: #58796d; background: rgba(255, 255, 255, .72); }
 .attachment-dropzone {
   display: grid;
   gap: 5px;
@@ -335,7 +359,7 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 .panel-shell--peach { --panel-tint: #f7ede5; --panel-accent: #a96f58; }
 .panel-header { margin-bottom: 12px; padding: 0 2px; }
 .panel-header p:last-child { max-width: 270px; margin-bottom: 0; color: #81908c; font-size: 11px; line-height: 1.45; }
-.panel-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-bottom: 10px; border-radius: 10px; padding: 3px; background: rgba(255, 255, 255, .72); }
+.panel-tabs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; margin-bottom: 10px; border-radius: 10px; padding: 3px; background: rgba(255, 255, 255, .72); }
 .panel-tabs button { min-height: 27px; border: 0; border-radius: 7px; color: #81908c; background: transparent; font-size: 10px; font-weight: 800; }
 .panel-tabs button.is-active { color: var(--panel-accent); background: var(--panel-tint); }
 .is-hidden { display: none; }

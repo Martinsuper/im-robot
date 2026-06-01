@@ -308,6 +308,7 @@ function BubbleWindow() {
   const [speechError, setSpeechError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [requestId, setRequestId] = useState<string>();
+  const [pendingAction, setPendingAction] = useState<ActionDraft>();
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
   const previewReplyTimer = useRef<number | undefined>(undefined);
@@ -377,6 +378,11 @@ function BubbleWindow() {
       if (event.payload.type === "completed") {
         setIsThinking(false);
       }
+      if (event.payload.type === "action-proposed") {
+        setIsThinking(false);
+        setMessage("请确认是否执行以下操作。");
+        setPendingAction(event.payload.draft);
+      }
       if (event.payload.type === "cancelled") {
         setIsThinking(false);
         setMessage((current) => current || "已停止生成。");
@@ -427,6 +433,7 @@ function BubbleWindow() {
     const currentPrompt = prompt.trim();
     const currentRequestId = crypto.randomUUID();
     setIsThinking(true);
+    setPendingAction(undefined);
     setMessage("Piko 正在连接模型服务...");
     activeRequestId.current = currentRequestId;
     setRequestId(currentRequestId);
@@ -467,6 +474,34 @@ function BubbleWindow() {
 
   async function copyResult() {
     await navigator.clipboard.writeText(message);
+  }
+
+  async function confirmAction() {
+    if (!pendingAction) return;
+    setSaveError("");
+    try {
+      if (pendingAction.pluginId === "piko.reminders" && isTauriRuntime && !(await isPermissionGranted())) {
+        await requestPermission();
+      }
+      const execution = await runCommand<ActionExecution>("confirm_chat_action", {
+        id: pendingAction.id,
+      });
+      setPendingAction(undefined);
+      setMessage(execution.message);
+    } catch (error) {
+      setSaveError(String(error));
+    }
+  }
+
+  async function rejectAction() {
+    if (!pendingAction) return;
+    try {
+      await runCommand("reject_chat_action", { id: pendingAction.id });
+      setPendingAction(undefined);
+      setMessage("已取消该操作。");
+    } catch (error) {
+      setSaveError(String(error));
+    }
   }
 
   async function toggleSpeech() {
@@ -572,6 +607,17 @@ function BubbleWindow() {
       <div className="bubble-message">
         <MarkdownContent>{message}</MarkdownContent>
       </div>
+      {pendingAction && (
+        <section className="action-confirmation" aria-label="待确认操作">
+          <p className="eyebrow">ACTION CONFIRMATION</p>
+          <strong>{pendingAction.pluginId === "piko.calendar" ? "日程插件请求执行操作" : "提醒插件请求执行操作"}</strong>
+          <p>{pendingAction.summary}</p>
+          <div>
+            <button type="button" onClick={() => void confirmAction()}>确认创建</button>
+            <button className="is-secondary" type="button" onClick={() => void rejectAction()}>取消</button>
+          </div>
+        </section>
+      )}
       <section className={`attachment-dropzone${isDraggingFile ? " is-dragging" : ""}`}>
         {attachment ? (
           <>
@@ -767,6 +813,11 @@ function PanelWindow() {
   const [reminderDueAt, setReminderDueAt] = useState(defaultReminderTime);
   const [reminderRepeat, setReminderRepeat] = useState<ReminderRepeat>("none");
   const [reminderError, setReminderError] = useState("");
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [calendarTitle, setCalendarTitle] = useState("");
+  const [calendarStartAt, setCalendarStartAt] = useState(defaultCalendarStartTime);
+  const [calendarEndAt, setCalendarEndAt] = useState(defaultCalendarEndTime);
+  const [calendarError, setCalendarError] = useState("");
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusState, setFocusState] = useState<FocusSnapshot>(defaultFocusSnapshot);
   const statuses = useMemo(
@@ -792,6 +843,7 @@ function PanelWindow() {
     });
     void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
     void runCommand<Reminder[]>("list_reminders", undefined, []).then(setReminders);
+    void runCommand<CalendarEvent[]>("list_calendar_events", undefined, []).then(setCalendarEvents);
     void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
     void runCommand<string>("screen_capture_permission_status", undefined, "截图时按需申请").then(
       setScreenCapturePermission,
@@ -810,6 +862,9 @@ function PanelWindow() {
     const unlistenHistory = listen("chat-history-updated", () => {
       void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
     });
+    const unlistenCalendar = listen("calendar-events-updated", () => {
+      void runCommand<CalendarEvent[]>("list_calendar_events", undefined, []).then(setCalendarEvents);
+    });
     const unlistenFocus = listen<FocusSnapshot>("focus-updated", (event) => {
       setFocusState(event.payload);
     });
@@ -819,6 +874,7 @@ function PanelWindow() {
     return () => {
       void unlisten.then((dispose) => dispose());
       void unlistenHistory.then((dispose) => dispose());
+      void unlistenCalendar.then((dispose) => dispose());
       void unlistenFocus.then((dispose) => dispose());
       window.clearInterval(refreshFocus);
     };
@@ -920,6 +976,37 @@ function PanelWindow() {
       setReminders((current) => current.filter((reminder) => reminder.id !== id));
     } catch (error) {
       setReminderError(String(error));
+    }
+  }
+
+  async function createCalendarEvent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const startAt = Math.floor(new Date(calendarStartAt).getTime() / 1000);
+    const endAt = Math.floor(new Date(calendarEndAt).getTime() / 1000);
+    if (!calendarTitle.trim() || !Number.isFinite(startAt) || !Number.isFinite(endAt)) return;
+
+    setCalendarError("");
+    try {
+      const calendarEvent = await runCommand<CalendarEvent>(
+        "create_calendar_event",
+        { input: { title: calendarTitle, startAt, endAt } },
+        { id: crypto.randomUUID(), title: calendarTitle.trim(), startAt, endAt },
+      );
+      setCalendarEvents((current) => [...current, calendarEvent].sort((left, right) => left.startAt - right.startAt));
+      setCalendarTitle("");
+      setCalendarStartAt(defaultCalendarStartTime());
+      setCalendarEndAt(defaultCalendarEndTime());
+    } catch (error) {
+      setCalendarError(String(error));
+    }
+  }
+
+  async function deleteCalendarEvent(id: string) {
+    try {
+      await runCommand("delete_calendar_event", { id });
+      setCalendarEvents((current) => current.filter((event) => event.id !== id));
+    } catch (error) {
+      setCalendarError(String(error));
     }
   }
 
@@ -1277,6 +1364,53 @@ function PanelWindow() {
         )}
       </section>
 
+      <section className={panelSectionClass("calendar")}>
+        <p className="eyebrow">CALENDAR</p>
+        <h2>本地日程</h2>
+        <form className="reminder-form" onSubmit={createCalendarEvent}>
+          <input
+            value={calendarTitle}
+            onChange={(event) => setCalendarTitle(event.currentTarget.value)}
+            maxLength={120}
+            placeholder="例如：项目评审"
+            aria-label="日程标题"
+          />
+          <input
+            type="datetime-local"
+            value={calendarStartAt}
+            onChange={(event) => setCalendarStartAt(event.currentTarget.value)}
+            aria-label="日程开始时间"
+          />
+          <div>
+            <input
+              type="datetime-local"
+              value={calendarEndAt}
+              onChange={(event) => setCalendarEndAt(event.currentTarget.value)}
+              aria-label="日程结束时间"
+            />
+            <button type="submit" disabled={!calendarTitle.trim() || !calendarStartAt || !calendarEndAt}>
+              添加
+            </button>
+          </div>
+        </form>
+        {calendarError && <p className="reminder-error">{calendarError}</p>}
+        {calendarEvents.length ? (
+          <ul className="reminder-list">
+            {calendarEvents.map((event) => (
+              <li key={event.id}>
+                <div>
+                  <strong>{event.title}</strong>
+                  <span>{formatCalendarRange(event.startAt, event.endAt)}</span>
+                </div>
+                <button type="button" onClick={() => void deleteCalendarEvent(event.id)}>删除</button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-state">暂无日程。</p>
+        )}
+      </section>
+
       <section className={panelSectionClass("history")}>
         <div className="focus-summary">
           <span>今日专注</span>
@@ -1374,15 +1508,39 @@ interface Reminder {
   repeat: ReminderRepeat;
 }
 
+interface CalendarEvent {
+  id: string;
+  title: string;
+  startAt: number;
+  endAt: number;
+  location?: string;
+  notes?: string;
+}
+
+interface ActionDraft {
+  id: string;
+  pluginId: string;
+  toolName: string;
+  summary: string;
+  arguments: Record<string, unknown>;
+  createdAt: number;
+}
+
+interface ActionExecution {
+  message: string;
+  result: unknown;
+}
+
 type AttachmentAction = "summarize" | "translate" | "explain";
 type Theme = "sage" | "blue" | "peach";
-type PanelTab = "companion" | "settings" | "reminders" | "history" | "about";
+type PanelTab = "companion" | "settings" | "reminders" | "calendar" | "history" | "about";
 type ReminderRepeat = "none" | "daily" | "weekly" | "weekdays";
 
 type ChatEvent =
   | { type: "started"; requestId: string; working: boolean }
   | { type: "delta"; requestId: string; sequence: number; text: string }
   | { type: "completed"; requestId: string }
+  | { type: "action-proposed"; requestId: string; draft: ActionDraft }
   | { type: "cancelled"; requestId: string }
   | { type: "failed"; requestId: string; message: string };
 
@@ -1445,6 +1603,7 @@ const panelTabOptions: Array<{ label: string; value: PanelTab }> = [
   { label: "精灵", value: "companion" },
   { label: "设置", value: "settings" },
   { label: "提醒", value: "reminders" },
+  { label: "日程", value: "calendar" },
   { label: "历史", value: "history" },
   { label: "关于", value: "about" },
 ];
@@ -1477,6 +1636,23 @@ function defaultReminderTime() {
   return local.toISOString().slice(0, 16);
 }
 
+function defaultCalendarStartTime() {
+  const date = new Date(Date.now() + 60 * 60 * 1000);
+  date.setMinutes(0, 0, 0);
+  return formatLocalDateTimeInput(date);
+}
+
+function defaultCalendarEndTime() {
+  const date = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  date.setMinutes(0, 0, 0);
+  return formatLocalDateTimeInput(date);
+}
+
+function formatLocalDateTimeInput(date: Date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
+  return local.toISOString().slice(0, 16);
+}
+
 function formatReminderTime(timestamp: number) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "numeric",
@@ -1484,6 +1660,10 @@ function formatReminderTime(timestamp: number) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(timestamp * 1000);
+}
+
+function formatCalendarRange(startAt: number, endAt: number) {
+  return `${formatReminderTime(startAt)} - ${formatReminderTime(endAt)}`;
 }
 
 function formatFocusRemaining(seconds: number) {
