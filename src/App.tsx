@@ -1088,7 +1088,7 @@ function PanelWindow() {
             <input
               value={aiSettings.model}
               onChange={(event) => updateAiField("model", event.currentTarget.value)}
-              placeholder="gemma4:e4b"
+              placeholder={aiSettings.provider === "lmstudio" ? "可留空，LM Studio 自动使用当前加载模型" : "gemma4:e4b"}
             />
           </label>
           <label>
@@ -1427,6 +1427,7 @@ const defaultAppSettings: AppSettings = {
 };
 
 const providerOptions = [
+  { label: "LM Studio", value: "lmstudio", baseUrl: "http://localhost:1234/v1", model: "" },
   { label: "OpenAI Compatible", value: "openai-compatible", baseUrl: "http://localhost:11434/v1", model: "gemma4:e4b" },
   { label: "Anthropic Claude", value: "anthropic", baseUrl: "https://api.anthropic.com/v1", model: "claude-sonnet-4-6" },
   { label: "Google Gemini", value: "gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash" },

@@ -507,11 +507,15 @@ enum ProviderKind {
 
 fn provider_kind(provider: &str) -> Option<ProviderKind> {
     match provider {
-        "openai-compatible" | "deepseek" | "dashscope" => Some(ProviderKind::OpenAiCompatible),
+        "openai-compatible" | "deepseek" | "dashscope" | "lmstudio" => Some(ProviderKind::OpenAiCompatible),
         "anthropic" => Some(ProviderKind::Anthropic),
         "gemini" => Some(ProviderKind::Gemini),
         _ => None,
     }
+}
+
+fn is_local_provider(provider: &str) -> bool {
+    matches!(provider, "lmstudio" | "openai-compatible")
 }
 
 fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
@@ -521,7 +525,7 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
     if !(settings.base_url.starts_with("http://") || settings.base_url.starts_with("https://")) {
         return Err("Base URL 必须以 http:// 或 https:// 开头".to_string());
     }
-    if settings.model.trim().is_empty() {
+    if settings.model.trim().is_empty() && !is_local_provider(&settings.provider) {
         return Err("模型名称不能为空".to_string());
     }
     if !(0.0..=2.0).contains(&settings.temperature) {
@@ -2381,9 +2385,9 @@ mod tests {
     use super::{
         append_session_chat_history, build_attachment_prompt, chat_request_body, chat_url,
         collect_due_reminders, extract_chat_deltas, extract_model_ids, idle_threshold_seconds,
-        monitor_contains, next_idle_state, next_repeat_due, normalize_base_url, parse_data_url,
+        models_url, monitor_contains, next_idle_state, next_repeat_due, normalize_base_url, parse_data_url,
         read_text_attachment, should_bypass_system_proxy, text_for_speech, today_focus_minutes,
-        validate_save_path, version_parts, AiSettings, AppSettings, ChatEvent, ChatHistoryEntry,
+        validate_ai_settings, validate_save_path, version_parts, AiSettings, AppSettings, ChatEvent, ChatHistoryEntry,
         FocusRecord, Reminder, ScreenCapture, TextAttachment,
     };
     use std::{
@@ -2529,6 +2533,101 @@ mod tests {
             vec!["你好".to_string()]
         );
         assert!(extract_chat_deltas("openai-compatible", "data: [DONE]").is_empty());
+    }
+
+    #[test]
+    fn lmstudio_uses_openai_compatible_protocol() {
+        let ai = AiSettings {
+            provider: "lmstudio".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            model: "llama-3.2-1b".to_string(),
+            ..Default::default()
+        };
+        // LM Studio uses the same chat completions endpoint as OpenAI
+        assert_eq!(
+            chat_url(&ai).unwrap(),
+            "http://localhost:1234/v1/chat/completions"
+        );
+        // LM Studio uses the same models listing endpoint
+        assert_eq!(models_url(&ai), "http://localhost:1234/v1/models");
+        // LM Studio model list response uses OpenAI-compatible "data" array
+        assert_eq!(
+            extract_model_ids(
+                "lmstudio",
+                &serde_json::json!({ "data": [{ "id": "llama-3.2-1b" }, { "id": "qwen2.5-7b" }] })
+            ),
+            vec!["llama-3.2-1b".to_string(), "qwen2.5-7b".to_string()]
+        );
+        // LM Studio streaming deltas use the same format as OpenAI
+        assert_eq!(
+            extract_chat_deltas(
+                "lmstudio",
+                r#"data: {"choices":[{"delta":{"content":"Hello from LM Studio"}}]}"#
+            ),
+            vec!["Hello from LM Studio".to_string()]
+        );
+        assert!(extract_chat_deltas("lmstudio", "data: [DONE]").is_empty());
+        // LM Studio localhost should bypass system proxy
+        assert!(should_bypass_system_proxy("http://localhost:1234/v1"));
+    }
+
+    #[test]
+    fn lmstudio_builds_openai_compatible_chat_request_body() {
+        let settings = AppSettings {
+            ai: AiSettings {
+                provider: "lmstudio".to_string(),
+                base_url: "http://localhost:1234/v1".to_string(),
+                model: "llama-3.2-1b".to_string(),
+                temperature: 0.5,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let body = chat_request_body(&settings, &[], "你好", None).unwrap();
+        // Same structure as OpenAI-compatible providers
+        assert_eq!(body["model"], "llama-3.2-1b");
+        assert_eq!(body["temperature"], 0.5);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"], "你好");
+    }
+
+    #[test]
+    fn lmstudio_allows_empty_model_for_auto_detection() {
+        // LM Studio auto-selects the currently loaded model when model is empty
+        let settings = AiSettings {
+            provider: "lmstudio".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            model: "".to_string(),
+            ..Default::default()
+        };
+        assert!(validate_ai_settings(&settings).is_ok());
+
+        let openai_compatible = AiSettings {
+            provider: "openai-compatible".to_string(),
+            base_url: "http://localhost:11434/v1".to_string(),
+            model: "".to_string(),
+            ..Default::default()
+        };
+        assert!(validate_ai_settings(&openai_compatible).is_ok());
+
+        // Cloud providers still require a model name
+        let anthropic = AiSettings {
+            provider: "anthropic".to_string(),
+            base_url: "https://api.anthropic.com/v1".to_string(),
+            model: "".to_string(),
+            ..Default::default()
+        };
+        assert!(validate_ai_settings(&anthropic).is_err());
+
+        // LM Studio with empty model should still build a valid request body
+        let app_settings = AppSettings {
+            ai: settings,
+            ..Default::default()
+        };
+        let body = chat_request_body(&app_settings, &[], "你好", None).unwrap();
+        assert_eq!(body["model"], "");
     }
 
     #[test]
