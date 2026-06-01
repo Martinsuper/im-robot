@@ -1,7 +1,7 @@
 # Piko Tool Use 与日程插件设计
 
-> 文档版本：`v0.2`  
-> 状态：第二阶段进行中  
+> 文档版本：`v0.3`
+> 状态：第二阶段已完成
 > 依赖：[`plugin-architecture.md`](plugin-architecture.md)
 
 ## 1. 目标
@@ -16,7 +16,7 @@
 - 常见中文日程表达的本地草稿解析。
 - 插件 manifest 到 OpenAI Compatible、Anthropic、Gemini tools schema 的映射函数。
 
-OpenAI Compatible 原生 Tool Use 已启用：请求会注入 tools schema，流式 `tool_calls` 会被聚合并校验。只读工具自动执行后回传模型继续生成；写入工具仍然先生成确认草稿。系统提示会附带当前本地时间和时区。模型必须提交带时区的 ISO 8601 时间字符串，由 Rust 转换为 Unix 时间戳，避免依赖模型进行时间戳运算。若本地服务或模型拒绝 `tools` 字段，当前请求会自动降级为普通聊天。Anthropic 和 Gemini 的原生 Tool Use 仍待实现。
+OpenAI Compatible、Anthropic 和 Gemini 原生 Tool Use 已启用：请求会注入对应的 tools schema，流式工具调用会被聚合并校验。只读工具自动执行后回传模型继续生成；写入工具先生成确认草稿，确认执行后再将结构化结果交给模型生成自然语言收尾。系统提示会附带当前本地时间和时区。模型必须提交带时区的 ISO 8601 时间字符串，由 Rust 转换为 Unix 时间戳，避免依赖模型进行时间戳运算。若服务或模型拒绝 `tools` 字段，当前请求会自动降级为普通聊天。
 
 ## 2. 分层
 
@@ -133,13 +133,14 @@ existing.start_at < candidate.end_at
 | `list_events` | `read` | `never` |
 | `detect_conflicts` | `read` | `never` |
 | `create_event` | `write` | `always` |
+| `create_event_batch` | `write` | `always` |
+
+批量日程使用一张确认卡展示候选项，用户可以取消勾选不希望写入的条目。执行时 Rust 会一次性检查已有日程与批次内部冲突，避免部分写入。
 
 删除事件暂时只提供面板入口。后续开放对话删除时，使用 `sensitive` 风险等级和强确认卡。
 
 ## 6. 后续阶段
 
-1. 写入工具确认执行后，将工具结果回传模型生成自然语言收尾。
-2. 接入 Anthropic `tool_use` / `tool_result`。
-3. 接入 Gemini `functionCall` / `functionResponse`。
-4. 增加批量 `ActionBatchDraft`，支持日程规划和冲突项勾选。
-5. 增加 iCalendar 导出与系统日历 Host API。
+1. 对话删除日程与更细粒度的敏感操作授权。
+2. 在系统日历 Host API 之上增加双向同步；当前实现为 iCalendar 导出后交给系统日历导入。
+3. 增加真正的 WASM 沙箱执行器；当前外部插件运行时仅允许声明式只读静态响应。

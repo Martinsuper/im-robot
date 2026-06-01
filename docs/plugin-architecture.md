@@ -1,7 +1,7 @@
 # Piko 业务插件架构
 
-> 文档版本：`v0.1`  
-> 状态：第一阶段已实施  
+> 文档版本：`v0.2`
+> 状态：内置插件与声明式只读外部插件已实施
 > 目标：让提醒、日程、搜索、笔记等能力通过统一协议接入对话，而不是写死在聊天链路中。
 
 ## 1. 背景
@@ -60,7 +60,7 @@ Piko 已有对话、提醒、专注模式和受控文件写入能力，但这些
         "required": ["title", "dueAt"],
         "properties": {
           "title": { "type": "string", "maxLength": 120 },
-          "dueAt": { "type": "integer" },
+          "dueAt": { "type": "string", "description": "带时区的 ISO 8601 时间" },
           "repeat": {
             "enum": ["none", "daily", "weekly", "weekdays"]
           }
@@ -119,16 +119,17 @@ struct ActionDraft {
 
 ## 6. 外部插件演进
 
-完成内置插件验证后，再开放可安装插件。插件包建议使用：
+当前已经开放受限的声明式只读插件。插件包放置在应用配置目录的 `plugins/` 下：
 
 ```text
 plugins/
-  piko.calendar/
+  piko.external.team-info/
     manifest.json
-    plugin.wasm
 ```
 
-推荐使用 WASM 沙箱：
+`manifest.json` 除标准 manifest 外可声明 `responses`。只有 `piko.external.*` ID、`pure/read` 风险、`confirmation: never` 且每个工具都有静态 JSON 响应时，插件才会注册并暴露给模型。该运行时适合团队说明、固定配置和本地知识入口，不允许网络、文件、Shell 或系统凭据访问。
+
+后续需要动态逻辑时，使用 WASM 沙箱：
 
 - 不动态加载第三方原生库。
 - 不向插件暴露任意 Shell。

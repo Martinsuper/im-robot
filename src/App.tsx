@@ -309,6 +309,7 @@ function BubbleWindow() {
   const [saveError, setSaveError] = useState("");
   const [requestId, setRequestId] = useState<string>();
   const [pendingAction, setPendingAction] = useState<ActionDraft>();
+  const [selectedBatchIndexes, setSelectedBatchIndexes] = useState<number[]>([]);
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
   const previewReplyTimer = useRef<number | undefined>(undefined);
@@ -382,6 +383,8 @@ function BubbleWindow() {
         setIsThinking(false);
         setMessage("请确认是否执行以下操作。");
         setPendingAction(event.payload.draft);
+        const events = event.payload.draft.arguments.events;
+        setSelectedBatchIndexes(Array.isArray(events) ? events.map((_, index) => index) : []);
       }
       if (event.payload.type === "cancelled") {
         setIsThinking(false);
@@ -485,9 +488,23 @@ function BubbleWindow() {
       }
       const execution = await runCommand<ActionExecution>("confirm_chat_action", {
         id: pendingAction.id,
+        selectedIndexes: pendingAction.toolName === "create_event_batch" ? selectedBatchIndexes : undefined,
       });
       setPendingAction(undefined);
+      setSelectedBatchIndexes([]);
       setMessage(execution.message);
+      if (isTauriRuntime) {
+        const followUpRequestId = crypto.randomUUID();
+        activeRequestId.current = followUpRequestId;
+        setRequestId(followUpRequestId);
+        setIsThinking(true);
+        await runCommand<void>("chat_start", {
+          input: {
+            requestId: followUpRequestId,
+            prompt: execution.followUpPrompt,
+          },
+        });
+      }
     } catch (error) {
       setSaveError(String(error));
     }
@@ -498,6 +515,7 @@ function BubbleWindow() {
     try {
       await runCommand("reject_chat_action", { id: pendingAction.id });
       setPendingAction(undefined);
+      setSelectedBatchIndexes([]);
       setMessage("已取消该操作。");
     } catch (error) {
       setSaveError(String(error));
@@ -612,8 +630,37 @@ function BubbleWindow() {
           <p className="eyebrow">ACTION CONFIRMATION</p>
           <strong>{pendingAction.pluginId === "piko.calendar" ? "日程插件请求执行操作" : "提醒插件请求执行操作"}</strong>
           <p>{pendingAction.summary}</p>
+          {pendingAction.toolName === "create_event_batch" && Array.isArray(pendingAction.arguments.events) && (
+            <div className="action-confirmation__choices">
+              {pendingAction.arguments.events.map((event, index) => {
+                const calendarEvent = event as Record<string, unknown>;
+                return (
+                  <label key={`${String(calendarEvent.title)}-${index}`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedBatchIndexes.includes(index)}
+                      onChange={() =>
+                        setSelectedBatchIndexes((current) =>
+                          current.includes(index)
+                            ? current.filter((value) => value !== index)
+                            : [...current, index],
+                        )
+                      }
+                    />
+                    <span>{String(calendarEvent.title ?? `日程 ${index + 1}`)}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
           <div>
-            <button type="button" onClick={() => void confirmAction()}>确认创建</button>
+            <button
+              type="button"
+              disabled={pendingAction.toolName === "create_event_batch" && !selectedBatchIndexes.length}
+              onClick={() => void confirmAction()}
+            >
+              确认创建
+            </button>
             <button className="is-secondary" type="button" onClick={() => void rejectAction()}>取消</button>
           </div>
         </section>
@@ -818,6 +865,7 @@ function PanelWindow() {
   const [calendarStartAt, setCalendarStartAt] = useState(defaultCalendarStartTime);
   const [calendarEndAt, setCalendarEndAt] = useState(defaultCalendarEndTime);
   const [calendarError, setCalendarError] = useState("");
+  const [externalPlugins, setExternalPlugins] = useState<InstalledPlugin[]>([]);
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusState, setFocusState] = useState<FocusSnapshot>(defaultFocusSnapshot);
   const statuses = useMemo(
@@ -844,6 +892,7 @@ function PanelWindow() {
     void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
     void runCommand<Reminder[]>("list_reminders", undefined, []).then(setReminders);
     void runCommand<CalendarEvent[]>("list_calendar_events", undefined, []).then(setCalendarEvents);
+    void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, []).then(setExternalPlugins);
     void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
     void runCommand<string>("screen_capture_permission_status", undefined, "截图时按需申请").then(
       setScreenCapturePermission,
@@ -1010,6 +1059,23 @@ function PanelWindow() {
     }
   }
 
+  async function exportCalendar() {
+    const path = await save({
+      defaultPath: "piko-calendar.ics",
+      filters: [{ name: "iCalendar", extensions: ["ics"] }],
+    });
+    if (!path) return;
+    setCalendarError("");
+    try {
+      await runCommand("export_calendar_events", { path });
+      if (window.confirm("日程已导出。是否交给系统日历导入？")) {
+        await runCommand("open_calendar_import", { path });
+      }
+    } catch (error) {
+      setCalendarError(String(error));
+    }
+  }
+
   async function updateFocus(command: string, args?: Record<string, unknown>) {
     setFocusState(await runCommand<FocusSnapshot>(command, args, defaultFocusSnapshot));
   }
@@ -1109,6 +1175,23 @@ function PanelWindow() {
           <div><span>屏幕录制</span><strong>{screenCapturePermission}</strong></div>
           <div><span>主动感知</span><strong>{sensingPaused ? "已暂停" : "未启用持续感知"}</strong></div>
         </div>
+      </section>
+
+      <section className={panelSectionClass("about")}>
+        <p className="eyebrow">BUSINESS PLUGINS</p>
+        <h2>外部插件</h2>
+        {externalPlugins.length ? (
+          <ul className="history-list">
+            {externalPlugins.map((plugin) => (
+              <li key={plugin.manifest.id}>
+                <strong>{plugin.manifest.name}</strong>
+                <span>{plugin.manifest.id} · {plugin.status}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-state">未发现外部插件清单。</p>
+        )}
       </section>
 
       <section className={panelSectionClass("about")}>
@@ -1365,8 +1448,15 @@ function PanelWindow() {
       </section>
 
       <section className={panelSectionClass("calendar")}>
-        <p className="eyebrow">CALENDAR</p>
-        <h2>本地日程</h2>
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">CALENDAR</p>
+            <h2>本地日程</h2>
+          </div>
+          <button type="button" disabled={!calendarEvents.length} onClick={() => void exportCalendar()}>
+            导出 iCalendar
+          </button>
+        </div>
         <form className="reminder-form" onSubmit={createCalendarEvent}>
           <input
             value={calendarTitle}
@@ -1529,6 +1619,17 @@ interface ActionDraft {
 interface ActionExecution {
   message: string;
   result: unknown;
+  followUpPrompt: string;
+}
+
+interface InstalledPlugin {
+  manifest: {
+    id: string;
+    name: string;
+    version: string;
+  };
+  executable: boolean;
+  status: string;
 }
 
 type AttachmentAction = "summarize" | "translate" | "explain";

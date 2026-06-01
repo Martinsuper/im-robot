@@ -333,7 +333,7 @@ npm install remark-gfm
 
 ### 2.4 工具调用（Tool Use）
 
-**状态：** 🟡 第二阶段进行中。已建立业务插件注册表、内置提醒与日程插件、动作草稿、确认卡，并启用 OpenAI Compatible 原生 Tool Use 的流式聚合与只读工具回传；Anthropic、Gemini 原生 Tool Use 及外部 WASM 插件加载仍待实现。详见 [`plugin-architecture.md`](plugin-architecture.md) 和 [`tool-use-calendar-design.md`](tool-use-calendar-design.md)。
+**状态：** ✅ 第二阶段已完成（2026-06-01）。已建立业务插件注册表、内置提醒与日程插件、动作草稿、逐项批量确认卡，并启用 OpenAI Compatible、Anthropic 和 Gemini 原生 Tool Use 的流式聚合与只读工具回传。外部插件已支持受限声明式只读运行时；需要动态逻辑的 WASM 沙箱仍属于后续增强。详见 [`plugin-architecture.md`](plugin-architecture.md) 和 [`tool-use-calendar-design.md`](tool-use-calendar-design.md)。
 
 **问题：** 当前 AI 只能纯文本回复，无法主动获取外部信息或执行操作。
 

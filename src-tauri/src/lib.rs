@@ -252,7 +252,12 @@ struct CalendarEventInput {
     notes: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
+struct CalendarEventBatchInput {
+    events: Vec<CalendarEventInput>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginToolManifest {
     name: String,
@@ -262,7 +267,7 @@ struct PluginToolManifest {
     confirmation: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginManifest {
     id: String,
@@ -270,6 +275,14 @@ struct PluginManifest {
     version: String,
     description: String,
     tools: Vec<PluginToolManifest>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstalledPlugin {
+    manifest: PluginManifest,
+    executable: bool,
+    status: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -296,10 +309,12 @@ struct ActionDraft {
 struct ActionExecution {
     message: String,
     result: Value,
+    follow_up_prompt: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct OpenAiToolCallAccumulator {
+    stream_index: usize,
     id: String,
     name: String,
     arguments: String,
@@ -321,7 +336,20 @@ struct ReminderPlugin;
 struct CalendarPlugin;
 
 struct PluginRegistry {
-    plugins: HashMap<String, Arc<dyn PikoPlugin>>,
+    plugins: Mutex<HashMap<String, Arc<dyn PikoPlugin>>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeclarativePluginPackage {
+    #[serde(flatten)]
+    manifest: PluginManifest,
+    #[serde(default)]
+    responses: HashMap<String, Value>,
+}
+
+struct DeclarativePlugin {
+    package: DeclarativePluginPackage,
 }
 
 #[derive(Default)]
@@ -444,6 +472,34 @@ impl CalendarPlugin {
                 risk: "write".to_string(),
                 confirmation: "always".to_string(),
             },
+            PluginToolManifest {
+                name: "create_event_batch".to_string(),
+                description: "批量创建本地日程，适合日程规划；整批需要用户确认".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["events"],
+                    "properties": {
+                        "events": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "items": {
+                                "type": "object",
+                                "required": ["title", "startAt", "endAt"],
+                                "properties": {
+                                    "title": { "type": "string", "maxLength": 120 },
+                                    "startAt": { "type": "string", "description": "ISO 8601 时间，例如 2026-06-02T15:00:00+08:00" },
+                                    "endAt": { "type": "string", "description": "ISO 8601 时间，例如 2026-06-02T16:00:00+08:00" },
+                                    "location": { "type": "string" },
+                                    "notes": { "type": "string" }
+                                }
+                            }
+                        }
+                    }
+                }),
+                risk: "write".to_string(),
+                confirmation: "always".to_string(),
+            },
         ]
     }
 }
@@ -479,8 +535,27 @@ impl PikoPlugin for CalendarPlugin {
                 let event = create_calendar_event_record(app, event_input)?;
                 serde_json::to_value(event).map_err(|error| error.to_string())
             }
+            "create_event_batch" => {
+                let batch = calendar_event_batch_input_from_value(&input)?;
+                let events = create_calendar_event_batch_record(app, batch)?;
+                serde_json::to_value(events).map_err(|error| error.to_string())
+            }
             _ => Err("日程插件不支持该工具".to_string()),
         }
+    }
+}
+
+impl PikoPlugin for DeclarativePlugin {
+    fn manifest(&self) -> PluginManifest {
+        self.package.manifest.clone()
+    }
+
+    fn execute(&self, _app: &AppHandle, tool: &str, _input: Value) -> Result<Value, String> {
+        self.package
+            .responses
+            .get(tool)
+            .cloned()
+            .ok_or_else(|| "声明式插件未配置该工具的响应".to_string())
     }
 }
 
@@ -491,12 +566,16 @@ impl PluginRegistry {
         let mut plugins = HashMap::new();
         plugins.insert(reminder_plugin.manifest().id, reminder_plugin);
         plugins.insert(calendar_plugin.manifest().id, calendar_plugin);
-        Self { plugins }
+        Self {
+            plugins: Mutex::new(plugins),
+        }
     }
 
     fn manifests(&self) -> Vec<PluginManifest> {
-        let mut manifests = self
-            .plugins
+        let Ok(plugins) = self.plugins.lock() else {
+            return Vec::new();
+        };
+        let mut manifests = plugins
             .values()
             .map(|plugin| plugin.manifest())
             .collect::<Vec<_>>();
@@ -505,8 +584,11 @@ impl PluginRegistry {
     }
 
     fn execute(&self, app: &AppHandle, call: ToolCall) -> Result<Value, String> {
-        let plugin = self
+        let plugins = self
             .plugins
+            .lock()
+            .map_err(|_| "无法读取业务插件".to_string())?;
+        let plugin = plugins
             .get(&call.plugin_id)
             .ok_or_else(|| "未找到对应的业务插件".to_string())?;
         let manifest = plugin.manifest();
@@ -522,6 +604,8 @@ impl PluginRegistry {
 
     fn tool_manifest(&self, call: &ToolCall) -> Result<PluginToolManifest, String> {
         self.plugins
+            .lock()
+            .map_err(|_| "无法读取业务插件".to_string())?
             .get(&call.plugin_id)
             .ok_or_else(|| "未找到对应的业务插件".to_string())?
             .manifest()
@@ -544,6 +628,35 @@ impl PluginRegistry {
             }
         }
         Err("模型请求了未注册的工具".to_string())
+    }
+
+    fn register_declarative_plugins(&self, app: &AppHandle) -> Vec<InstalledPlugin> {
+        let packages = read_external_plugin_packages(app);
+        let mut plugins = match self.plugins.lock() {
+            Ok(plugins) => plugins,
+            Err(_) => return Vec::new(),
+        };
+        let mut installed = Vec::new();
+        for package in packages {
+            let error = validate_declarative_plugin(&package).err();
+            let executable = error.is_none();
+            let status = error.unwrap_or_else(|| "已启用声明式只读运行时".to_string());
+            if executable && !plugins.contains_key(&package.manifest.id) {
+                plugins.insert(
+                    package.manifest.id.clone(),
+                    Arc::new(DeclarativePlugin {
+                        package: package.clone(),
+                    }),
+                );
+            }
+            installed.push(InstalledPlugin {
+                manifest: package.manifest,
+                executable,
+                status,
+            });
+        }
+        installed.sort_by(|left, right| left.manifest.id.cmp(&right.manifest.id));
+        installed
     }
 }
 
@@ -638,6 +751,13 @@ fn calendar_events_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|directory| directory.join("calendar-events.json"))
 }
 
+fn external_plugins_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("plugins"))
+}
+
 fn focus_records_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
@@ -713,6 +833,42 @@ fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<
 
     fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     fs::write(path, json).map_err(|error| error.to_string())
+}
+
+fn read_external_plugin_packages(app: &AppHandle) -> Vec<DeclarativePluginPackage> {
+    let Some(directory) = external_plugins_path(app) else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path().join("manifest.json");
+            fs::read_to_string(path)
+                .ok()
+                .and_then(|json| serde_json::from_str::<DeclarativePluginPackage>(&json).ok())
+        })
+        .collect()
+}
+
+fn validate_declarative_plugin(package: &DeclarativePluginPackage) -> Result<(), String> {
+    if !package.manifest.id.starts_with("piko.external.") || package.manifest.id.contains("..") {
+        return Err("外部插件 ID 必须以 piko.external. 开头".to_string());
+    }
+    if package.manifest.tools.is_empty() {
+        return Err("外部插件必须声明至少一个工具".to_string());
+    }
+    for tool in &package.manifest.tools {
+        if !matches!(tool.risk.as_str(), "pure" | "read") || tool.confirmation != "never" {
+            return Err("声明式插件只允许 pure/read 且无需确认的工具".to_string());
+        }
+        if !package.responses.contains_key(&tool.name) {
+            return Err(format!("工具 {} 缺少静态响应", tool.name));
+        }
+    }
+    Ok(())
 }
 
 fn read_focus_records(app: &AppHandle) -> Vec<FocusRecord> {
@@ -1012,8 +1168,14 @@ fn provider_tools(provider: &str, manifests: &[PluginManifest]) -> Value {
 }
 
 fn append_provider_tools(body: &mut Value, provider: &str, manifests: &[PluginManifest]) {
-    if provider_kind(provider) == Some(ProviderKind::OpenAiCompatible) {
-        body["tools"] = provider_tools(provider, manifests);
+    match provider_kind(provider) {
+        Some(ProviderKind::OpenAiCompatible | ProviderKind::Anthropic) => {
+            body["tools"] = provider_tools(provider, manifests);
+        }
+        Some(ProviderKind::Gemini) => {
+            body["tools"] = provider_tools(provider, manifests);
+        }
+        None => {}
     }
 }
 
@@ -1037,6 +1199,7 @@ fn update_openai_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulato
             calls.push(OpenAiToolCallAccumulator::default());
         }
         let call = &mut calls[index];
+        call.stream_index = index;
         if let Some(id) = tool_call["id"].as_str() {
             call.id.push_str(id);
         }
@@ -1046,6 +1209,91 @@ fn update_openai_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulato
         if let Some(arguments) = tool_call["function"]["arguments"].as_str() {
             call.arguments.push_str(arguments);
         }
+    }
+}
+
+fn update_anthropic_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulator>) {
+    let Some(data) = line.strip_prefix("data:") else {
+        return;
+    };
+    let Ok(body) = serde_json::from_str::<Value>(data.trim()) else {
+        return;
+    };
+    let is_start =
+        body["type"] == "content_block_start" && body["content_block"]["type"] == "tool_use";
+    let is_delta =
+        body["type"] == "content_block_delta" && body["delta"]["type"] == "input_json_delta";
+    if !is_start && !is_delta {
+        return;
+    }
+    let index = body["index"].as_u64().unwrap_or(0) as usize;
+    if is_start {
+        calls.push(OpenAiToolCallAccumulator {
+            stream_index: index,
+            ..Default::default()
+        });
+    }
+    let Some(call) = calls.iter_mut().find(|call| call.stream_index == index) else {
+        return;
+    };
+    if is_start {
+        call.id = body["content_block"]["id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        call.name = body["content_block"]["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        call.arguments = body["content_block"]["input"].to_string();
+    }
+    if is_delta {
+        if call.arguments == "{}" {
+            call.arguments.clear();
+        }
+        call.arguments
+            .push_str(body["delta"]["partial_json"].as_str().unwrap_or_default());
+    }
+}
+
+fn update_gemini_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulator>) {
+    let Some(data) = line.strip_prefix("data:") else {
+        return;
+    };
+    let Ok(body) = serde_json::from_str::<Value>(data.trim()) else {
+        return;
+    };
+    let Some(parts) = body["candidates"][0]["content"]["parts"].as_array() else {
+        return;
+    };
+    for part in parts {
+        let Some(name) = part["functionCall"]["name"].as_str() else {
+            continue;
+        };
+        let call = OpenAiToolCallAccumulator {
+            stream_index: calls.len(),
+            id: format!("gemini-call-{}", calls.len()),
+            name: name.to_string(),
+            arguments: part["functionCall"]["args"].to_string(),
+        };
+        if !calls
+            .iter()
+            .any(|existing| existing.name == call.name && existing.arguments == call.arguments)
+        {
+            calls.push(call);
+        }
+    }
+}
+
+fn update_provider_tool_calls(
+    provider: &str,
+    line: &str,
+    calls: &mut Vec<OpenAiToolCallAccumulator>,
+) {
+    match provider_kind(provider) {
+        Some(ProviderKind::Anthropic) => update_anthropic_tool_calls(line, calls),
+        Some(ProviderKind::Gemini) => update_gemini_tool_calls(line, calls),
+        _ => update_openai_tool_calls(line, calls),
     }
 }
 
@@ -1064,6 +1312,86 @@ fn decode_openai_tool_calls(
             Ok((call.id, registry.decode_tool_call(&call.name, arguments)?))
         })
         .collect()
+}
+
+fn append_provider_tool_results(
+    request_body: &mut Value,
+    provider: &str,
+    calls: &[(String, ToolCall, Value)],
+) -> Result<(), String> {
+    match provider_kind(provider) {
+        Some(ProviderKind::OpenAiCompatible) => {
+            let messages = request_body["messages"]
+                .as_array_mut()
+                .ok_or_else(|| "模型请求消息格式无效".to_string())?;
+            messages.push(json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": calls.iter().map(|(id, call, _)| json!({
+                    "id": id,
+                    "type": "function",
+                    "function": {
+                        "name": plugin_wire_name(&call.plugin_id, &call.tool_name),
+                        "arguments": serde_json::to_string(&call.arguments).unwrap_or_default(),
+                    }
+                })).collect::<Vec<_>>(),
+            }));
+            messages.extend(calls.iter().map(|(id, _, result)| {
+                json!({
+                    "role": "tool",
+                    "tool_call_id": id,
+                    "content": serde_json::to_string(result).unwrap_or_default(),
+                })
+            }));
+        }
+        Some(ProviderKind::Anthropic) => {
+            let messages = request_body["messages"]
+                .as_array_mut()
+                .ok_or_else(|| "模型请求消息格式无效".to_string())?;
+            messages.push(json!({
+                "role": "assistant",
+                "content": calls.iter().map(|(id, call, _)| json!({
+                    "type": "tool_use",
+                    "id": id,
+                    "name": plugin_wire_name(&call.plugin_id, &call.tool_name),
+                    "input": call.arguments,
+                })).collect::<Vec<_>>(),
+            }));
+            messages.push(json!({
+                "role": "user",
+                "content": calls.iter().map(|(id, _, result)| json!({
+                    "type": "tool_result",
+                    "tool_use_id": id,
+                    "content": serde_json::to_string(result).unwrap_or_default(),
+                })).collect::<Vec<_>>(),
+            }));
+        }
+        Some(ProviderKind::Gemini) => {
+            let contents = request_body["contents"]
+                .as_array_mut()
+                .ok_or_else(|| "模型请求消息格式无效".to_string())?;
+            contents.push(json!({
+                "role": "model",
+                "parts": calls.iter().map(|(_, call, _)| json!({
+                    "functionCall": {
+                        "name": plugin_wire_name(&call.plugin_id, &call.tool_name),
+                        "args": call.arguments,
+                    }
+                })).collect::<Vec<_>>(),
+            }));
+            contents.push(json!({
+                "role": "user",
+                "parts": calls.iter().map(|(_, call, result)| json!({
+                    "functionResponse": {
+                        "name": plugin_wire_name(&call.plugin_id, &call.tool_name),
+                        "response": result,
+                    }
+                })).collect::<Vec<_>>(),
+            }));
+        }
+        None => return Err("不支持的模型服务类型".to_string()),
+    }
+    Ok(())
 }
 
 fn tool_timestamp(value: &Value) -> Result<u64, String> {
@@ -1122,6 +1450,21 @@ fn calendar_event_input_from_value(value: &Value) -> Result<CalendarEventInput, 
     })
 }
 
+fn calendar_event_batch_input_from_value(value: &Value) -> Result<CalendarEventBatchInput, String> {
+    let events = value["events"]
+        .as_array()
+        .ok_or_else(|| "批量日程必须包含 events 数组".to_string())?;
+    if events.is_empty() || events.len() > 20 {
+        return Err("批量日程数量必须在 1 到 20 之间".to_string());
+    }
+    Ok(CalendarEventBatchInput {
+        events: events
+            .iter()
+            .map(calendar_event_input_from_value)
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
 fn action_draft_from_tool_call(
     call: &ToolCall,
     now: DateTime<Local>,
@@ -1159,6 +1502,29 @@ fn action_draft_from_tool_call(
                 "创建日程「{}」\n时间：{formatted_start} - {formatted_end}",
                 input.title
             )
+        }
+        ("piko.calendar", "create_event_batch") => {
+            let batch = calendar_event_batch_input_from_value(&call.arguments)?;
+            let mut lines = vec![format!("批量创建 {} 条日程：", batch.events.len())];
+            for input in batch.events {
+                let formatted_start = Local
+                    .timestamp_opt(input.start_at as i64, 0)
+                    .single()
+                    .ok_or_else(|| "日程开始时间无效".to_string())?
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string();
+                let formatted_end = Local
+                    .timestamp_opt(input.end_at as i64, 0)
+                    .single()
+                    .ok_or_else(|| "日程结束时间无效".to_string())?
+                    .format("%H:%M")
+                    .to_string();
+                lines.push(format!(
+                    "• {}：{formatted_start} - {formatted_end}",
+                    input.title
+                ));
+            }
+            lines.join("\n")
         }
         _ => return Err("该工具暂不支持确认后执行".to_string()),
     };
@@ -2028,6 +2394,17 @@ fn create_calendar_event_record(
     app: &AppHandle,
     input: CalendarEventInput,
 ) -> Result<CalendarEvent, String> {
+    let mut events = read_calendar_events(app);
+    let event = calendar_event_from_input(&events, input)?;
+    events.push(event.clone());
+    persist_calendar_events(app, &events)?;
+    Ok(event)
+}
+
+fn calendar_event_from_input(
+    existing_events: &[CalendarEvent],
+    input: CalendarEventInput,
+) -> Result<CalendarEvent, String> {
     let title = input.title.trim();
     if title.is_empty() {
         return Err("日程标题不能为空".to_string());
@@ -2041,21 +2418,32 @@ fn create_calendar_event_record(
     if input.end_at <= input.start_at {
         return Err("日程结束时间必须晚于开始时间".to_string());
     }
-    let mut events = read_calendar_events(app);
-    if !find_calendar_conflicts(&events, input.start_at, input.end_at).is_empty() {
+    if !find_calendar_conflicts(existing_events, input.start_at, input.end_at).is_empty() {
         return Err("该时间段与已有日程冲突".to_string());
     }
-    let event = CalendarEvent {
+    Ok(CalendarEvent {
         id: calendar_event_id(),
         title: title.to_string(),
         start_at: input.start_at,
         end_at: input.end_at,
         location: input.location.filter(|value| !value.trim().is_empty()),
         notes: input.notes.filter(|value| !value.trim().is_empty()),
-    };
-    events.push(event.clone());
+    })
+}
+
+fn create_calendar_event_batch_record(
+    app: &AppHandle,
+    batch: CalendarEventBatchInput,
+) -> Result<Vec<CalendarEvent>, String> {
+    let mut events = read_calendar_events(app);
+    let mut created = Vec::with_capacity(batch.events.len());
+    for input in batch.events {
+        let event = calendar_event_from_input(&events, input)?;
+        events.push(event.clone());
+        created.push(event);
+    }
     persist_calendar_events(app, &events)?;
-    Ok(event)
+    Ok(created)
 }
 
 #[tauri::command]
@@ -2081,9 +2469,107 @@ fn delete_calendar_event(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+fn escape_icalendar_text(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace(';', "\\;")
+        .replace(',', "\\,")
+        .replace('\n', "\\n")
+}
+
+fn render_icalendar(events: &[CalendarEvent]) -> Result<String, String> {
+    let mut lines = vec![
+        "BEGIN:VCALENDAR".to_string(),
+        "VERSION:2.0".to_string(),
+        "PRODID:-//Piko//Local Calendar//EN".to_string(),
+        "CALSCALE:GREGORIAN".to_string(),
+    ];
+    for event in events {
+        let start = Local
+            .timestamp_opt(event.start_at as i64, 0)
+            .single()
+            .ok_or_else(|| "日程开始时间无效".to_string())?
+            .with_timezone(&chrono::Utc)
+            .format("%Y%m%dT%H%M%SZ")
+            .to_string();
+        let end = Local
+            .timestamp_opt(event.end_at as i64, 0)
+            .single()
+            .ok_or_else(|| "日程结束时间无效".to_string())?
+            .with_timezone(&chrono::Utc)
+            .format("%Y%m%dT%H%M%SZ")
+            .to_string();
+        lines.extend([
+            "BEGIN:VEVENT".to_string(),
+            format!("UID:{}@piko.local", escape_icalendar_text(&event.id)),
+            format!("DTSTAMP:{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")),
+            format!("DTSTART:{start}"),
+            format!("DTEND:{end}"),
+            format!("SUMMARY:{}", escape_icalendar_text(&event.title)),
+        ]);
+        if let Some(location) = &event.location {
+            lines.push(format!("LOCATION:{}", escape_icalendar_text(location)));
+        }
+        if let Some(notes) = &event.notes {
+            lines.push(format!("DESCRIPTION:{}", escape_icalendar_text(notes)));
+        }
+        lines.push("END:VEVENT".to_string());
+    }
+    lines.push("END:VCALENDAR".to_string());
+    Ok(format!("{}\r\n", lines.join("\r\n")))
+}
+
+fn validate_icalendar_path(path: &Path) -> Result<(), String> {
+    if path.extension().and_then(|extension| extension.to_str()) == Some("ics") {
+        Ok(())
+    } else {
+        Err("日程导出文件必须使用 .ics 扩展名".to_string())
+    }
+}
+
+#[tauri::command]
+fn export_calendar_events(app: AppHandle, path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    validate_icalendar_path(&path)?;
+    fs::write(path, render_icalendar(&read_calendar_events(&app))?)
+        .map_err(|error| format!("导出日程失败：{error}"))
+}
+
+#[tauri::command]
+fn open_calendar_import(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    validate_icalendar_path(&path)?;
+    if !path.exists() {
+        return Err("日程导出文件不存在".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", ""]);
+        command
+    };
+    #[cfg(target_os = "linux")]
+    let mut command = Command::new("xdg-open");
+    command
+        .arg(path)
+        .spawn()
+        .map_err(|error| format!("无法打开系统日历导入：{error}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn list_business_plugins(registry: State<'_, PluginRegistry>) -> Vec<PluginManifest> {
     registry.manifests()
+}
+
+#[tauri::command]
+fn list_external_plugins(
+    app: AppHandle,
+    registry: State<'_, PluginRegistry>,
+) -> Vec<InstalledPlugin> {
+    registry.register_declarative_plugins(&app)
 }
 
 #[tauri::command]
@@ -2097,14 +2583,37 @@ fn confirm_chat_action(
     registry: State<'_, PluginRegistry>,
     drafts: State<'_, ActionDrafts>,
     id: String,
+    selected_indexes: Option<Vec<usize>>,
 ) -> Result<ActionExecution, String> {
-    let draft = drafts
+    let mut draft = drafts
         .0
         .lock()
         .map_err(|_| "无法读取待确认动作".to_string())?
         .remove(&id)
         .ok_or_else(|| "该动作草稿已失效".to_string())?;
+    if draft.plugin_id == "piko.calendar" && draft.tool_name == "create_event_batch" {
+        let events = draft.arguments["events"]
+            .as_array()
+            .cloned()
+            .ok_or_else(|| "批量日程参数无效".to_string())?;
+        let selected_indexes = selected_indexes.unwrap_or_else(|| (0..events.len()).collect());
+        if selected_indexes.is_empty() {
+            return Err("请至少选择一条日程".to_string());
+        }
+        draft.arguments["events"] = Value::Array(
+            selected_indexes
+                .into_iter()
+                .map(|index| {
+                    events
+                        .get(index)
+                        .cloned()
+                        .ok_or_else(|| "批量日程选择项无效".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+    }
     let plugin_id = draft.plugin_id.clone();
+    let is_calendar_batch = plugin_id == "piko.calendar" && draft.tool_name == "create_event_batch";
     let result = registry.execute(
         &app,
         ToolCall {
@@ -2114,12 +2623,17 @@ fn confirm_chat_action(
         },
     )?;
     let (message, event_name) = match plugin_id.as_str() {
+        "piko.calendar" if is_calendar_batch => ("已创建所选日程。", "calendar-events-updated"),
         "piko.calendar" => ("日程已创建。", "calendar-events-updated"),
         _ => ("提醒已创建。", "reminders-updated"),
     };
     let _ = app.emit_to("panel", event_name, ());
     Ok(ActionExecution {
         message: message.to_string(),
+        follow_up_prompt: format!(
+            "系统已经执行用户确认的操作。执行结果如下：\n{}\n请用一句简洁的自然语言向用户确认结果，不要再次调用写入工具。",
+            serde_json::to_string(&result).map_err(|error| error.to_string())?
+        ),
         result,
     })
 }
@@ -2697,7 +3211,7 @@ fn extract_model_ids(provider: &str, body: &Value) -> Vec<String> {
 fn system_prompt(companion_name: &str) -> String {
     let now = Local::now();
     format!(
-        "你是桌面 AI 宠物精灵 {companion_name}。回答应清晰、简洁、友好。当前本地时间是 {}。可以使用已提供的工具读取日程、检查冲突，或提出提醒和日程草稿。工具中的时间参数必须使用带时区的 ISO 8601 字符串，例如 2026-06-02T15:00:00+08:00，不要自行计算 Unix 时间戳。写入操作必须等待用户确认；不要声称已经执行未实际执行的电脑操作。遇到时间歧义时先向用户追问。",
+        "你是桌面 AI 宠物精灵 {companion_name}。回答应清晰、简洁、友好。当前本地时间是 {}。可以使用已提供的工具读取日程、检查冲突，或提出提醒和日程草稿。规划多条日程时优先使用批量创建工具。工具中的时间参数必须使用带时区的 ISO 8601 字符串，例如 2026-06-02T15:00:00+08:00，不要自行计算 Unix 时间戳。写入操作必须等待用户确认；不要声称已经执行未实际执行的电脑操作。遇到时间歧义时先向用户追问。",
         now.format("%Y-%m-%d %H:%M:%S %:z")
     )
 }
@@ -2928,7 +3442,7 @@ async fn stream_chat(
             while let Some(newline) = buffer.find('\n') {
                 let line = buffer.drain(..=newline).collect::<String>();
                 let line = line.trim();
-                update_openai_tool_calls(line, &mut openai_tool_calls);
+                update_provider_tool_calls(&settings.ai.provider, line, &mut openai_tool_calls);
                 for text in extract_chat_deltas(&settings.ai.provider, line) {
                     assistant_response.push_str(&text);
                     sequence += 1;
@@ -2943,7 +3457,7 @@ async fn stream_chat(
                 }
             }
         }
-        update_openai_tool_calls(buffer.trim(), &mut openai_tool_calls);
+        update_provider_tool_calls(&settings.ai.provider, buffer.trim(), &mut openai_tool_calls);
         for text in extract_chat_deltas(&settings.ai.provider, buffer.trim()) {
             assistant_response.push_str(&text);
             sequence += 1;
@@ -2965,7 +3479,6 @@ async fn stream_chat(
         }
 
         let calls = decode_openai_tool_calls(registry, openai_tool_calls)?;
-        let mut assistant_calls = Vec::new();
         let mut tool_results = Vec::new();
         for (id, call) in calls {
             let manifest = registry.tool_manifest(&call)?;
@@ -2987,32 +3500,10 @@ async fn stream_chat(
                 );
                 return Ok(StreamChatOutcome::ActionProposed);
             }
-            let arguments =
-                serde_json::to_string(&call.arguments).map_err(|error| error.to_string())?;
             let result = registry.execute(app, call.clone())?;
-            assistant_calls.push(json!({
-                "id": id,
-                "type": "function",
-                "function": {
-                    "name": plugin_wire_name(&call.plugin_id, &call.tool_name),
-                    "arguments": arguments,
-                }
-            }));
-            tool_results.push(json!({
-                "role": "tool",
-                "tool_call_id": id,
-                "content": serde_json::to_string(&result).map_err(|error| error.to_string())?,
-            }));
+            tool_results.push((id, call, result));
         }
-        let messages = request_body["messages"]
-            .as_array_mut()
-            .ok_or_else(|| "模型请求消息格式无效".to_string())?;
-        messages.push(json!({
-            "role": "assistant",
-            "content": null,
-            "tool_calls": assistant_calls,
-        }));
-        messages.extend(tool_results);
+        append_provider_tool_results(&mut request_body, &settings.ai.provider, &tool_results)?;
     }
 
     let history_entry = ChatHistoryEntry {
@@ -3294,6 +3785,8 @@ pub fn run() {
         .setup(|app| {
             configure_tray(app)?;
             configure_global_shortcut(app)?;
+            app.state::<PluginRegistry>()
+                .register_declarative_plugins(app.handle());
             persist_settings(app.handle(), &read_settings(app.handle()));
             restore_pet_position(app.handle());
             watch_pet_position(app.handle());
@@ -3339,7 +3832,10 @@ pub fn run() {
             list_calendar_events,
             create_calendar_event,
             delete_calendar_event,
+            export_calendar_events,
+            open_calendar_import,
             list_business_plugins,
+            list_external_plugins,
             list_provider_tools,
             confirm_chat_action,
             reject_chat_action,
@@ -3362,16 +3858,19 @@ mod tests {
     #[cfg(target_os = "macos")]
     use super::CaptureSelection;
     use super::{
-        action_draft_from_tool_call, append_provider_tools, append_session_chat_history,
-        build_attachment_prompt, build_calendar_action_draft, build_reminder_action_draft,
+        action_draft_from_tool_call, append_provider_tool_results, append_provider_tools,
+        append_session_chat_history, build_attachment_prompt, build_calendar_action_draft,
+        build_reminder_action_draft, calendar_event_batch_input_from_value,
         calendar_event_input_from_value, chat_request_body, chat_url, collect_due_reminders,
         decode_openai_tool_calls, extract_chat_deltas, extract_model_ids, find_calendar_conflicts,
         idle_threshold_seconds, models_url, monitor_contains, next_idle_state, next_repeat_due,
-        normalize_base_url, parse_data_url, provider_tools, read_text_attachment,
-        should_bypass_system_proxy, text_for_speech, today_focus_minutes, update_openai_tool_calls,
-        validate_ai_settings, validate_save_path, version_parts, AiSettings, AppSettings,
-        CalendarEvent, ChatEvent, ChatHistoryEntry, FocusRecord, OpenAiToolCallAccumulator,
-        PluginRegistry, Reminder, ScreenCapture, TextAttachment,
+        normalize_base_url, parse_data_url, provider_tools, read_text_attachment, render_icalendar,
+        should_bypass_system_proxy, text_for_speech, today_focus_minutes,
+        update_anthropic_tool_calls, update_gemini_tool_calls, update_openai_tool_calls,
+        validate_ai_settings, validate_declarative_plugin, validate_save_path, version_parts,
+        AiSettings, AppSettings, CalendarEvent, ChatEvent, ChatHistoryEntry,
+        DeclarativePluginPackage, FocusRecord, OpenAiToolCallAccumulator, PluginManifest,
+        PluginRegistry, PluginToolManifest, Reminder, ScreenCapture, TextAttachment, ToolCall,
     };
     use chrono::{Local, TimeZone};
     use std::{
@@ -3909,16 +4408,19 @@ mod tests {
     }
 
     #[test]
-    fn injects_tools_only_for_openai_compatible_chat_requests() {
+    fn injects_tools_for_all_native_tool_use_providers() {
         let manifests = PluginRegistry::with_builtin_plugins().manifests();
         let mut openai = serde_json::json!({ "messages": [] });
         let mut anthropic = serde_json::json!({ "messages": [] });
+        let mut gemini = serde_json::json!({ "contents": [] });
 
         append_provider_tools(&mut openai, "openai-compatible", &manifests);
         append_provider_tools(&mut anthropic, "anthropic", &manifests);
+        append_provider_tools(&mut gemini, "gemini", &manifests);
 
         assert!(openai["tools"].is_array());
-        assert!(anthropic.get("tools").is_none());
+        assert!(anthropic["tools"].is_array());
+        assert!(gemini["tools"][0]["functionDeclarations"].is_array());
     }
 
     #[test]
@@ -3987,6 +4489,131 @@ mod tests {
                 .unwrap()
                 .timestamp() as u64
         );
+    }
+
+    #[test]
+    fn aggregates_anthropic_and_gemini_tool_calls() {
+        let mut anthropic = Vec::new();
+        update_anthropic_tool_calls(
+            r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool-1","name":"piko_calendar__list_events","input":{}}}"#,
+            &mut anthropic,
+        );
+        let decoded =
+            decode_openai_tool_calls(&PluginRegistry::with_builtin_plugins(), anthropic).unwrap();
+        assert_eq!(decoded[0].0, "tool-1");
+        assert_eq!(decoded[0].1.tool_name, "list_events");
+
+        let mut gemini = Vec::new();
+        update_gemini_tool_calls(
+            r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"piko_calendar__list_events","args":{}}}]}}]}"#,
+            &mut gemini,
+        );
+        let decoded =
+            decode_openai_tool_calls(&PluginRegistry::with_builtin_plugins(), gemini).unwrap();
+        assert_eq!(decoded[0].1.tool_name, "list_events");
+    }
+
+    #[test]
+    fn appends_provider_specific_tool_results() {
+        let call = ToolCall {
+            plugin_id: "piko.calendar".to_string(),
+            tool_name: "list_events".to_string(),
+            arguments: serde_json::json!({}),
+        };
+        let calls = vec![("call-1".to_string(), call, serde_json::json!([]))];
+        let mut anthropic = serde_json::json!({ "messages": [] });
+        append_provider_tool_results(&mut anthropic, "anthropic", &calls).unwrap();
+        assert_eq!(anthropic["messages"][0]["content"][0]["type"], "tool_use");
+        assert_eq!(
+            anthropic["messages"][1]["content"][0]["type"],
+            "tool_result"
+        );
+
+        let mut gemini = serde_json::json!({ "contents": [] });
+        append_provider_tool_results(&mut gemini, "gemini", &calls).unwrap();
+        assert!(gemini["contents"][0]["parts"][0]["functionCall"].is_object());
+        assert!(gemini["contents"][1]["parts"][0]["functionResponse"].is_object());
+    }
+
+    #[test]
+    fn builds_batch_calendar_confirmation_drafts() {
+        let batch = serde_json::json!({
+            "events": [
+                {
+                    "title": "学习一",
+                    "startAt": "2026-06-02T15:00:00+08:00",
+                    "endAt": "2026-06-02T16:00:00+08:00"
+                },
+                {
+                    "title": "学习二",
+                    "startAt": "2026-06-03T15:00:00+08:00",
+                    "endAt": "2026-06-03T16:00:00+08:00"
+                }
+            ]
+        });
+        assert_eq!(
+            calendar_event_batch_input_from_value(&batch)
+                .unwrap()
+                .events
+                .len(),
+            2
+        );
+        let draft = action_draft_from_tool_call(
+            &ToolCall {
+                plugin_id: "piko.calendar".to_string(),
+                tool_name: "create_event_batch".to_string(),
+                arguments: batch,
+            },
+            Local::now(),
+        )
+        .unwrap();
+        assert!(draft.summary.contains("批量创建 2 条日程"));
+    }
+
+    #[test]
+    fn renders_icalendar_with_escaped_text() {
+        let calendar = render_icalendar(&[CalendarEvent {
+            id: "one".to_string(),
+            title: "评审,同步".to_string(),
+            start_at: 1_780_384_400,
+            end_at: 1_780_388_000,
+            location: Some("会议室;A".to_string()),
+            notes: None,
+        }])
+        .unwrap();
+        assert!(calendar.contains("BEGIN:VCALENDAR\r\n"));
+        assert!(calendar.contains("SUMMARY:评审\\,同步"));
+        assert!(calendar.contains("LOCATION:会议室\\;A"));
+    }
+
+    #[test]
+    fn accepts_only_read_only_declarative_plugins() {
+        let mut responses = std::collections::HashMap::new();
+        responses.insert(
+            "lookup".to_string(),
+            serde_json::json!({ "answer": "Piko" }),
+        );
+        let package = DeclarativePluginPackage {
+            manifest: PluginManifest {
+                id: "piko.external.team-info".to_string(),
+                name: "团队说明".to_string(),
+                version: "1.0.0".to_string(),
+                description: "固定团队说明".to_string(),
+                tools: vec![PluginToolManifest {
+                    name: "lookup".to_string(),
+                    description: "读取团队说明".to_string(),
+                    input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+                    risk: "read".to_string(),
+                    confirmation: "never".to_string(),
+                }],
+            },
+            responses,
+        };
+        assert!(validate_declarative_plugin(&package).is_ok());
+
+        let mut unsafe_package = package.clone();
+        unsafe_package.manifest.tools[0].risk = "write".to_string();
+        assert!(validate_declarative_plugin(&unsafe_package).is_err());
     }
 
     #[test]
