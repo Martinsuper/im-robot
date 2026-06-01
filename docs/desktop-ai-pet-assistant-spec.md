@@ -144,7 +144,9 @@ Linux 首批建议支持 Ubuntu LTS + GNOME。
 | M6 | 第 7 周 | 自动化测试、CI、安装包 |
 | M7 | 第 8 周 | Beta 冒烟、缺陷修复、发布 |
 
-M0 至 M4 已完成。当前已实现桌面骨架、精灵状态、OpenAI-Compatible 流式聊天、文本附件、截图提问、提醒通知、权限中心和基础个性化；工程化阶段已接入 CI、Web 预览 E2E 和桌面冒烟清单。
+M0 至 M4 已完成，P1 体验打磨也已完成。当前已实现桌面骨架、精灵状态、多提供商流式聊天、会话级最近十轮上下文、文本附件、截图提问、周期提醒、权限中心、基础个性化、Markdown 优化、面板 Tab 导航和本地 TTS；P2 已完成空闲检测、多提供商适配、专注模式和受控文件写入。工程化阶段已接入 CI、Web 预览 E2E 和桌面冒烟清单。
+
+后续待实现能力以 [`roadmap.md`](roadmap.md) 为准，包括前台应用感知、工具调用，以及 P3 的生态与分发能力。
 
 ## 4. 代码实现
 
@@ -166,10 +168,13 @@ global shortcut
 
 local settings
   ├── pet-position.json 保存精灵坐标
-  └── app-settings.json 保存互动活泼度
+  ├── app-settings.json 保存应用设置
+  ├── chat-history.json 保存最近对话
+  ├── reminders.json 保存提醒
+  └── focus-records.json 保存专注记录
 ```
 
-Spike 验证通过后，将单文件原型拆分至 `src/features/`、`src/ipc/` 和 `src-tauri/src/services/`。
+桌面原型仍主要集中在 `src/App.tsx` 和 `src-tauri/src/lib.rs`。后续功能扩展前，应逐步拆分至 `src/features/`、`src/ipc/` 和 `src-tauri/src/services/`。
 
 ## 5. 自动化测试流程
 

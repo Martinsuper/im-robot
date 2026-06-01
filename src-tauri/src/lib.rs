@@ -252,6 +252,9 @@ struct ActiveFocus {
 #[derive(Default)]
 struct FocusTimer(Mutex<Option<ActiveFocus>>);
 
+#[derive(Default)]
+struct IdleDetection(Mutex<bool>);
+
 fn default_repeat_rule() -> String {
     "none".to_string()
 }
@@ -266,6 +269,8 @@ enum PetVisualEvent {
     AttachmentReady,
     ReminderFired { message: String },
     AmbientNudge,
+    IdleStarted,
+    IdleEnded,
     FocusStarted,
     FocusCompleted,
 }
@@ -493,9 +498,25 @@ fn normalize_base_url(base_url: &str) -> String {
     base_url.trim().trim_end_matches('/').to_string()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ProviderKind {
+    OpenAiCompatible,
+    Anthropic,
+    Gemini,
+}
+
+fn provider_kind(provider: &str) -> Option<ProviderKind> {
+    match provider {
+        "openai-compatible" | "deepseek" | "dashscope" => Some(ProviderKind::OpenAiCompatible),
+        "anthropic" => Some(ProviderKind::Anthropic),
+        "gemini" => Some(ProviderKind::Gemini),
+        _ => None,
+    }
+}
+
 fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
-    if settings.provider != "openai-compatible" {
-        return Err("当前仅支持 OpenAI-Compatible 服务".to_string());
+    if provider_kind(&settings.provider).is_none() {
+        return Err("不支持的模型服务类型".to_string());
     }
     if !(settings.base_url.starts_with("http://") || settings.base_url.starts_with("https://")) {
         return Err("Base URL 必须以 http:// 或 https:// 开头".to_string());
@@ -541,15 +562,52 @@ fn http_client(settings: &AiSettings) -> Result<reqwest::Client, String> {
 
 fn request_builder(
     client: &reqwest::Client,
+    settings: &AiSettings,
     method: reqwest::Method,
-    url: String,
+    mut url: String,
 ) -> reqwest::RequestBuilder {
-    let builder = client.request(method, url);
-    if let Some(api_key) = read_api_key() {
-        builder.bearer_auth(api_key)
-    } else {
-        builder
+    let Some(api_key) = read_api_key() else {
+        return client.request(method, url);
+    };
+    if provider_kind(&settings.provider) == Some(ProviderKind::Gemini) {
+        if let Ok(mut parsed) = reqwest::Url::parse(&url) {
+            parsed.query_pairs_mut().append_pair("key", &api_key);
+            url = parsed.to_string();
+        }
     }
+    let builder = client.request(method, url);
+    match provider_kind(&settings.provider) {
+        Some(ProviderKind::Anthropic) => builder
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01"),
+        Some(ProviderKind::Gemini) => builder,
+        _ => builder.bearer_auth(api_key),
+    }
+}
+
+fn models_url(settings: &AiSettings) -> String {
+    format!("{}/models", normalize_base_url(&settings.base_url))
+}
+
+fn chat_url(settings: &AiSettings) -> Result<String, String> {
+    let base_url = normalize_base_url(&settings.base_url);
+    match provider_kind(&settings.provider) {
+        Some(ProviderKind::OpenAiCompatible) => Ok(format!("{base_url}/chat/completions")),
+        Some(ProviderKind::Anthropic) => Ok(format!("{base_url}/messages")),
+        Some(ProviderKind::Gemini) => Ok(format!(
+            "{base_url}/models/{}:streamGenerateContent?alt=sse",
+            settings.model.trim_start_matches("models/")
+        )),
+        None => Err("不支持的模型服务类型".to_string()),
+    }
+}
+
+fn parse_data_url(data_url: &str) -> Result<(&str, &str), String> {
+    let encoded = data_url
+        .strip_prefix("data:")
+        .and_then(|value| value.split_once(";base64,"))
+        .ok_or_else(|| "截图数据格式无效".to_string())?;
+    Ok(encoded)
 }
 
 fn persist_pet_position(app: &AppHandle, position: PhysicalPosition<i32>) {
@@ -1470,6 +1528,119 @@ fn watch_ambient_nudges(app: &AppHandle) {
     });
 }
 
+fn idle_threshold_seconds(quiet_mode: &str) -> u64 {
+    match quiet_mode {
+        "active" => 60,
+        "minimal" => 300,
+        _ => 120,
+    }
+}
+
+fn next_idle_state(
+    was_idle: bool,
+    settings: &AppSettings,
+    idle_seconds: u64,
+    is_busy: bool,
+) -> (bool, Option<PetVisualEvent>) {
+    let should_rest = !settings.sensing_paused
+        && !is_busy
+        && idle_seconds >= idle_threshold_seconds(&settings.quiet_mode);
+
+    match (was_idle, should_rest, is_busy) {
+        (false, true, _) => (true, Some(PetVisualEvent::IdleStarted)),
+        (true, false, false) => (false, Some(PetVisualEvent::IdleEnded)),
+        (true, false, true) => (false, None),
+        _ => (was_idle, None),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn system_idle_seconds() -> Option<u64> {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceSecondsSinceLastEventType(state_id: i32, event_type: u32) -> f64;
+    }
+
+    const HID_SYSTEM_STATE: i32 = 1;
+    const ANY_INPUT_EVENT_TYPE: u32 = u32::MAX;
+    let seconds =
+        unsafe { CGEventSourceSecondsSinceLastEventType(HID_SYSTEM_STATE, ANY_INPUT_EVENT_TYPE) };
+    seconds.is_finite().then_some(seconds.max(0.0) as u64)
+}
+
+#[cfg(target_os = "windows")]
+fn system_idle_seconds() -> Option<u64> {
+    #[repr(C)]
+    struct LastInputInfo {
+        size: u32,
+        tick_count: u32,
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetLastInputInfo(info: *mut LastInputInfo) -> i32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetTickCount() -> u32;
+    }
+
+    let mut info = LastInputInfo {
+        size: std::mem::size_of::<LastInputInfo>() as u32,
+        tick_count: 0,
+    };
+    if unsafe { GetLastInputInfo(&mut info) } == 0 {
+        return None;
+    }
+    Some(unsafe { GetTickCount() }.wrapping_sub(info.tick_count) as u64 / 1000)
+}
+
+#[cfg(target_os = "linux")]
+fn system_idle_seconds() -> Option<u64> {
+    Command::new("xprintidle")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|milliseconds| milliseconds.trim().parse::<u64>().ok())
+        .map(|milliseconds| milliseconds / 1000)
+}
+
+fn watch_idle_detection(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || loop {
+        if let Some(idle_seconds) = system_idle_seconds() {
+            let settings = read_settings(&app);
+            let chat_is_active = app
+                .state::<ChatRequests>()
+                .0
+                .lock()
+                .map(|requests| !requests.is_empty())
+                .unwrap_or(false);
+            let focus_is_active = app
+                .state::<FocusTimer>()
+                .0
+                .lock()
+                .map(|focus| focus.is_some())
+                .unwrap_or(false);
+            let idle = app.state::<IdleDetection>();
+            if let Ok(mut was_idle) = idle.0.lock() {
+                let (is_idle, event) = next_idle_state(
+                    *was_idle,
+                    &settings,
+                    idle_seconds,
+                    chat_is_active || focus_is_active,
+                );
+                *was_idle = is_idle;
+                if let Some(event) = event {
+                    let _ = app.emit_to("pet", "pet-visual-event", event);
+                }
+            };
+        }
+        thread::sleep(Duration::from_secs(2));
+    });
+}
+
 fn validate_save_path(path: &Path) -> Result<(), String> {
     const ALLOWED_EXTENSIONS: [&str; 12] = [
         "txt", "md", "json", "csv", "py", "js", "ts", "html", "css", "rs", "toml", "log",
@@ -1624,8 +1795,9 @@ async fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
     let client = http_client(&settings.ai)?;
     let response = request_builder(
         &client,
+        &settings.ai,
         reqwest::Method::GET,
-        format!("{}/models", normalize_base_url(&settings.ai.base_url)),
+        models_url(&settings.ai),
     )
     .send()
     .await
@@ -1637,16 +1809,130 @@ async fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
         .await
         .map_err(|error| error.to_string())?;
 
-    Ok(body["data"]
-        .as_array()
+    Ok(extract_model_ids(&settings.ai.provider, &body)
         .into_iter()
-        .flatten()
-        .filter_map(|model| model["id"].as_str())
-        .map(|id| ModelInfo { id: id.to_string() })
+        .map(|id| ModelInfo { id })
         .collect())
 }
 
-fn extract_chat_deltas(line: &str) -> Vec<String> {
+fn extract_model_ids(provider: &str, body: &Value) -> Vec<String> {
+    let (items, field) = if provider_kind(provider) == Some(ProviderKind::Gemini) {
+        (body["models"].as_array(), "name")
+    } else {
+        (body["data"].as_array(), "id")
+    };
+    items
+        .into_iter()
+        .flatten()
+        .filter_map(|model| model[field].as_str())
+        .map(|id| id.trim_start_matches("models/").to_string())
+        .collect()
+}
+
+fn system_prompt(companion_name: &str) -> String {
+    format!(
+        "你是桌面 AI 宠物精灵 {companion_name}。回答应清晰、简洁、友好。不要声称已经执行未实际执行的电脑操作。"
+    )
+}
+
+fn openai_user_content(prompt: &str, screenshot: Option<&ScreenCapture>) -> Value {
+    if let Some(screenshot) = screenshot {
+        json!([
+            { "type": "text", "text": prompt.trim() },
+            { "type": "image_url", "image_url": { "url": screenshot.data_url } }
+        ])
+    } else {
+        json!(prompt.trim())
+    }
+}
+
+fn anthropic_user_content(
+    prompt: &str,
+    screenshot: Option<&ScreenCapture>,
+) -> Result<Value, String> {
+    if let Some(screenshot) = screenshot {
+        let (media_type, data) = parse_data_url(&screenshot.data_url)?;
+        Ok(json!([
+            { "type": "text", "text": prompt.trim() },
+            { "type": "image", "source": { "type": "base64", "media_type": media_type, "data": data } }
+        ]))
+    } else {
+        Ok(json!(prompt.trim()))
+    }
+}
+
+fn gemini_user_parts(prompt: &str, screenshot: Option<&ScreenCapture>) -> Result<Value, String> {
+    let mut parts = vec![json!({ "text": prompt.trim() })];
+    if let Some(screenshot) = screenshot {
+        let (mime_type, data) = parse_data_url(&screenshot.data_url)?;
+        parts.push(json!({ "inlineData": { "mimeType": mime_type, "data": data } }));
+    }
+    Ok(Value::Array(parts))
+}
+
+fn chat_request_body(
+    settings: &AppSettings,
+    recent_history: &[ChatHistoryEntry],
+    prompt: &str,
+    screenshot: Option<&ScreenCapture>,
+) -> Result<Value, String> {
+    match provider_kind(&settings.ai.provider) {
+        Some(ProviderKind::OpenAiCompatible) => {
+            let mut messages = vec![json!({
+                "role": "system",
+                "content": system_prompt(&settings.companion_name)
+            })];
+            for entry in recent_history.iter().take(10).rev() {
+                messages.push(json!({ "role": "user", "content": entry.prompt }));
+                messages.push(json!({ "role": "assistant", "content": entry.response }));
+            }
+            messages.push(
+                json!({ "role": "user", "content": openai_user_content(prompt, screenshot) }),
+            );
+            Ok(json!({
+                "model": settings.ai.model,
+                "messages": messages,
+                "temperature": settings.ai.temperature,
+                "stream": true
+            }))
+        }
+        Some(ProviderKind::Anthropic) => {
+            let mut messages = Vec::new();
+            for entry in recent_history.iter().take(10).rev() {
+                messages.push(json!({ "role": "user", "content": entry.prompt }));
+                messages.push(json!({ "role": "assistant", "content": entry.response }));
+            }
+            messages.push(
+                json!({ "role": "user", "content": anthropic_user_content(prompt, screenshot)? }),
+            );
+            Ok(json!({
+                "model": settings.ai.model,
+                "system": system_prompt(&settings.companion_name),
+                "messages": messages,
+                "temperature": settings.ai.temperature,
+                "max_tokens": 4096,
+                "stream": true
+            }))
+        }
+        Some(ProviderKind::Gemini) => {
+            let mut contents = Vec::new();
+            for entry in recent_history.iter().take(10).rev() {
+                contents.push(json!({ "role": "user", "parts": [{ "text": entry.prompt }] }));
+                contents.push(json!({ "role": "model", "parts": [{ "text": entry.response }] }));
+            }
+            contents
+                .push(json!({ "role": "user", "parts": gemini_user_parts(prompt, screenshot)? }));
+            Ok(json!({
+                "systemInstruction": { "parts": [{ "text": system_prompt(&settings.companion_name) }] },
+                "contents": contents,
+                "generationConfig": { "temperature": settings.ai.temperature }
+            }))
+        }
+        None => Err("不支持的模型服务类型".to_string()),
+    }
+}
+
+fn extract_chat_deltas(provider: &str, line: &str) -> Vec<String> {
     let Some(data) = line.strip_prefix("data:") else {
         return Vec::new();
     };
@@ -1655,15 +1941,28 @@ fn extract_chat_deltas(line: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    serde_json::from_str::<Value>(data)
-        .ok()
-        .and_then(|body| {
-            body["choices"][0]["delta"]["content"]
-                .as_str()
-                .map(str::to_string)
-        })
-        .into_iter()
-        .collect()
+    let Ok(body) = serde_json::from_str::<Value>(data) else {
+        return Vec::new();
+    };
+    match provider_kind(provider) {
+        Some(ProviderKind::Anthropic) => body["delta"]["text"]
+            .as_str()
+            .map(str::to_string)
+            .into_iter()
+            .collect(),
+        Some(ProviderKind::Gemini) => body["candidates"][0]["content"]["parts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|part| part["text"].as_str())
+            .map(str::to_string)
+            .collect(),
+        _ => body["choices"][0]["delta"]["content"]
+            .as_str()
+            .map(str::to_string)
+            .into_iter()
+            .collect(),
+    }
 }
 
 fn emit_chat_event(app: &AppHandle, event: ChatEvent) {
@@ -1708,45 +2007,19 @@ async fn stream_chat(
     );
 
     let client = http_client(&settings.ai)?;
-    let user_content = if let Some(screenshot) = screenshot {
-        json!([
-            { "type": "text", "text": prompt.trim() },
-            { "type": "image_url", "image_url": { "url": screenshot.data_url } }
-        ])
-    } else {
-        json!(prompt.trim())
-    };
     let recent_history = context
         .0
         .lock()
         .map_err(|_| "无法读取当前对话上下文".to_string())?
         .clone();
-    let mut messages = vec![json!({
-        "role": "system",
-        "content": format!(
-            "你是桌面 AI 宠物精灵 {}。回答应清晰、简洁、友好。不要声称已经执行未实际执行的电脑操作。",
-            settings.companion_name
-        )
-    })];
-    for entry in recent_history.iter().take(6).rev() {
-        messages.push(json!({ "role": "user", "content": entry.prompt }));
-        messages.push(json!({ "role": "assistant", "content": entry.response }));
-    }
-    messages.push(json!({ "role": "user", "content": user_content }));
+    let request_body = chat_request_body(&settings, &recent_history, prompt, screenshot)?;
     let response = request_builder(
         &client,
+        &settings.ai,
         reqwest::Method::POST,
-        format!(
-            "{}/chat/completions",
-            normalize_base_url(&settings.ai.base_url)
-        ),
+        chat_url(&settings.ai)?,
     )
-    .json(&json!({
-        "model": settings.ai.model,
-        "messages": messages,
-        "temperature": settings.ai.temperature,
-        "stream": true
-    }))
+    .json(&request_body)
     .send()
     .await
     .map_err(|error| error.to_string())?
@@ -1764,7 +2037,7 @@ async fn stream_chat(
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(newline) = buffer.find('\n') {
             let line = buffer.drain(..=newline).collect::<String>();
-            for text in extract_chat_deltas(line.trim()) {
+            for text in extract_chat_deltas(&settings.ai.provider, line.trim()) {
                 assistant_response.push_str(&text);
                 sequence += 1;
                 emit_chat_event(
@@ -1779,7 +2052,7 @@ async fn stream_chat(
         }
     }
 
-    for text in extract_chat_deltas(buffer.trim()) {
+    for text in extract_chat_deltas(&settings.ai.provider, buffer.trim()) {
         assistant_response.push_str(&text);
         sequence += 1;
         emit_chat_event(
@@ -2032,6 +2305,7 @@ pub fn run() {
         .manage(ChatContext::default())
         .manage(LocalTts::default())
         .manage(FocusTimer::default())
+        .manage(IdleDetection::default())
         .manage(TextAttachmentStore::default())
         .manage(ScreenCaptureStore::default())
         .plugin(tauri_plugin_opener::init())
@@ -2055,6 +2329,7 @@ pub fn run() {
             watch_reminders(app.handle());
             watch_focus_timer(app.handle());
             watch_ambient_nudges(app.handle());
+            watch_idle_detection(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2104,11 +2379,12 @@ mod tests {
     #[cfg(target_os = "macos")]
     use super::CaptureSelection;
     use super::{
-        append_session_chat_history, build_attachment_prompt, collect_due_reminders,
-        extract_chat_deltas, monitor_contains, next_repeat_due, normalize_base_url,
+        append_session_chat_history, build_attachment_prompt, chat_request_body, chat_url,
+        collect_due_reminders, extract_chat_deltas, extract_model_ids, idle_threshold_seconds,
+        monitor_contains, next_idle_state, next_repeat_due, normalize_base_url, parse_data_url,
         read_text_attachment, should_bypass_system_proxy, text_for_speech, today_focus_minutes,
-        validate_save_path, version_parts, AppSettings, ChatEvent, ChatHistoryEntry, FocusRecord,
-        Reminder, TextAttachment,
+        validate_save_path, version_parts, AiSettings, AppSettings, ChatEvent, ChatHistoryEntry,
+        FocusRecord, Reminder, ScreenCapture, TextAttachment,
     };
     use std::{
         fs,
@@ -2199,6 +2475,37 @@ mod tests {
     }
 
     #[test]
+    fn uses_quiet_mode_specific_idle_thresholds() {
+        assert_eq!(idle_threshold_seconds("active"), 60);
+        assert_eq!(idle_threshold_seconds("balanced"), 120);
+        assert_eq!(idle_threshold_seconds("minimal"), 300);
+    }
+
+    #[test]
+    fn starts_and_ends_idle_rest_without_recording_input() {
+        let settings = AppSettings::default();
+        let (is_idle, event) = next_idle_state(false, &settings, 120, false);
+        assert!(is_idle);
+        assert!(matches!(event, Some(super::PetVisualEvent::IdleStarted)));
+
+        let (is_idle, event) = next_idle_state(is_idle, &settings, 0, false);
+        assert!(!is_idle);
+        assert!(matches!(event, Some(super::PetVisualEvent::IdleEnded)));
+    }
+
+    #[test]
+    fn suppresses_idle_rest_while_sensing_is_paused_or_piko_is_busy() {
+        let mut settings = AppSettings {
+            sensing_paused: true,
+            ..Default::default()
+        };
+        assert!(!next_idle_state(false, &settings, 120, false).0);
+
+        settings.sensing_paused = false;
+        assert!(!next_idle_state(false, &settings, 120, true).0);
+    }
+
+    #[test]
     fn normalizes_base_url() {
         assert_eq!(
             normalize_base_url(" http://localhost:11434/v1/ "),
@@ -2215,10 +2522,94 @@ mod tests {
     #[test]
     fn extracts_openai_compatible_chat_delta() {
         assert_eq!(
-            extract_chat_deltas(r#"data: {"choices":[{"delta":{"content":"你好"}}]}"#),
+            extract_chat_deltas(
+                "openai-compatible",
+                r#"data: {"choices":[{"delta":{"content":"你好"}}]}"#
+            ),
             vec!["你好".to_string()]
         );
-        assert!(extract_chat_deltas("data: [DONE]").is_empty());
+        assert!(extract_chat_deltas("openai-compatible", "data: [DONE]").is_empty());
+    }
+
+    #[test]
+    fn extracts_anthropic_and_gemini_chat_deltas() {
+        assert_eq!(
+            extract_chat_deltas(
+                "anthropic",
+                r#"data: {"delta":{"type":"text_delta","text":"你好"}}"#
+            ),
+            vec!["你好".to_string()]
+        );
+        assert_eq!(
+            extract_chat_deltas(
+                "gemini",
+                r#"data: {"candidates":[{"content":{"parts":[{"text":"你"},{"text":"好"}]}}]}"#
+            ),
+            vec!["你".to_string(), "好".to_string()]
+        );
+    }
+
+    #[test]
+    fn builds_provider_specific_urls_and_model_lists() {
+        let mut ai = AiSettings {
+            provider: "anthropic".to_string(),
+            base_url: "https://api.anthropic.com/v1".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            chat_url(&ai).unwrap(),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            extract_model_ids(
+                "anthropic",
+                &serde_json::json!({ "data": [{ "id": "claude" }] })
+            ),
+            vec!["claude".to_string()]
+        );
+
+        ai.provider = "gemini".to_string();
+        ai.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
+        ai.model = "models/gemini-test".to_string();
+        assert_eq!(
+            chat_url(&ai).unwrap(),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:streamGenerateContent?alt=sse"
+        );
+        assert_eq!(
+            extract_model_ids(
+                "gemini",
+                &serde_json::json!({ "models": [{ "name": "models/gemini-test" }] })
+            ),
+            vec!["gemini-test".to_string()]
+        );
+    }
+
+    #[test]
+    fn builds_anthropic_and_gemini_multimodal_payloads() {
+        let capture = ScreenCapture {
+            data_url: "data:image/png;base64,cG5n".to_string(),
+            width: 1,
+            height: 1,
+        };
+        assert_eq!(
+            parse_data_url(&capture.data_url).unwrap(),
+            ("image/png", "cG5n")
+        );
+
+        let mut settings = AppSettings::default();
+        settings.ai.provider = "anthropic".to_string();
+        let anthropic = chat_request_body(&settings, &[], "看图", Some(&capture)).unwrap();
+        assert_eq!(
+            anthropic["messages"][0]["content"][1]["source"]["data"],
+            "cG5n"
+        );
+
+        settings.ai.provider = "gemini".to_string();
+        let gemini = chat_request_body(&settings, &[], "看图", Some(&capture)).unwrap();
+        assert_eq!(
+            gemini["contents"][0]["parts"][1]["inlineData"]["mimeType"],
+            "image/png"
+        );
     }
 
     #[test]

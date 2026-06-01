@@ -11,7 +11,7 @@
 | `npm run build` | 通过 |
 | `cargo fmt --check` | 通过 |
 | `cargo clippy --all-targets --all-features -- -D warnings` | 通过 |
-| `cargo test` | 通过，20 个 Rust 单测 |
+| `cargo test` | 通过，26 个 Rust 单测 |
 | `npm run test:e2e` | 通过，4 个 Web 预览场景 |
 | `npm run tauri dev` | 通过，桌面开发版可启动 |
 
@@ -26,6 +26,7 @@
 - `bubble` 可复制当前结果到剪贴板
 - `bubble` 提供当前回复的朗读入口
 - `panel` 正常渲染模型设置和能力状态
+- `panel` 可切换多提供商，Anthropic 预设会自动更新 Base URL 和模型名称
 - `panel` 五个 Tab 可切换，当前 Tab 正确高亮
 - `panel` 提醒表单提供一次性、每天、每周和工作日规则
 - `panel` 正常渲染历史空状态，空列表时清除按钮禁用
@@ -43,8 +44,10 @@
 - 托盘和全局快捷键初始化可编译
 - 精灵位置范围判断
 - Base URL 规范化
-- OpenAI-Compatible SSE delta 解析
+- OpenAI-Compatible、Anthropic 和 Gemini SSE delta 解析
+- 多提供商 URL、模型列表和多模态截图请求体转换
 - 默认互动活泼度
+- 空闲检测阈值、暂停感知和忙碌状态抑制
 
 仍需人工桌面冒烟：
 
@@ -53,9 +56,10 @@
 - Windows 和 Linux `Ctrl+Shift+Space`
 - 多显示器自由拖动和重启位置恢复
 - Keychain API Key 保存
-- 使用真实模型服务的 SSE、取消和超时行为
+- 使用真实 OpenAI Compatible、Anthropic、Gemini、DeepSeek 和 DashScope 服务的 SSE、取消和超时行为
 - 气泡窗口拖入 `.txt`、`.md`、`.json`、`.csv`、`.log` 后的预览、移除和三种处理动作
 - 截图框选、系统屏幕录制权限提示、预览移除和真实多模态模型回复
+- 系统空闲后自动休息、恢复输入后自动唤醒；Linux 额外验证 `xprintidle` 缺失时的静默降级
 
 ## 已修复问题
 
@@ -80,3 +84,5 @@
 - 新增专注模式：15 / 25 / 45 / 60 分钟计时、暂停、继续、结束、完成通知、今日累计，以及 5 / 10 / 15 分钟休息倒计时。
 - 新增受控回复保存：系统保存对话框、扩展名白名单和覆盖前确认。
 - 新增 Playwright Web 预览 E2E 和跨平台桌面冒烟清单。
+- 新增 P2 空闲检测：仅查询系统空闲时长，按活泼度自动休息和唤醒，不读取具体输入内容。
+- 新增 P2 多提供商适配：Anthropic、Gemini、DeepSeek 和 DashScope 预设，提供商认证、模型列表、文本和截图流式协议转换。

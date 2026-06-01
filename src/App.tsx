@@ -184,6 +184,12 @@ function PetWindow() {
       if (event.payload.type === "ambient-nudge") {
         showTransient({ type: "AMBIENT_NUDGE" }, 1800);
       }
+      if (event.payload.type === "idle-started") {
+        dispatch({ type: "REST" });
+      }
+      if (event.payload.type === "idle-ended") {
+        showTransient({ type: "WAKE" }, 1800);
+      }
       if (event.payload.type === "focus-started") {
         dispatch({ type: "WORK_STARTED" });
       }
@@ -831,6 +837,16 @@ function PanelWindow() {
     setAiSettings((current) => ({ ...current, [key]: value }));
   }
 
+  function updateProvider(provider: string) {
+    const preset = providerOptions.find((option) => option.value === provider);
+    setAiSettings((current) => ({
+      ...current,
+      provider,
+      baseUrl: preset?.baseUrl ?? current.baseUrl,
+      model: preset?.model ?? current.model,
+    }));
+  }
+
   async function saveAiSettings() {
     const settings = await runCommand<AppSettings>(
       "update_ai_settings",
@@ -1052,9 +1068,11 @@ function PanelWindow() {
             <span>服务类型</span>
             <select
               value={aiSettings.provider}
-              onChange={(event) => updateAiField("provider", event.currentTarget.value)}
+              onChange={(event) => updateProvider(event.currentTarget.value)}
             >
-              <option value="openai-compatible">OpenAI Compatible</option>
+              {providerOptions.map(({ label, value }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
             </select>
           </label>
           <label>
@@ -1372,6 +1390,8 @@ type PetVisualEvent =
   | { type: "attachment-ready" }
   | { type: "reminder-fired"; message: string }
   | { type: "ambient-nudge" }
+  | { type: "idle-started" }
+  | { type: "idle-ended" }
   | { type: "focus-started" }
   | { type: "focus-completed" };
 
@@ -1405,6 +1425,14 @@ const defaultAppSettings: AppSettings = {
   ai: defaultAiSettings,
   hasApiKey: false,
 };
+
+const providerOptions = [
+  { label: "OpenAI Compatible", value: "openai-compatible", baseUrl: "http://localhost:11434/v1", model: "gemma4:e4b" },
+  { label: "Anthropic Claude", value: "anthropic", baseUrl: "https://api.anthropic.com/v1", model: "claude-sonnet-4-6" },
+  { label: "Google Gemini", value: "gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash" },
+  { label: "DeepSeek", value: "deepseek", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash" },
+  { label: "通义千问 DashScope", value: "dashscope", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen3.6-plus" },
+];
 
 const quietModeOptions: Array<{ label: string; value: QuietMode }> = [
   { label: "活泼", value: "active" },

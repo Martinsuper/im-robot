@@ -19,6 +19,10 @@ test("bubble preview exposes text, file and screenshot entry points", async ({ p
 test("panel preview exposes settings and network update entry point", async ({ page }) => {
   await page.goto("/?view=panel");
   await expect(page.getByRole("button", { name: "精灵", exact: true })).toHaveClass(/is-active/);
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByLabel("服务类型").selectOption("anthropic");
+  await expect(page.getByLabel("Base URL")).toHaveValue("https://api.anthropic.com/v1");
+  await expect(page.getByLabel("Model")).toHaveValue("claude-sonnet-4-6");
   await page.getByRole("button", { name: "关于" }).click();
   await expect(page.getByText("权限中心")).toBeVisible();
   await expect(page.getByRole("button", { name: "检查更新" })).toBeVisible();
