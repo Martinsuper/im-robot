@@ -52,27 +52,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Import Apple Developer Certificate (macOS)
-        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_KEYCHAIN: login.keychain
-        run: |
-          echo -n "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p "" $APPLE_KEYCHAIN
-          security default-keychain -s $APPLE_KEYCHAIN
-          security unlock-keychain -p "" $APPLE_KEYCHAIN
-          security import certificate.p12 -k $APPLE_KEYCHAIN -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" $APPLE_KEYCHAIN
-          rm certificate.p12
-
       - name: Build release
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: npm run tauri build -- --target ${{ matrix.target }}
 
       - name: Collect macOS artifacts
@@ -122,12 +102,25 @@ jobs:
           files: release-assets/*
           generate_release_notes: true
           body: |
-            ## macOS 安装说明
+            ## macOS 安装指南
 
-            如果打开时提示"已损坏，无法打开"，请在终端执行：
+            下载 `.dmg` 后拖入 `Applications`，首次打开若提示"已损坏，无法打开"，请执行以下**任一**方法：
+
+            ### 方法一：右键打开（推荐）
+
+            在 Finder 中**右键/双指点击** Piko.app → 选择"打开" → 弹窗中再点"打开"
+
+            ### 方法二：终端命令
+
+            打开终端（`/Applications/Utilities/Terminal.app`），复制以下命令并回车：
 
             ```bash
             xattr -cr /Applications/Piko.app
             ```
 
-            或在"系统设置 → 隐私与安全性"中点击"仍要打开"。
+            > 只需执行一次，之后双击即可正常打开。
+
+            ---
+
+            - **Windows**: 直接安装 `.msi` 或 `.exe`
+            - **Linux**: 安装 `.deb` / `.rpm` / `.AppImage`

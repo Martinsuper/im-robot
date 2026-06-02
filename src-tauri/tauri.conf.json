@@ -72,11 +72,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "macOS": {
-      "hardenedRuntime": true,
-      "minimumSystemVersion": "10.13",
-      "entitlements": "entitlements.plist"
-    }
+    ]
   }
 }

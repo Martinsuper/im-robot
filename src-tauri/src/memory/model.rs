@@ -179,7 +179,88 @@ fn default_importance() -> u8 {
     1
 }
 
-// --- Display helpers for UI ---
+// === Phase 3+: Writer DTOs ===
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureCandidateInput {
+    pub source: MemorySource,
+    pub title: String,
+    pub content: String,
+    pub memory_type: Option<MemoryType>,
+    pub tags: Option<Vec<String>>,
+    pub confidence: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryCandidate {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub memory_type: MemoryType,
+    pub source: MemorySource,
+    pub confidence: f32,
+    pub importance: u8,
+    pub tags: Vec<String>,
+    pub requires_confirmation: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyCandidateInput {
+    pub candidate_id: String,
+    pub confirmed: Option<bool>,
+}
+
+// === Phase 3+: Reflection DTOs ===
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReflectionSummary {
+    pub id: String,
+    pub summary_type: String,
+    pub content: String,
+    pub created_at: u64,
+    pub period_start: Option<u64>,
+    pub period_end: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeMemoriesInput {
+    pub keep_id: String,
+    pub remove_id: String,
+}
+
+// === Phase 3+: Import/Export DTOs ===
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryExport {
+    pub version: String,
+    pub exported_at: u64,
+    pub memories: Vec<MemoryItem>,
+    pub relations: Vec<MemoryRelation>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryImportInput {
+    pub data: MemoryExport,
+    pub mode: String, // "merge" or "replace"
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreview {
+    pub total: usize,
+    pub new: usize,
+    pub duplicates: usize,
+    pub previews: Vec<MemoryItem>,
+}
+
+// === Display helpers for UI ===
 
 impl MemoryType {
     pub fn label(&self) -> &'static str {

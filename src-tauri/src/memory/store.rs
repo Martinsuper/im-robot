@@ -5,8 +5,8 @@ use tauri::Manager;
 
 use super::model::{
     AddRelationInput, BuildContextInput, FeedbackInput, ListMemoriesInput, MemoryItem,
-    MemoryRelation, MemoryStatus, MemoryType, SearchMemoriesInput, SearchRelatedInput,
-    UpdateMemoryInput,
+    MemoryRelation, MemoryStatus, MemoryType, ReflectionSummary, SearchMemoriesInput,
+    SearchRelatedInput, UpdateMemoryInput,
 };
 
 pub struct MemoryDb(pub Mutex<Connection>);
