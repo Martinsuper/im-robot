@@ -4587,13 +4587,24 @@ pub fn run() {
             import_data,
             get_calendar_sync_status,
             sync_calendar_to_system,
-            // Memory system
+            // Memory system (Phase 1)
             memory::list_memories,
             memory::get_memory_detail,
             memory::create_memory,
             memory::update_memory,
             memory::delete_memory,
-            memory::clear_memories
+            memory::clear_memories,
+            // Memory system (Phase 2: retrieval & management)
+            memory::search_memories,
+            memory::search_related_memories,
+            memory::get_recent_memories,
+            memory::build_memory_context,
+            memory::pin_memory,
+            memory::unpin_memory,
+            memory::feedback_memory,
+            memory::add_memory_relation,
+            memory::remove_memory_relation,
+            memory::get_memory_relations
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piko desktop application");

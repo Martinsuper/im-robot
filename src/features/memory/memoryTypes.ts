@@ -20,6 +20,7 @@ export interface MemoryItem {
   expiresAt?: number;
   tags: string[];
   embeddingId?: string;
+  isPinned: boolean;
 }
 
 export interface CreateMemoryInput {
@@ -44,6 +45,37 @@ export interface ListMemoriesInput {
   limit?: number;
 }
 
+export interface SearchMemoriesInput {
+  query: string;
+  memoryType?: MemoryType;
+  limit?: number;
+}
+
+export interface SearchRelatedInput {
+  query: string;
+  contextTags?: string[];
+  limit?: number;
+}
+
+export interface BuildContextInput {
+  currentQuery?: string;
+  windowType?: string;
+  limit?: number;
+}
+
+export interface FeedbackInput {
+  memoryId: string;
+  feedbackType: string;
+  value: number;
+  comment?: string;
+}
+
+export interface MemoryRelation {
+  fromId: string;
+  toId: string;
+  relationType: string;
+}
+
 export const MEMORY_TYPE_LABELS: Record<MemoryType, string> = {
   profile: "用户档案",
   event: "事件记忆",
@@ -64,4 +96,11 @@ export const MEMORY_TYPE_OPTIONS: Array<{ label: string; value: MemoryType | "al
   { label: "全部", value: "all" },
   { label: "用户档案", value: "profile" },
   { label: "事件记忆", value: "event" },
+];
+
+export const FEEDBACK_TYPES: Array<{ label: string; value: string; valueNum: number }> = [
+  { label: "👍 有用", value: "useful", valueNum: 1 },
+  { label: "👎 没用", value: "useless", valueNum: -1 },
+  { label: "✅ 正确", value: "correct", valueNum: 1 },
+  { label: "❌ 错误", value: "incorrect", valueNum: -1 },
 ];

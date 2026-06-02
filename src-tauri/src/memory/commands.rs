@@ -1,5 +1,6 @@
 use super::model::{
-    CreateMemoryInput, ListMemoriesInput, MemoryItem, MemoryStatus, MemoryType, PrivacyLevel,
+    AddRelationInput, BuildContextInput, CreateMemoryInput, FeedbackInput, ListMemoriesInput,
+    MemoryItem, MemoryStatus, MemoryType, PrivacyLevel, SearchMemoriesInput, SearchRelatedInput,
     UpdateMemoryInput,
 };
 use super::policy;
@@ -23,6 +24,8 @@ fn now_unix() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+
+// === Phase 1 Commands ===
 
 #[tauri::command]
 pub fn list_memories(
@@ -71,6 +74,7 @@ pub fn create_memory(
         expires_at: None,
         tags: input.tags,
         embedding_id: None,
+        is_pinned: false,
     };
 
     db.create(&item)?;
@@ -110,4 +114,95 @@ pub fn clear_memories(
     };
     let _ = app.emit_to("panel", "memories-updated", ());
     Ok(count)
+}
+
+// === Phase 2: Search & Retrieval ===
+
+#[tauri::command]
+pub fn search_memories(
+    db: State<'_, MemoryDb>,
+    input: SearchMemoriesInput,
+) -> Result<Vec<MemoryItem>, String> {
+    db.search(input)
+}
+
+#[tauri::command]
+pub fn search_related_memories(
+    db: State<'_, MemoryDb>,
+    input: SearchRelatedInput,
+) -> Result<Vec<MemoryItem>, String> {
+    db.search_related(input)
+}
+
+#[tauri::command]
+pub fn get_recent_memories(
+    db: State<'_, MemoryDb>,
+    limit: Option<usize>,
+) -> Result<Vec<MemoryItem>, String> {
+    db.get_recent(limit.unwrap_or(10))
+}
+
+#[tauri::command]
+pub fn build_memory_context(
+    db: State<'_, MemoryDb>,
+    input: BuildContextInput,
+) -> Result<Vec<MemoryItem>, String> {
+    db.build_context(input)
+}
+
+// === Phase 2: Pin / Unpin ===
+
+#[tauri::command]
+pub fn pin_memory(app: AppHandle, db: State<'_, MemoryDb>, id: String) -> Result<(), String> {
+    db.pin(&id)?;
+    let _ = app.emit_to("panel", "memories-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unpin_memory(app: AppHandle, db: State<'_, MemoryDb>, id: String) -> Result<(), String> {
+    db.unpin(&id)?;
+    let _ = app.emit_to("panel", "memories-updated", ());
+    Ok(())
+}
+
+// === Phase 2: Feedback ===
+
+#[tauri::command]
+pub fn feedback_memory(
+    app: AppHandle,
+    db: State<'_, MemoryDb>,
+    input: FeedbackInput,
+) -> Result<(), String> {
+    db.add_feedback(&input)?;
+    let _ = app.emit_to("panel", "memories-updated", ());
+    Ok(())
+}
+
+// === Phase 2: Relations ===
+
+#[tauri::command]
+pub fn add_memory_relation(
+    db: State<'_, MemoryDb>,
+    input: AddRelationInput,
+) -> Result<(), String> {
+    db.add_relation(&input)
+}
+
+#[tauri::command]
+pub fn remove_memory_relation(
+    db: State<'_, MemoryDb>,
+    from_id: String,
+    to_id: String,
+    relation_type: String,
+) -> Result<(), String> {
+    db.remove_relation(&from_id, &to_id, &relation_type)
+}
+
+#[tauri::command]
+pub fn get_memory_relations(
+    db: State<'_, MemoryDb>,
+    memory_id: String,
+) -> Result<Vec<super::model::MemoryRelation>, String> {
+    db.get_relations(&memory_id)
 }

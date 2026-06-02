@@ -90,6 +90,8 @@ pub struct MemoryItem {
     pub expires_at: Option<u64>,
     pub tags: Vec<String>,
     pub embedding_id: Option<String>,
+    #[serde(default)]
+    pub is_pinned: bool,
 }
 
 // --- Input DTOs ---
@@ -122,6 +124,55 @@ pub struct ListMemoriesInput {
     pub memory_type: Option<MemoryType>,
     pub status: Option<MemoryStatus>,
     pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchMemoriesInput {
+    pub query: String,
+    pub memory_type: Option<MemoryType>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchRelatedInput {
+    pub query: String,
+    pub context_tags: Option<Vec<String>>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildContextInput {
+    pub current_query: Option<String>,
+    pub window_type: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackInput {
+    pub memory_id: String,
+    pub feedback_type: String,
+    pub value: i32,
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryRelation {
+    pub from_id: String,
+    pub to_id: String,
+    pub relation_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddRelationInput {
+    pub from_id: String,
+    pub to_id: String,
+    pub relation_type: String,
 }
 
 fn default_importance() -> u8 {

@@ -16,14 +16,21 @@ function renderImportance(level: number): string {
 export function MemoryCard({
   memory,
   onDelete,
+  onPin,
+  onUnpin,
+  onFeedback,
 }: {
   memory: MemoryItem;
   onDelete: (id: string) => void;
+  onPin: (id: string) => void;
+  onUnpin: (id: string) => void;
+  onFeedback: (id: string, feedbackType: string) => void;
 }) {
   return (
-    <div className="memory-card">
+    <div className={`memory-card${memory.isPinned ? " memory-card--pinned" : ""}`}>
       <div className="memory-card__header">
         <span className={`memory-type-badge memory-type-badge--${memory.memoryType}`}>
+          {memory.isPinned && <span className="pin-icon">📌</span>}
           {MEMORY_TYPE_LABELS[memory.memoryType]}
         </span>
         <span className="memory-card__source">
@@ -43,7 +50,9 @@ export function MemoryCard({
         <span title={`置信度: ${(memory.confidence * 100).toFixed(0)}%`}>
           {(memory.confidence * 100).toFixed(0)}%
         </span>
-        <span>{formatTimeAgo(memory.updatedAt)}</span>
+        <span title={`近况分: ${(memory.recencyScore * 100).toFixed(0)}%`}>
+          {formatTimeAgo(memory.updatedAt)}
+        </span>
       </div>
       {memory.tags.length > 0 && (
         <div className="memory-card__tags">
@@ -55,6 +64,43 @@ export function MemoryCard({
         </div>
       )}
       <div className="memory-card__actions">
+        <div className="memory-feedback">
+          <button
+            type="button"
+            className="memory-feedback-btn memory-feedback-btn--useful"
+            title="这条记忆有用"
+            onClick={() => onFeedback(memory.id, "useful")}
+          >
+            👍
+          </button>
+          <button
+            type="button"
+            className="memory-feedback-btn memory-feedback-btn--useless"
+            title="这条记忆没用"
+            onClick={() => onFeedback(memory.id, "useless")}
+          >
+            👎
+          </button>
+        </div>
+        <div className="memory-pin-actions">
+          {memory.isPinned ? (
+            <button
+              type="button"
+              className="memory-action-btn"
+              onClick={() => onUnpin(memory.id)}
+            >
+              取消置顶
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="memory-action-btn"
+              onClick={() => onPin(memory.id)}
+            >
+              置顶
+            </button>
+          )}
+        </div>
         <button
           type="button"
           className="memory-delete-btn"
