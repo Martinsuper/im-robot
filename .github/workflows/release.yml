@@ -36,6 +36,9 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Sync release version with tag
+        run: node scripts/sync-release-version.mjs
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
