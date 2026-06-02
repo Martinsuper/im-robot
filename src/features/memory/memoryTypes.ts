@@ -104,3 +104,46 @@ export const FEEDBACK_TYPES: Array<{ label: string; value: string; valueNum: num
   { label: "✅ 正确", value: "correct", valueNum: 1 },
   { label: "❌ 错误", value: "incorrect", valueNum: -1 },
 ];
+
+// === Phase 3+ types ===
+
+export interface MemoryCandidate {
+  id: string;
+  title: string;
+  content: string;
+  memoryType: MemoryType;
+  source: MemorySource;
+  confidence: number;
+  importance: number;
+  tags: string[];
+  requiresConfirmation: boolean;
+}
+
+export interface ReflectionSummary {
+  id: string;
+  summaryType: string;
+  content: string;
+  createdAt: number;
+  periodStart?: number;
+  periodEnd?: number;
+}
+
+export interface MemoryExport {
+  version: string;
+  exportedAt: number;
+  memories: MemoryItem[];
+  relations: MemoryRelation[];
+}
+
+export interface MergeCandidate {
+  keep: MemoryItem;
+  remove: MemoryItem;
+}
+
+export const RELATION_LABELS: Record<string, string> = {
+  duplicatesOf: "重复",
+  derivedFrom: "派生自",
+  conflictsWith: "冲突",
+  supersedes: "取代",
+  relatedTo: "相关",
+};

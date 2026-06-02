@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::model::{
-    MemoryItem, MemoryRelation, MemorySource, MemoryStatus, MemoryType, ReflectionSummary,
+    MemoryItem, MemorySource, MemoryStatus, MemoryType, ReflectionSummary,
 };
 use super::store::MemoryDb;
 
@@ -305,7 +305,7 @@ pub fn merge_memories(
     db.delete(remove_id)?;
 
     // Record relation
-    db.add_relation(&MemoryRelation {
+    db.add_relation(&super::model::AddRelationInput {
         from_id: keep_id.to_string(),
         to_id: remove_id.to_string(),
         relation_type: "supersedes".to_string(),
@@ -367,7 +367,7 @@ pub fn abstract_to_semantic(db: &MemoryDb, events: &[&MemoryItem]) -> Result<Opt
 
     // Link source events to new semantic memory
     for event in events {
-        let _ = db.add_relation(&MemoryRelation {
+        let _ = db.add_relation(&super::model::AddRelationInput {
             from_id: item.id.clone(),
             to_id: event.id.clone(),
             relation_type: "derived_from".to_string(),

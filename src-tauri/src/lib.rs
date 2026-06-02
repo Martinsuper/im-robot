@@ -4503,6 +4503,7 @@ pub fn run() {
             let memory_db = memory::init_memory_db(app.handle())
                 .expect("无法初始化内存数据库");
             app.manage(memory_db);
+            app.manage(memory::CandidateCache::default());
 
             configure_tray(app)?;
             configure_global_shortcut(app)?;
@@ -4604,7 +4605,22 @@ pub fn run() {
             memory::feedback_memory,
             memory::add_memory_relation,
             memory::remove_memory_relation,
-            memory::get_memory_relations
+            memory::get_memory_relations,
+            // Memory system (Phase 3+: writer, reflection, maintenance, import/export)
+            memory::capture_memory_candidates,
+            memory::get_pending_candidates,
+            memory::apply_memory_candidates,
+            memory::reject_memory_candidate,
+            memory::reflect_memory_now,
+            memory::get_memory_summaries,
+            memory::merge_memories_cmd,
+            memory::get_merge_candidates,
+            memory::abstract_semantic_from_events,
+            memory::expire_old_memories,
+            memory::recalculate_confidence,
+            memory::export_memories,
+            memory::memory_preview_import,
+            memory::import_memories
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piko desktop application");

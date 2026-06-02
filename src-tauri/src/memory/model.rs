@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 // --- Enums ---
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum MemoryType {
     Profile,

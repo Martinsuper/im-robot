@@ -36,7 +36,6 @@ impl Default for CandidateCache {
 /// Analyze incoming content and extract memory candidates.
 /// Phase 1: rule-based extraction. Phase 3+: could use LLM.
 pub fn extract_candidates(input: &CaptureCandidateInput) -> Vec<MemoryCandidate> {
-    let now = now_unix();
     let tags = input.tags.clone().unwrap_or_default();
     let confidence = input.confidence.unwrap_or(0.5);
 
@@ -64,7 +63,6 @@ pub fn extract_candidates(input: &CaptureCandidateInput) -> Vec<MemoryCandidate>
         (MemoryType::Operational, _) => 4,
         (MemoryType::Semantic, _) => 7,
         (MemoryType::Reflection, _) => 5,
-        _ => 2,
     };
 
     vec![MemoryCandidate {
@@ -107,7 +105,7 @@ pub fn apply_candidate(
     let now = now_unix();
     let item = MemoryItem {
         id: format!("memory-{}", candidate.id),
-        memory_type: candidate.memory_type,
+        memory_type: candidate.memory_type.clone(),
         title: candidate.title,
         content: candidate.content,
         source: candidate.source,

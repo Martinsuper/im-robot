@@ -16,12 +16,15 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { OnboardingWindow } from "./features/onboarding/OnboardingWindow";
 import { MemoryCenter } from "./features/memory/MemoryCenter";
 import { initialPetState, reducePetState } from "./features/pet/petState";
 import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
+import "katex/dist/katex.min.css";
 import "./App.css";
 
 type WindowLabel = "pet" | "bubble" | "panel" | "capture";
@@ -60,7 +63,8 @@ function textForSpeech(text: string) {
 function MarkdownContent({ children }: { children: string }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
       components={{
         a: ({ children: linkText, href }) => {
           const isSafe = Boolean(href && /^https?:\/\//i.test(href));
@@ -890,6 +894,8 @@ function PanelWindow() {
   const [screenCapturePermission, setScreenCapturePermission] = useState("截图时按需申请");
   const [updateStatus, setUpdateStatus] = useState("");
   const [updateUrl, setUpdateUrl] = useState("");
+  const [downloadedUpdatePath, setDownloadedUpdatePath] = useState("");
+  const [isDownloadingUpdate, setIsDownloadingUpdate] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
   const [isTesting, setIsTesting] = useState(false);
@@ -905,6 +911,13 @@ function PanelWindow() {
   const [calendarEndAt, setCalendarEndAt] = useState(defaultCalendarEndTime);
   const [calendarError, setCalendarError] = useState("");
   const [calendarNotice, setCalendarNotice] = useState("");
+  const [calendarSyncStatus, setCalendarSyncStatus] = useState<CalendarSyncStatus>({
+    platform: "unknown",
+    available: false,
+    lastSync: null,
+    mappingCount: 0,
+  });
+  const [calendarSyncNotice, setCalendarSyncNotice] = useState("");
   const [externalPlugins, setExternalPlugins] = useState<InstalledPlugin[]>([]);
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusState, setFocusState] = useState<FocusSnapshot>(defaultFocusSnapshot);
@@ -937,6 +950,12 @@ function PanelWindow() {
     void runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []).then(setChatHistory);
     void runCommand<Reminder[]>("list_reminders", undefined, []).then(setReminders);
     void runCommand<CalendarEvent[]>("list_calendar_events", undefined, []).then(setCalendarEvents);
+    void runCommand<CalendarSyncStatus>("get_calendar_sync_status", undefined, {
+      platform: "unknown",
+      available: false,
+      lastSync: null,
+      mappingCount: 0,
+    }).then(setCalendarSyncStatus);
     void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, []).then(setExternalPlugins);
     void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
     void runCommand<OnboardingStatus>("get_onboarding_status", undefined, {
@@ -964,6 +983,14 @@ function PanelWindow() {
     const unlistenCalendar = listen("calendar-events-updated", () => {
       void runCommand<CalendarEvent[]>("list_calendar_events", undefined, []).then(setCalendarEvents);
     });
+    const unlistenCalendarSync = listen("calendar-sync-updated", () => {
+      void runCommand<CalendarSyncStatus>("get_calendar_sync_status", undefined, {
+        platform: "unknown",
+        available: false,
+        lastSync: null,
+        mappingCount: 0,
+      }).then(setCalendarSyncStatus);
+    });
     const unlistenFocus = listen<FocusSnapshot>("focus-updated", (event) => {
       setFocusState(event.payload);
     });
@@ -981,6 +1008,7 @@ function PanelWindow() {
       void unlisten.then((dispose) => dispose());
       void unlistenHistory.then((dispose) => dispose());
       void unlistenCalendar.then((dispose) => dispose());
+      void unlistenCalendarSync.then((dispose) => dispose());
       void unlistenFocus.then((dispose) => dispose());
       void unlistenSettings.then((dispose) => dispose());
       window.clearInterval(refreshFocus);
@@ -1149,6 +1177,33 @@ function PanelWindow() {
     }
   }
 
+  async function syncCalendarToSystem() {
+    setCalendarSyncNotice("");
+    try {
+      const result = await runCommand<{ pushed: number; mappingCount: number }>("sync_calendar_to_system");
+      setCalendarSyncNotice(`已同步到系统日历：${result.pushed} 条`);
+      void runCommand<CalendarSyncStatus>("get_calendar_sync_status", undefined, calendarSyncStatus).then(
+        setCalendarSyncStatus,
+      );
+    } catch (error) {
+      setCalendarSyncNotice(`同步到系统日历失败：${String(error)}`);
+    }
+  }
+
+  async function syncCalendarFromSystem() {
+    setCalendarSyncNotice("");
+    try {
+      const result = await runCommand<{ imported: number; events: CalendarEvent[] }>("sync_calendar_from_system");
+      setCalendarEvents(result.events);
+      setCalendarSyncNotice(`已从系统日历同步：${result.imported} 条`);
+      void runCommand<CalendarSyncStatus>("get_calendar_sync_status", undefined, calendarSyncStatus).then(
+        setCalendarSyncStatus,
+      );
+    } catch (error) {
+      setCalendarSyncNotice(`从系统日历同步失败：${String(error)}`);
+    }
+  }
+
   async function updateFocus(command: string, args?: Record<string, unknown>) {
     setFocusState(await runCommand<FocusSnapshot>(command, args, defaultFocusSnapshot));
   }
@@ -1186,17 +1241,52 @@ function PanelWindow() {
   async function checkForUpdates() {
     setUpdateStatus("正在检查更新...");
     setUpdateUrl("");
+    setDownloadedUpdatePath("");
     try {
-      const update = await runCommand<UpdateInfo>("check_for_updates", undefined, {
+      const update = await runCommand<UpdateStatus>("check_for_updates_extended", undefined, {
         currentVersion: "0.1.0",
         latestVersion: "0.1.0",
         available: false,
         releaseUrl: "",
+        releaseNotes: null,
+        downloadUrl: null,
+        assetName: null,
       });
       setUpdateStatus(update.available ? `发现新版本：${update.latestVersion}` : `已是最新版本：${update.currentVersion}`);
       setUpdateUrl(update.releaseUrl);
     } catch (error) {
       setUpdateStatus(`检查更新失败：${String(error)}`);
+    }
+  }
+
+  async function downloadUpdate() {
+    if (!updateUrl) return;
+    setIsDownloadingUpdate(true);
+    setUpdateStatus("正在下载更新...");
+    try {
+      const update = await runCommand<UpdateStatus>("check_for_updates_extended", undefined, {
+        currentVersion: "0.1.0",
+        latestVersion: "0.1.0",
+        available: false,
+        releaseUrl: updateUrl,
+        releaseNotes: null,
+        downloadUrl: null,
+        assetName: null,
+      });
+      if (!update.downloadUrl) {
+        setUpdateStatus("未找到可下载的安装包，请打开发布页手动下载。");
+        return;
+      }
+      const downloaded = await runCommand<{ filePath: string; fileName: string; downloadedBytes: number }>(
+        "download_update_asset",
+        { downloadUrl: update.downloadUrl, assetName: update.assetName },
+      );
+      setDownloadedUpdatePath(downloaded.filePath);
+      setUpdateStatus(`下载完成：${downloaded.fileName}`);
+    } catch (error) {
+      setUpdateStatus(`更新下载失败：${String(error)}`);
+    } finally {
+      setIsDownloadingUpdate(false);
     }
   }
 
@@ -1286,13 +1376,27 @@ function PanelWindow() {
             <p className="eyebrow">ABOUT</p>
             <h2>版本信息</h2>
           </div>
-          <button type="button" onClick={() => void checkForUpdates()}>
-            检查更新
-          </button>
+          <div className="section-heading__actions">
+            <button type="button" onClick={() => void checkForUpdates()}>
+              检查更新
+            </button>
+            <button type="button" disabled={!updateUrl || isDownloadingUpdate} onClick={() => void downloadUpdate()}>
+              {isDownloadingUpdate ? "正在下载..." : "下载更新"}
+            </button>
+          </div>
         </div>
         <p className="empty-state">Piko Desktop Companion · v0.1.0</p>
         {updateStatus && <p className="connection-status">{updateStatus}</p>}
-        {updateUrl && <button className="release-link" type="button" onClick={() => void openUrl(updateUrl)}>打开下载页</button>}
+        {updateUrl && (
+          <button className="release-link" type="button" onClick={() => void openUrl(updateUrl)}>
+            打开下载页
+          </button>
+        )}
+        {downloadedUpdatePath && (
+          <button className="release-link" type="button" onClick={() => void openPath(downloadedUpdatePath)}>
+            打开已下载文件
+          </button>
+        )}
       </section>
 
       <section className={panelSectionClass("companion")}>
@@ -1550,10 +1654,24 @@ function PanelWindow() {
             <p className="eyebrow">CALENDAR</p>
             <h2>本地日程</h2>
           </div>
-          <button type="button" disabled={!calendarEvents.length} onClick={() => void exportCalendar()}>
-            导出 iCalendar
-          </button>
+          <div className="section-heading__actions">
+            <button type="button" disabled={!calendarEvents.length} onClick={() => void exportCalendar()}>
+              导出 iCalendar
+            </button>
+            <button type="button" disabled={!calendarSyncStatus.available} onClick={() => void syncCalendarToSystem()}>
+              同步到系统日历
+            </button>
+            <button type="button" disabled={!calendarSyncStatus.available} onClick={() => void syncCalendarFromSystem()}>
+              从系统日历同步
+            </button>
+          </div>
         </div>
+        <p className="empty-state">
+          {calendarSyncStatus.available
+            ? `系统同步已就绪 · ${calendarSyncStatus.platform} · 映射 ${calendarSyncStatus.mappingCount} 条`
+            : "当前平台未开放系统日历直连，同步按钮将保持为导出/导入式兼容路径。"}
+        </p>
+        {calendarSyncNotice && <p className="calendar-notice">{calendarSyncNotice}</p>}
         <form className="reminder-form" onSubmit={createCalendarEvent}>
           <input
             value={calendarTitle}
@@ -1658,11 +1776,21 @@ interface ModelInfo {
   id: string;
 }
 
-interface UpdateInfo {
+interface UpdateStatus {
   currentVersion: string;
   latestVersion: string;
   available: boolean;
   releaseUrl: string;
+  releaseNotes: string | null;
+  downloadUrl: string | null;
+  assetName: string | null;
+}
+
+interface CalendarSyncStatus {
+  platform: string;
+  available: boolean;
+  lastSync: number | null;
+  mappingCount: number;
 }
 
 interface ChatHistoryEntry {
