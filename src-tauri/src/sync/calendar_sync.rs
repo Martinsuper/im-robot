@@ -1,22 +1,22 @@
 /// System calendar bidirectional sync module.
 ///
-/// Three-layer architecture:
-/// 1. Local data layer: calendar-events.json (already exists)
-/// 2. Mapping layer: local ID <-> system calendar ID correspondence
-/// 3. Sync adapter layer: platform-specific calendar API implementations
-///
-/// Phased rollout:
-/// Phase 1: One-way export to system calendar (push-only)
-/// Phase 2: Pull changes from system calendar
-/// Phase 3: Conflict resolution
-///
-/// Platform implementations:
-/// - macOS: EventKit via objc2-event-kit
-/// - Windows: .ics import/export fallback
-/// - Linux: CalDAV via reqwest
+/// The local calendar store remains the source of truth. On macOS we mirror
+/// synced events into Calendar.app and pull back events that carry the Piko
+/// sync marker. Other platforms keep the file-based iCalendar fallback path.
 
+use crate::CalendarEvent;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use serde_json::json;
+use std::{
+    fs,
+    path::PathBuf,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tauri::{AppHandle, Manager};
+
+const SYNC_MARKER_PREFIX: &str = "PIKO_SYNC local_id=";
+const DEFAULT_SYNC_CALENDAR_NAME: &str = "Piko";
 
 /// Mapping between local and system calendar event IDs.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,6 +64,22 @@ pub struct SyncStatus {
     pub mapping_count: usize,
 }
 
+/// Result for a push sync.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PushResult {
+    pub pushed: usize,
+    pub mappings: Vec<CalendarSyncMapping>,
+}
+
+/// Result for a pull sync.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PullResult {
+    pub imported: usize,
+    pub events: Vec<CalendarEvent>,
+}
+
 /// Platform identifier.
 pub fn current_platform() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -77,13 +93,13 @@ pub fn current_platform() -> &'static str {
 
 /// Check if system calendar sync is available on this platform.
 pub fn is_sync_available() -> bool {
-    true
+    cfg!(target_os = "macos")
 }
 
 /// Read sync mappings from file.
 pub fn read_sync_mappings(app: &tauri::AppHandle) -> Vec<CalendarSyncMapping> {
     sync_mapping_path(app)
-        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|json| serde_json::from_str(&json).ok())
         .unwrap_or_default()
 }
@@ -95,38 +111,351 @@ pub fn persist_sync_mappings(
 ) -> Result<(), String> {
     let path = sync_mapping_path(app).ok_or_else(|| "无法获取同步映射路径".to_string())?;
     let dir = path.parent().ok_or_else(|| "无法获取同步映射目录".to_string())?;
-    let json = serde_json::to_string(mappings).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    let json = serde_json::to_string_pretty(mappings).map_err(|e| e.to_string())?;
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())
 }
 
-fn sync_mapping_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+fn sync_mapping_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
         .ok()
         .map(|d| d.join("calendar-sync-mapping.json"))
 }
 
-/// Push events to system calendar.
-/// Returns the number of events pushed.
-pub fn push_to_system_calendar(_event_count: usize) -> Result<usize, String> {
-    // TODO: Platform-specific implementation
-    // - macOS: EventKit via objc2-event-kit
-    // - Windows: .ics import/export
-    // - Linux: CalDAV
-    #[cfg(target_os = "macos")]
-    {
-        // objc2-event-kit integration goes here
-        return Err("macOS EventKit sync not yet implemented".to_string());
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        return Err("System calendar sync not yet implemented for this platform".to_string());
+fn system_calendar_name() -> &'static str {
+    DEFAULT_SYNC_CALENDAR_NAME
+}
+
+fn sync_marker(local_id: &str) -> String {
+    format!("{SYNC_MARKER_PREFIX}{local_id}")
+}
+
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn description_for_event(event: &CalendarEvent, local_id: &str) -> String {
+    let marker = sync_marker(local_id);
+    match event.notes.as_deref().map(str::trim).filter(|notes| !notes.is_empty()) {
+        Some(notes) => format!("{notes}\n{marker}"),
+        None => marker,
     }
 }
 
-/// Pull events from system calendar.
-pub fn pull_from_system_calendar(_since: u64) -> Result<usize, String> {
-    // TODO: Platform-specific implementation
-    Err("System calendar pull not yet implemented".to_string())
+fn build_jxa_script(payload: &serde_json::Value) -> String {
+    format!(
+        r#"
+const payload = {};
+function toMillis(dateValue) {{
+  const date = new Date(dateValue);
+  return Math.floor(date.getTime() / 1000);
+}}
+function main() {{
+  const Calendar = Application("Calendar");
+  Calendar.includeStandardAdditions = true;
+  const writableCalendars = Calendar.calendars.whose({{ writable: true }});
+  if (!writableCalendars.length) {{
+    throw new Error("没有可写的系统日历");
+  }}
+  const defaultCalendar = writableCalendars[0];
+  const result = payload.events.map((item) => {{
+    let event = null;
+    if (item.systemId) {{
+      try {{
+        event = defaultCalendar.events.byId(item.systemId);
+      }} catch (_) {{
+        event = null;
+      }}
+    }}
+    const eventSpec = {{
+      summary: item.title,
+      startDate: new Date(item.startAt * 1000),
+      endDate: new Date(item.endAt * 1000),
+      location: item.location || "",
+      description: item.description || "",
+    }};
+    if (event) {{
+      event.summary = eventSpec.summary;
+      event.startDate = eventSpec.startDate;
+      event.endDate = eventSpec.endDate;
+      event.location = eventSpec.location;
+      event.description = eventSpec.description;
+    }} else {{
+      event = Calendar.Event(eventSpec);
+      defaultCalendar.events.push(event);
+    }}
+    return {{
+      localId: item.localId,
+      systemId: String(event.uid()),
+      localModifiedAt: item.localModifiedAt,
+      platform: payload.platform,
+    }};
+  }});
+  console.log(JSON.stringify(result));
+}}
+main();
+"#,
+        payload
+    )
+}
+
+fn run_osascript_jxa(payload: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let script = build_jxa_script(payload);
+    let output = Command::new("osascript")
+        .arg("-l")
+        .arg("JavaScript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "系统日历同步失败".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return Ok(json!([]));
+    }
+    serde_json::from_str(&stdout).map_err(|e| e.to_string())
+}
+
+fn run_pull_script() -> String {
+    r#"
+const Calendar = Application("Calendar");
+Calendar.includeStandardAdditions = true;
+const markerPrefix = "PIKO_SYNC local_id=";
+const result = [];
+const calendars = Calendar.calendars.whose({ writable: true });
+for (let i = 0; i < calendars.length; i += 1) {
+  const calendar = calendars[i];
+  const events = calendar.events;
+  for (let j = 0; j < events.length; j += 1) {
+    const event = events[j];
+    const description = String(event.description ? event.description() : "");
+    const markerIndex = description.indexOf(markerPrefix);
+    if (markerIndex < 0) continue;
+    const localId = description.slice(markerIndex + markerPrefix.length).split(/\r?\n/)[0].trim();
+    if (!localId) continue;
+    const startDate = new Date(event.startDate());
+    const endDate = new Date(event.endDate());
+    result.push({
+      localId,
+      systemId: String(event.uid()),
+      title: String(event.summary()),
+      startAt: Math.floor(startDate.getTime() / 1000),
+      endAt: Math.floor(endDate.getTime() / 1000),
+      location: event.location ? String(event.location()) : null,
+      notes: (() => {
+        const raw = description.slice(0, markerIndex).trim();
+        return raw.length ? raw : null;
+      })(),
+      systemModifiedAt: Math.floor((event.modificationDate ? new Date(event.modificationDate()) : new Date()).getTime() / 1000),
+      platform: "macos",
+    });
+  }
+}
+console.log(JSON.stringify(result));
+"#
+    .to_string()
+}
+
+/// Push local events into the system calendar.
+pub(crate) fn push_to_system_calendar(
+    app: &AppHandle,
+    events: &[CalendarEvent],
+) -> Result<PushResult, String> {
+    if !is_sync_available() {
+        return Err("当前平台尚未开放系统日历同步".to_string());
+    }
+
+    let mut mappings = read_sync_mappings(app);
+    let platform = current_platform().to_string();
+    let mut by_local_id = mappings
+        .iter()
+        .map(|mapping| (mapping.local_id.clone(), mapping.clone()))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let mut payload_events = Vec::with_capacity(events.len());
+    for event in events {
+        let local_id = event.id.clone();
+        let mapping = by_local_id.get(&local_id).cloned();
+        payload_events.push(json!({
+            "localId": local_id,
+            "systemId": mapping.as_ref().map(|m| m.system_id.clone()),
+            "title": event.title,
+            "startAt": event.start_at,
+            "endAt": event.end_at,
+            "location": event.location,
+            "description": description_for_event(event, &event.id),
+            "localModifiedAt": now_unix(),
+        }));
+    }
+
+    let output = run_osascript_jxa(&json!({
+        "platform": platform,
+        "calendarName": system_calendar_name(),
+        "events": payload_events,
+    }))?;
+
+    let created = output
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| {
+            let local_id = entry["localId"].as_str()?.to_string();
+            let system_id = entry["systemId"].as_str()?.to_string();
+            let local_modified_at = entry["localModifiedAt"].as_u64().unwrap_or_default();
+            Some(CalendarSyncMapping {
+                local_id,
+                system_id,
+                platform: platform.clone(),
+                last_synced_at: now_unix(),
+                local_modified_at,
+                system_modified_at: now_unix(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for mapping in created {
+        if let Some(existing) = by_local_id.get_mut(&mapping.local_id) {
+            *existing = mapping.clone();
+        } else {
+            mappings.push(mapping);
+        }
+    }
+
+    mappings.sort_by(|a, b| a.local_id.cmp(&b.local_id));
+    persist_sync_mappings(app, &mappings)?;
+
+    Ok(PushResult {
+        pushed: payload_events.len(),
+        mappings,
+    })
+}
+
+/// Pull events from the system calendar back into local form.
+pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<PullResult, String> {
+    if !is_sync_available() {
+        return Err("当前平台尚未开放系统日历同步".to_string());
+    }
+
+    let mut events = read_system_synced_events(since)?;
+    if events.is_empty() {
+        return Ok(PullResult {
+            imported: 0,
+            events,
+        });
+    }
+
+    let mut local_events = read_local_calendar_events(app);
+    let mut known_ids = local_events
+        .iter()
+        .map(|event| event.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+
+    let mut imported = 0usize;
+    for event in events.drain(..) {
+        if let Some(existing) = local_events.iter_mut().find(|item| item.id == event.id) {
+            *existing = event.clone();
+        } else if known_ids.insert(event.id.clone()) {
+            local_events.push(event.clone());
+            imported += 1;
+        }
+    }
+
+    local_events.sort_by(|a, b| a.start_at.cmp(&b.start_at));
+    persist_local_calendar_events(app, &local_events)?;
+
+    Ok(PullResult {
+        imported,
+        events: local_events,
+    })
+}
+
+fn read_system_synced_events(_since: u64) -> Result<Vec<CalendarEvent>, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("当前平台尚未开放系统日历同步".to_string());
+    }
+
+    let stdout = Command::new("osascript")
+        .arg("-l")
+        .arg("JavaScript")
+        .arg("-e")
+        .arg(run_pull_script())
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !stdout.status.success() {
+        let stderr = String::from_utf8_lossy(&stdout.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "读取系统日历失败".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    let raw = String::from_utf8_lossy(&stdout.stdout).trim().to_string();
+    let system_events: Vec<SystemCalendarEvent> = if raw.is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(&raw).map_err(|e| e.to_string())?
+    };
+
+    Ok(system_events
+        .into_iter()
+        .map(|event| CalendarEvent {
+            id: event.local_id,
+            title: event.title,
+            start_at: event.start_at,
+            end_at: event.end_at,
+            location: event.location,
+            notes: event.notes,
+        })
+        .collect())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemCalendarEvent {
+    local_id: String,
+    title: String,
+    start_at: u64,
+    end_at: u64,
+    location: Option<String>,
+    notes: Option<String>,
+}
+
+fn read_local_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
+    calendar_events_path(app)
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+fn persist_local_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<(), String> {
+    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| "无法获取日程记录目录".to_string())?;
+    let json = serde_json::to_string_pretty(events).map_err(|e| e.to_string())?;
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())
+}
+
+fn calendar_events_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("calendar-events.json"))
 }

@@ -25,7 +25,13 @@ fn candidate_id() -> String {
 }
 
 /// In-memory cache of pending candidates (not yet persisted).
-pub struct CandidateCache(pub Mutex<Vec<MemoryCandidate>>);
+pub struct CandidateCache(Mutex<Vec<MemoryCandidate>>);
+
+impl CandidateCache {
+    pub fn lock(&self) -> Result<std::sync::MutexGuard<'_, Vec<MemoryCandidate>>, String> {
+        self.0.lock().map_err(|_| "无法访问候选缓存".to_string())
+    }
+}
 
 impl Default for CandidateCache {
     fn default() -> Self {
@@ -82,13 +88,8 @@ pub fn extract_candidates(input: &CaptureCandidateInput) -> Vec<MemoryCandidate>
 pub fn apply_candidate(
     db: &MemoryDb,
     input: &ApplyCandidateInput,
-    cache: &CandidateCache,
+    candidates: &mut Vec<MemoryCandidate>,
 ) -> Result<Option<MemoryItem>, String> {
-    let mut candidates = cache
-        .0
-        .lock()
-        .map_err(|_| "无法读取候选缓存".to_string())?;
-
     let idx = candidates
         .iter()
         .position(|c| c.id == input.candidate_id);

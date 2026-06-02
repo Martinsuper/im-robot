@@ -214,10 +214,7 @@ pub fn capture_memory_candidates(
     input: CaptureCandidateInput,
 ) -> Result<Vec<MemoryCandidate>, String> {
     let candidates = extract_candidates(&input);
-    let mut cached = cache
-        .0
-        .lock()
-        .map_err(|_| "无法写入候选缓存".to_string())?;
+    let mut cached = cache.lock()?;
     cached.extend(candidates.clone());
     Ok(candidates)
 }
@@ -226,10 +223,7 @@ pub fn capture_memory_candidates(
 pub fn get_pending_candidates(
     cache: State<'_, CandidateCache>,
 ) -> Result<Vec<MemoryCandidate>, String> {
-    let cached = cache
-        .0
-        .lock()
-        .map_err(|_| "无法读取候选缓存".to_string())?;
+    let cached = cache.lock()?;
     Ok(cached
         .iter()
         .filter(|c| c.requires_confirmation)
@@ -244,7 +238,10 @@ pub fn apply_memory_candidates(
     cache: State<'_, CandidateCache>,
     input: ApplyCandidateInput,
 ) -> Result<Option<MemoryItem>, String> {
-    let item = apply_candidate(&db, &input, &cache)?;
+    let item = {
+        let mut locked = cache.lock()?;
+        apply_candidate(&db, &input, &mut locked)?
+    };
     if item.is_some() {
         let _ = app.emit_to("panel", "memories-updated", ());
     }
@@ -256,10 +253,7 @@ pub fn reject_memory_candidate(
     cache: State<'_, CandidateCache>,
     candidate_id: String,
 ) -> Result<(), String> {
-    let mut cached = cache
-        .0
-        .lock()
-        .map_err(|_| "无法读取候选缓存".to_string())?;
+    let mut cached = cache.lock()?;
     cached.retain(|c| c.id != candidate_id);
     Ok(())
 }

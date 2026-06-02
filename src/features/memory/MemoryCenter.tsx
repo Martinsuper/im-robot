@@ -7,9 +7,13 @@ import {
   SearchMemoriesInput,
   MemoryType,
   FeedbackInput,
+  MemoryCandidate,
+  ReflectionSummary,
+  MemoryExport,
   MEMORY_TYPE_OPTIONS,
 } from "./memoryTypes";
 import { MemoryCard } from "./MemoryCard";
+import { MemoryDetail } from "./MemoryDetail";
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
@@ -26,6 +30,19 @@ export function MemoryCenter() {
   const [error, setError] = useState("");
   const [view, setView] = useState<"list" | "search" | "recent">("list");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Detail modal
+  const [selectedMemory, setSelectedMemory] = useState<MemoryItem | null>(null);
+
+  // Pending candidates
+  const [pendingCandidates, setPendingCandidates] = useState<MemoryCandidate[]>([]);
+
+  // Reflection summaries
+  const [summaries, setSummaries] = useState<ReflectionSummary[]>([]);
+  const [isReflecting, setIsReflecting] = useState(false);
+
+  // Sub-tab for advanced views
+  const [subView, setSubView] = useState<"memories" | "pending" | "reflections">("memories");
 
   async function loadMemories() {
     const input: ListMemoriesInput = {
@@ -49,6 +66,26 @@ export function MemoryCenter() {
       setError("");
     } catch {
       setMemories([]);
+    }
+  }
+
+  async function loadPending() {
+    try {
+      const items = await runCommand<MemoryCandidate[]>("get_pending_candidates", {});
+      setPendingCandidates(items);
+    } catch {
+      setPendingCandidates([]);
+    }
+  }
+
+  async function loadSummaries() {
+    try {
+      const items = await runCommand<ReflectionSummary[]>("get_memory_summaries", {
+        limit: 5,
+      });
+      setSummaries(items);
+    } catch {
+      setSummaries([]);
     }
   }
 
@@ -89,8 +126,11 @@ export function MemoryCenter() {
   useEffect(() => {
     if (!isTauriRuntime) return;
     void loadMemories();
+    void loadPending();
+    void loadSummaries();
     const unlisten = listen("memories-updated", () => {
       void loadMemories();
+      void loadPending();
     });
     return () => {
       void unlisten.then((dispose) => dispose());
@@ -150,6 +190,52 @@ export function MemoryCenter() {
     }
   }
 
+  async function handleReflectNow() {
+    setIsReflecting(true);
+    try {
+      await runCommand("reflect_memory_now", {});
+      void loadSummaries();
+      void loadMemories();
+      setError("");
+    } catch {
+      setError("反思失败");
+    } finally {
+      setIsReflecting(false);
+    }
+  }
+
+  async function handleConfirmCandidate(candidateId: string) {
+    try {
+      await runCommand("apply_memory_candidates", {
+        input: { candidateId, confirmed: true },
+      });
+      void loadPending();
+      void loadMemories();
+    } catch {
+      setError("确认失败");
+    }
+  }
+
+  async function handleRejectCandidate(candidateId: string) {
+    try {
+      await runCommand("reject_memory_candidate", { candidateId });
+      void loadPending();
+    } catch {
+      setError("拒绝失败");
+    }
+  }
+
+  async function handleExport() {
+    try {
+      const data = await runCommand<MemoryExport>("export_memories", {});
+      const json = JSON.stringify(data, null, 2);
+      await navigator.clipboard.writeText(json);
+      setError("已复制记忆导出到剪贴板");
+    } catch {
+      setError("导出失败");
+    }
+  }
+
   return (
     <section className="memory-center">
       <div className="section-heading">
@@ -171,6 +257,17 @@ export function MemoryCenter() {
               </option>
             ))}
           </select>
+          <button type="button" onClick={handleExport} title="导出记忆">
+            导出
+          </button>
+          <button
+            type="button"
+            onClick={handleReflectNow}
+            disabled={isReflecting}
+            title="运行记忆反思"
+          >
+            {isReflecting ? "反思中…" : "反思"}
+          </button>
           <button
             type="button"
             onClick={handleClearAll}
@@ -181,84 +278,190 @@ export function MemoryCenter() {
         </div>
       </div>
 
-      {/* Search bar */}
-      <div className="memory-search">
-        <input
-          type="text"
-          className="memory-search__input"
-          placeholder="搜索记忆…"
-          value={searchQuery}
-          onChange={(e) => {
-            setSearchQuery(e.currentTarget.value);
-            debouncedSearch(e.currentTarget.value);
-          }}
-        />
-        {isSearching && <span className="memory-search__loading">⏳</span>}
-        {searchQuery && (
-          <button
-            type="button"
-            className="memory-search__clear"
-            onClick={() => {
-              setSearchQuery("");
-              setView("list");
-              void loadMemories();
-            }}
-          >
-            ✕
-          </button>
-        )}
-      </div>
-
-      {/* View toggle */}
-      <div className="memory-view-toggle">
+      {/* Sub-view tabs */}
+      <nav className="memory-sub-tabs">
         <button
-          type="button"
-          className={view === "list" ? "is-active" : ""}
-          onClick={() => {
-            setView("list");
-            void loadMemories();
-          }}
+          className={subView === "memories" ? "is-active" : ""}
+          onClick={() => setSubView("memories")}
         >
-          全部
+          记忆列表
         </button>
         <button
-          type="button"
-          className={view === "recent" ? "is-active" : ""}
+          className={subView === "pending" ? "is-active" : ""}
           onClick={() => {
-            setView("recent");
-            void loadRecent();
+            setSubView("pending");
+            void loadPending();
           }}
         >
-          最近
+          待确认 ({pendingCandidates.length})
         </button>
-        {view === "search" && (
-          <span className="memory-search-info">
-            找到 {memories.length} 条结果
-          </span>
-        )}
-      </div>
+        <button
+          className={subView === "reflections" ? "is-active" : ""}
+          onClick={() => {
+            setSubView("reflections");
+            void loadSummaries();
+          }}
+        >
+          反思总结
+        </button>
+      </nav>
 
-      {error && <p className="memory-error">{error}</p>}
-
-      {memories.length === 0 ? (
-        <p className="empty-state">
-          {view === "search"
-            ? `没有找到与"${searchQuery}"相关的记忆。`
-            : "还没有记忆。Piko 会在和你互动时逐渐记住重要的事。"}
-        </p>
-      ) : (
-        <div className="memory-list">
-          {memories.map((memory) => (
-            <MemoryCard
-              key={memory.id}
-              memory={memory}
-              onDelete={handleDelete}
-              onPin={handlePin}
-              onUnpin={handleUnpin}
-              onFeedback={handleFeedback}
+      {subView === "memories" && (
+        <>
+          {/* Search bar */}
+          <div className="memory-search">
+            <input
+              type="text"
+              className="memory-search__input"
+              placeholder="搜索记忆…"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.currentTarget.value);
+                debouncedSearch(e.currentTarget.value);
+              }}
             />
-          ))}
-        </div>
+            {isSearching && <span className="memory-search__loading">⏳</span>}
+            {searchQuery && (
+              <button
+                type="button"
+                className="memory-search__clear"
+                onClick={() => {
+                  setSearchQuery("");
+                  setView("list");
+                  void loadMemories();
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          {/* View toggle */}
+          <div className="memory-view-toggle">
+            <button
+              type="button"
+              className={view === "list" ? "is-active" : ""}
+              onClick={() => {
+                setView("list");
+                void loadMemories();
+              }}
+            >
+              全部
+            </button>
+            <button
+              type="button"
+              className={view === "recent" ? "is-active" : ""}
+              onClick={() => {
+                setView("recent");
+                void loadRecent();
+              }}
+            >
+              最近
+            </button>
+            {view === "search" && (
+              <span className="memory-search-info">
+                找到 {memories.length} 条结果
+              </span>
+            )}
+          </div>
+
+          {error && <p className="memory-error">{error}</p>}
+
+          {memories.length === 0 ? (
+            <p className="empty-state">
+              {view === "search"
+                ? `没有找到与"${searchQuery}"相关的记忆。`
+                : "还没有记忆。Piko 会在和你互动时逐渐记住重要的事。"}
+            </p>
+          ) : (
+            <div className="memory-list">
+              {memories.map((memory) => (
+                <div key={memory.id} onClick={() => setSelectedMemory(memory)} className="memory-card-wrapper">
+                  <MemoryCard
+                    memory={memory}
+                    onDelete={handleDelete}
+                    onPin={handlePin}
+                    onUnpin={handleUnpin}
+                    onFeedback={handleFeedback}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {subView === "pending" && (
+        <>
+          {pendingCandidates.length === 0 ? (
+            <p className="empty-state">没有待确认的记忆推断。</p>
+          ) : (
+            <div className="memory-list">
+              {pendingCandidates.map((cand) => (
+                <div key={cand.id} className="memory-card memory-card--pending">
+                  <div className="memory-card__header">
+                    <span className={`memory-type-badge memory-type-badge--${cand.memoryType}`}>
+                      待确认 · {cand.memoryType === "profile" ? "用户档案" : "事件记忆"}
+                    </span>
+                    <span className="memory-card__source">置信度 {(cand.confidence * 100).toFixed(0)}%</span>
+                  </div>
+                  <h3 className="memory-card__title">{cand.title}</h3>
+                  <p className="memory-card__content">{cand.content}</p>
+                  <div className="memory-card__actions">
+                    <button
+                      type="button"
+                      className="memory-confirm-btn"
+                      onClick={() => handleConfirmCandidate(cand.id)}
+                    >
+                      ✓ 确认记住
+                    </button>
+                    <button
+                      type="button"
+                      className="memory-reject-btn"
+                      onClick={() => handleRejectCandidate(cand.id)}
+                    >
+                      ✕ 忽略
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {subView === "reflections" && (
+        <>
+          {summaries.length === 0 ? (
+            <p className="empty-state">还没有反思总结。点击"反思"按钮运行第一次反思。</p>
+          ) : (
+            <div className="reflection-list">
+              {summaries.map((s) => (
+                <div key={s.id} className="reflection-card">
+                  <div className="reflection-card__header">
+                    <span className={`reflection-badge reflection-badge--${s.summaryType}`}>
+                      {s.summaryType === "daily" ? "日反思" : "周反思"}
+                    </span>
+                    <span className="reflection-date">
+                      {new Date(s.createdAt * 1000).toLocaleDateString("zh-CN")}
+                    </span>
+                  </div>
+                  <pre className="reflection-content">{s.content}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Memory Detail Modal */}
+      {selectedMemory && (
+        <MemoryDetail
+          memory={selectedMemory}
+          onClose={() => setSelectedMemory(null)}
+          onDeleted={() => void loadMemories()}
+          onUpdated={(updated) => setSelectedMemory(updated)}
+        />
       )}
     </section>
   );

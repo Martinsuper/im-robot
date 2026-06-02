@@ -27,6 +27,8 @@ use tauri::{
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
+use wasmtime::{Engine, Linker, Module, Store};
+use wasmtime_wasi::WasiCtxBuilder;
 
 // --- Module declarations for new features ---
 pub mod app_awareness;
@@ -242,7 +244,7 @@ struct ReminderInput {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CalendarEvent {
+pub(crate) struct CalendarEvent {
     id: String,
     title: String,
     start_at: u64,
@@ -355,10 +357,15 @@ struct DeclarativePluginPackage {
     manifest: PluginManifest,
     #[serde(default)]
     responses: HashMap<String, Value>,
+    #[serde(default)]
+    runtime: Option<String>,
+    #[serde(default)]
+    module: Option<String>,
 }
 
 struct DeclarativePlugin {
     package: DeclarativePluginPackage,
+    directory: PathBuf,
 }
 
 #[derive(Default)]
@@ -615,12 +622,22 @@ impl PikoPlugin for DeclarativePlugin {
         self.package.manifest.clone()
     }
 
-    fn execute(&self, _app: &AppHandle, tool: &str, _input: Value) -> Result<Value, String> {
-        self.package
-            .responses
-            .get(tool)
-            .cloned()
-            .ok_or_else(|| "声明式插件未配置该工具的响应".to_string())
+    fn execute(&self, app: &AppHandle, tool: &str, input: Value) -> Result<Value, String> {
+        match self.package.runtime.as_deref() {
+            Some("wasm") => execute_wasm_plugin(
+                app,
+                &self.directory,
+                &self.package,
+                tool,
+                input,
+            ),
+            _ => self
+                .package
+                .responses
+                .get(tool)
+                .cloned()
+                .ok_or_else(|| "声明式插件未配置该工具的响应".to_string()),
+        }
     }
 }
 
@@ -703,19 +720,24 @@ impl PluginRegistry {
         };
         let mut installed = Vec::new();
         for package in packages {
-            let error = validate_declarative_plugin(&package).err();
+            let error = validate_declarative_plugin(&package.package).err();
             let executable = error.is_none();
-            let status = error.unwrap_or_else(|| "已启用声明式只读运行时".to_string());
-            if executable && !plugins.contains_key(&package.manifest.id) {
+            let runtime = package.package.runtime.as_deref().unwrap_or("declarative");
+            let status = error.unwrap_or_else(|| match runtime {
+                "wasm" => "已启用 WASM 沙箱运行时".to_string(),
+                _ => "已启用声明式只读运行时".to_string(),
+            });
+            if executable && !plugins.contains_key(&package.package.manifest.id) {
                 plugins.insert(
-                    package.manifest.id.clone(),
+                    package.package.manifest.id.clone(),
                     Arc::new(DeclarativePlugin {
-                        package: package.clone(),
+                        package: package.package.clone(),
+                        directory: package.directory.clone(),
                     }),
                 );
             }
             installed.push(InstalledPlugin {
-                manifest: package.manifest,
+                manifest: package.package.manifest,
                 executable,
                 status,
             });
@@ -912,7 +934,12 @@ fn persist_calendar_events_to_path(path: &Path, events: &[CalendarEvent]) -> Res
     fs::write(path, json).map_err(|error| error.to_string())
 }
 
-fn read_external_plugin_packages(app: &AppHandle) -> Vec<DeclarativePluginPackage> {
+struct ExternalPluginPackage {
+    directory: PathBuf,
+    package: DeclarativePluginPackage,
+}
+
+fn read_external_plugin_packages(app: &AppHandle) -> Vec<ExternalPluginPackage> {
     let Some(directory) = external_plugins_path(app) else {
         return Vec::new();
     };
@@ -926,6 +953,10 @@ fn read_external_plugin_packages(app: &AppHandle) -> Vec<DeclarativePluginPackag
             fs::read_to_string(path)
                 .ok()
                 .and_then(|json| serde_json::from_str::<DeclarativePluginPackage>(&json).ok())
+                .map(|package| ExternalPluginPackage {
+                    directory: entry.path(),
+                    package,
+                })
         })
         .collect()
 }
@@ -937,15 +968,104 @@ fn validate_declarative_plugin(package: &DeclarativePluginPackage) -> Result<(),
     if package.manifest.tools.is_empty() {
         return Err("外部插件必须声明至少一个工具".to_string());
     }
+    let runtime = package.runtime.as_deref().unwrap_or("declarative");
+    if !matches!(runtime, "declarative" | "wasm") {
+        return Err("外部插件 runtime 仅支持 declarative 或 wasm".to_string());
+    }
+    if runtime == "wasm" && package.module.as_deref().unwrap_or("").is_empty() {
+        return Err("WASM 插件必须指定 module 文件".to_string());
+    }
+    if runtime == "wasm" {
+        let module = package.module.as_deref().unwrap_or("");
+        if !module.ends_with(".wasm") {
+            return Err("WASM 插件 module 必须以 .wasm 结尾".to_string());
+        }
+    }
     for tool in &package.manifest.tools {
-        if !matches!(tool.risk.as_str(), "pure" | "read") || tool.confirmation != "never" {
+        if runtime == "declarative"
+            && (!matches!(tool.risk.as_str(), "pure" | "read") || tool.confirmation != "never")
+        {
             return Err("声明式插件只允许 pure/read 且无需确认的工具".to_string());
         }
-        if !package.responses.contains_key(&tool.name) {
+        if runtime == "wasm"
+            && !matches!(tool.risk.as_str(), "pure" | "read" | "write" | "sensitive")
+        {
+            return Err("WASM 插件工具风险等级不合法".to_string());
+        }
+        if runtime == "declarative" && !package.responses.contains_key(&tool.name) {
             return Err(format!("工具 {} 缺少静态响应", tool.name));
         }
     }
     Ok(())
+}
+
+fn execute_wasm_plugin(
+    _app: &AppHandle,
+    directory: &Path,
+    package: &DeclarativePluginPackage,
+    tool: &str,
+    input: Value,
+) -> Result<Value, String> {
+    let module_name = package.module.as_deref().unwrap_or("plugin.wasm");
+    let module_path = directory.join(module_name);
+    if !module_path.exists() {
+        return Err(format!("WASM 插件模块不存在：{}", module_path.display()));
+    }
+
+    let engine = Engine::default();
+    let module = Module::from_file(&engine, &module_path).map_err(|e| e.to_string())?;
+    let mut linker = Linker::<wasmtime_wasi::p1::WasiP1Ctx>::new(&engine);
+    wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |ctx| ctx).map_err(|e| e.to_string())?;
+    let plugin_id = package.manifest.id.clone();
+    let manifest = package.manifest.clone();
+
+    let stdin_payload = serde_json::to_vec(&json!({
+        "pluginId": plugin_id,
+        "toolName": tool,
+        "arguments": input,
+        "manifest": manifest,
+    }))
+    .map_err(|e| e.to_string())?;
+    let stdin = wasmtime_wasi::p2::pipe::MemoryInputPipe::new(stdin_payload);
+    let stdout = wasmtime_wasi::p2::pipe::MemoryOutputPipe::new(1024 * 1024);
+    let stderr = wasmtime_wasi::p2::pipe::MemoryOutputPipe::new(256 * 1024);
+
+    let wasi = WasiCtxBuilder::new()
+        .stdin(stdin)
+        .stdout(stdout.clone())
+        .stderr(stderr.clone())
+        .build_p1();
+    let mut store = Store::new(&engine, wasi);
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .map_err(|e| e.to_string())?;
+    let start = instance
+        .get_typed_func::<(), ()>(&mut store, "_start")
+        .map_err(|e| e.to_string())?;
+    start.call(&mut store, ()).map_err(|e| e.to_string())?;
+
+    let stdout_text = String::from_utf8(stdout.contents().to_vec()).map_err(|e| e.to_string())?;
+    let stderr_text = String::from_utf8(stderr.contents().to_vec()).unwrap_or_default();
+    let output = stdout_text.trim();
+    if output.is_empty() {
+        return Ok(json!({
+            "ok": true,
+            "pluginId": plugin_id.clone(),
+            "toolName": tool,
+            "stderr": stderr_text,
+        }));
+    }
+
+    match serde_json::from_str::<Value>(output) {
+        Ok(value) => Ok(value),
+        Err(_) => Ok(json!({
+            "ok": true,
+            "pluginId": plugin_id,
+            "toolName": tool,
+            "stderr": stderr_text,
+            "raw": output,
+        })),
+    }
 }
 
 fn read_focus_records(app: &AppHandle) -> Vec<FocusRecord> {
@@ -3652,12 +3772,22 @@ fn extract_model_ids(provider: &str, body: &Value) -> Vec<String> {
         .collect()
 }
 
-fn system_prompt(companion_name: &str) -> String {
+fn system_prompt(companion_name: &str, memory_context: Option<&str>) -> String {
     let now = Local::now();
-    format!(
+    let base = format!(
         "你是桌面 AI 宠物精灵 {companion_name}。回答应清晰、简洁、友好。当前本地时间是 {}。可以使用已提供的工具读取、创建、检查冲突，或提出提醒和日程草稿。查询提醒时优先调用 list_reminders；查询、删除或定位日程时优先调用 list_events。删除提醒或日程前，先用列表工具找到具体目标，再生成待确认草稿并等待用户确认。规划多条日程时优先使用批量创建工具。工具中的时间参数必须使用带时区的 ISO 8601 字符串，例如 2026-06-02T15:00:00+08:00，不要自行计算 Unix 时间戳。写入和删除操作必须等待用户确认；不要声称已经执行未实际执行的电脑操作。遇到时间歧义时先向用户追问。",
         now.format("%Y-%m-%d %H:%M:%S %:z")
-    )
+    );
+
+    match memory_context {
+        Some(ctx) if !ctx.is_empty() => {
+            format!(
+                "{}\n\n--- 长期记忆上下文 ---\n{}\n--- 记忆结束 ---",
+                base, ctx
+            )
+        }
+        _ => base,
+    }
 }
 
 fn openai_user_content(prompt: &str, screenshot: Option<&ScreenCapture>) -> Value {
@@ -3700,12 +3830,13 @@ fn chat_request_body(
     recent_history: &[ChatHistoryEntry],
     prompt: &str,
     screenshot: Option<&ScreenCapture>,
+    memory_context: Option<&str>,
 ) -> Result<Value, String> {
     match provider_kind(&settings.ai.provider) {
         Some(ProviderKind::OpenAiCompatible) => {
             let mut messages = vec![json!({
                 "role": "system",
-                "content": system_prompt(&settings.companion_name)
+                "content": system_prompt(&settings.companion_name, memory_context)
             })];
             for entry in recent_history.iter().take(10).rev() {
                 messages.push(json!({ "role": "user", "content": entry.prompt }));
@@ -3732,7 +3863,7 @@ fn chat_request_body(
             );
             Ok(json!({
                 "model": settings.ai.model,
-                "system": system_prompt(&settings.companion_name),
+                "system": system_prompt(&settings.companion_name, memory_context),
                 "messages": messages,
                 "temperature": settings.ai.temperature,
                 "max_tokens": 4096,
@@ -3748,7 +3879,7 @@ fn chat_request_body(
             contents
                 .push(json!({ "role": "user", "parts": gemini_user_parts(prompt, screenshot)? }));
             Ok(json!({
-                "systemInstruction": { "parts": [{ "text": system_prompt(&settings.companion_name) }] },
+                "systemInstruction": { "parts": [{ "text": system_prompt(&settings.companion_name, memory_context) }] },
                 "contents": contents,
                 "generationConfig": { "temperature": settings.ai.temperature }
             }))
@@ -3823,6 +3954,7 @@ async fn stream_chat(
     context: &ChatContext,
     registry: &PluginRegistry,
     drafts: &ActionDrafts,
+    memory_db: &memory::MemoryDb,
     input: StreamChatInput<'_>,
 ) -> Result<StreamChatOutcome, String> {
     let StreamChatInput {
@@ -3853,7 +3985,31 @@ async fn stream_chat(
         .lock()
         .map_err(|_| "无法读取当前对话上下文".to_string())?
         .clone();
-    let mut request_body = chat_request_body(&settings, &recent_history, prompt, screenshot)?;
+
+    // Build memory context from relevant long-term memories
+    let memory_context_text = memory_db.build_context(
+        memory::BuildContextInput {
+            current_query: Some(prompt.to_string()),
+            window_type: None,
+            limit: Some(10),
+        },
+    )
+    .ok()
+    .map(|memories| {
+        memories
+            .iter()
+            .map(|m| format!("- [{}] {}: {}", m.memory_type.label(), m.title, m.content))
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
+
+    let mut request_body = chat_request_body(
+        &settings,
+        &recent_history,
+        prompt,
+        screenshot,
+        memory_context_text.as_deref(),
+    )?;
     append_provider_tools(
         &mut request_body,
         &settings.ai.provider,
@@ -4034,6 +4190,7 @@ async fn chat_start(
     drafts: State<'_, ActionDrafts>,
     attachments: State<'_, TextAttachmentStore>,
     captures: State<'_, ScreenCaptureStore>,
+    memory_db: State<'_, memory::MemoryDb>,
     input: ChatStartInput,
 ) -> Result<(), String> {
     if input.attachment_action.is_none() && !input.include_screenshot.unwrap_or(false) {
@@ -4122,6 +4279,7 @@ async fn chat_start(
         &context,
         &registry,
         &drafts,
+        &memory_db,
         StreamChatInput {
             request_id: &input.request_id,
             prompt: &model_prompt,
@@ -4322,8 +4480,28 @@ fn get_calendar_sync_status(app: AppHandle) -> Result<serde_json::Value, String>
 #[tauri::command]
 fn sync_calendar_to_system(app: AppHandle) -> Result<serde_json::Value, String> {
     let events = read_calendar_events(&app);
-    let pushed = crate::sync::calendar_sync::push_to_system_calendar(events.len())?;
-    Ok(json!({ "pushed": pushed }))
+    let result = crate::sync::calendar_sync::push_to_system_calendar(&app, &events)?;
+    let _ = app.emit_to("panel", "calendar-sync-updated", ());
+    Ok(json!({
+        "pushed": result.pushed,
+        "mappingCount": result.mappings.len(),
+    }))
+}
+
+#[tauri::command]
+fn sync_calendar_from_system(app: AppHandle) -> Result<serde_json::Value, String> {
+    let since = crate::sync::calendar_sync::read_sync_mappings(&app)
+        .iter()
+        .map(|mapping| mapping.last_synced_at)
+        .max()
+        .unwrap_or(0);
+    let result = crate::sync::calendar_sync::pull_from_system_calendar(&app, since)?;
+    let _ = app.emit_to("panel", "calendar-events-updated", ());
+    let _ = app.emit_to("panel", "calendar-sync-updated", ());
+    Ok(json!({
+        "imported": result.imported,
+        "events": result.events,
+    }))
 }
 
 // ============================================================================
@@ -4342,6 +4520,14 @@ struct UpdateStatus {
     asset_name: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadedUpdate {
+    file_path: String,
+    file_name: String,
+    downloaded_bytes: u64,
+}
+
 #[tauri::command]
 async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
     let base = check_for_updates().await?;
@@ -4353,7 +4539,7 @@ async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
         .map_err(|e| e.to_string())?;
 
     let response = client
-        .get("https://api.github.com/repos/duanluyao/im-robot/releases/latest")
+        .get("https://api.github.com/repos/Martinsuper/im-robot/releases/latest")
         .header("User-Agent", "im-robot-update-checker")
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -4416,6 +4602,46 @@ async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
         release_notes,
         download_url,
         asset_name,
+    })
+}
+
+#[tauri::command]
+async fn download_update_asset(app: AppHandle, download_url: String, asset_name: Option<String>) -> Result<DownloadedUpdate, String> {
+    if download_url.trim().is_empty() {
+        return Err("未提供可下载的更新地址".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(download_url.trim())
+        .header("User-Agent", "im-robot-update-downloader")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?;
+
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    let file_name = asset_name
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "piko-update.bin".to_string());
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?;
+    let update_dir = cache_dir.join("updates");
+    std::fs::create_dir_all(&update_dir).map_err(|e| e.to_string())?;
+    let file_path = update_dir.join(&file_name);
+    std::fs::write(&file_path, &bytes).map_err(|e| e.to_string())?;
+
+    Ok(DownloadedUpdate {
+        file_path: file_path.to_string_lossy().to_string(),
+        file_name,
+        downloaded_bytes: bytes.len() as u64,
     })
 }
 
@@ -4588,6 +4814,8 @@ pub fn run() {
             import_data,
             get_calendar_sync_status,
             sync_calendar_to_system,
+            sync_calendar_from_system,
+            download_update_asset,
             // Memory system (Phase 1)
             memory::list_memories,
             memory::get_memory_detail,
@@ -4842,7 +5070,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let body = chat_request_body(&settings, &[], "你好", None).unwrap();
+        let body = chat_request_body(&settings, &[], "你好", None, None).unwrap();
         // Same structure as OpenAI-compatible providers
         assert_eq!(body["model"], "llama-3.2-1b");
         assert_eq!(body["temperature"], 0.5);
@@ -4885,7 +5113,7 @@ mod tests {
             ai: settings,
             ..Default::default()
         };
-        let body = chat_request_body(&app_settings, &[], "你好", None).unwrap();
+        let body = chat_request_body(&app_settings, &[], "你好", None, None).unwrap();
         assert_eq!(body["model"], "");
     }
 
@@ -4956,14 +5184,14 @@ mod tests {
 
         let mut settings = AppSettings::default();
         settings.ai.provider = "anthropic".to_string();
-        let anthropic = chat_request_body(&settings, &[], "看图", Some(&capture)).unwrap();
+        let anthropic = chat_request_body(&settings, &[], "看图", Some(&capture), None).unwrap();
         assert_eq!(
             anthropic["messages"][0]["content"][1]["source"]["data"],
             "cG5n"
         );
 
         settings.ai.provider = "gemini".to_string();
-        let gemini = chat_request_body(&settings, &[], "看图", Some(&capture)).unwrap();
+        let gemini = chat_request_body(&settings, &[], "看图", Some(&capture), None).unwrap();
         assert_eq!(
             gemini["contents"][0]["parts"][1]["inlineData"]["mimeType"],
             "image/png"
