@@ -28,6 +28,11 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+// --- Module declarations for new features ---
+pub mod app_awareness;
+pub mod sync;
+pub mod memory;
+
 const PET_MARGIN: i32 = 16;
 const PET_MOVE_DEBOUNCE_MS: u64 = 220;
 const KEYRING_SERVICE: &str = "com.duanluyao.imrobot";
@@ -61,6 +66,10 @@ struct AppSettings {
     ai: AiSettings,
     #[serde(default)]
     has_api_key: bool,
+    #[serde(default)]
+    onboarding_completed: bool,
+    #[serde(default)]
+    onboarding_version: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -741,6 +750,8 @@ impl Default for AppSettings {
             sensing_paused: false,
             ai: AiSettings::default(),
             has_api_key: false,
+            onboarding_completed: false,
+            onboarding_version: String::new(),
         }
     }
 }
@@ -3424,6 +3435,35 @@ fn watch_idle_detection(app: &AppHandle) {
     });
 }
 
+/// Watch the foreground application and update pet behavior accordingly.
+fn watch_foreground_app(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || loop {
+        if let Some(name) = app_awareness::get_foreground_app_name() {
+            let category = app_awareness::classify(&name);
+            let state = app.state::<app_awareness::ForegroundAppState>();
+
+            // Update state
+            if let Ok(mut cat) = state.current_category.lock() {
+                *cat = category;
+            }
+            if let Ok(mut last) = state.last_app_name.lock() {
+                *last = Some(name.clone());
+            }
+
+            // Check if sensing is paused
+            let paused = state.sensing_paused.lock().map(|p| *p).unwrap_or(false);
+            if !paused {
+                let _ = app.emit_to("pet", "foreground-app-changed", json!({
+                    "category": format!("{category}"),
+                    "appName": name,
+                }));
+            }
+        }
+        thread::sleep(Duration::from_secs(5));
+    });
+}
+
 fn validate_save_path(path: &Path) -> Result<(), String> {
     const ALLOWED_EXTENSIONS: [&str; 12] = [
         "txt", "md", "json", "csv", "py", "js", "ts", "html", "css", "rs", "toml", "log",
@@ -4129,6 +4169,256 @@ fn chat_cancel(requests: State<'_, ChatRequests>, request_id: String) -> Result<
     Ok(())
 }
 
+// ============================================================================
+// ONBOARDING COMMANDS
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OnboardingStatus {
+    required: bool,
+    completed: bool,
+    version: String,
+}
+
+#[tauri::command]
+fn get_onboarding_status(app: AppHandle) -> OnboardingStatus {
+    let settings = read_settings(&app);
+    OnboardingStatus {
+        required: !settings.onboarding_completed,
+        completed: settings.onboarding_completed,
+        version: settings.onboarding_version.clone(),
+    }
+}
+
+#[tauri::command]
+fn complete_onboarding(
+    app: AppHandle,
+    companion_name: String,
+    onboarding_version: String,
+) -> Result<AppSettings, String> {
+    let mut settings = read_settings(&app);
+    settings.onboarding_completed = true;
+    settings.onboarding_version = onboarding_version;
+    if !companion_name.trim().is_empty() {
+        settings.companion_name = companion_name;
+    }
+    persist_settings(&app, &settings);
+    let _ = app.emit("settings-updated", &settings);
+    Ok(settings)
+}
+
+#[tauri::command]
+fn skip_onboarding(app: AppHandle) -> Result<AppSettings, String> {
+    let mut settings = read_settings(&app);
+    settings.onboarding_completed = true;
+    settings.onboarding_version = "skipped".to_string();
+    persist_settings(&app, &settings);
+    let _ = app.emit("settings-updated", &settings);
+    Ok(settings)
+}
+
+#[tauri::command]
+fn reset_onboarding(app: AppHandle) -> Result<AppSettings, String> {
+    let mut settings = read_settings(&app);
+    settings.onboarding_completed = false;
+    settings.onboarding_version = String::new();
+    persist_settings(&app, &settings);
+    let _ = app.emit("settings-updated", &settings);
+    Ok(settings)
+}
+
+// ============================================================================
+// FOREGROUND APP AWARENESS COMMANDS
+// ============================================================================
+
+#[tauri::command]
+fn get_foreground_app_state(
+    awareness: State<'_, crate::app_awareness::ForegroundAppState>,
+) -> Result<serde_json::Value, String> {
+    let category = awareness
+        .current_category
+        .lock()
+        .map_err(|_| "无法读取前台应用状态".to_string())?;
+    let sensing_paused = awareness
+        .sensing_paused
+        .lock()
+        .map_err(|_| "无法读取感知状态".to_string())?;
+    let app_name = awareness
+        .last_app_name
+        .lock()
+        .map_err(|_| "无法读取应用名称".to_string())?;
+
+    Ok(json!({
+        "category": format!("{:?}", category),
+        "appName": app_name.as_deref().unwrap_or(""),
+        "sensingPaused": *sensing_paused,
+    }))
+}
+
+#[tauri::command]
+fn toggle_foreground_sensing(
+    app: AppHandle,
+    awareness: State<'_, crate::app_awareness::ForegroundAppState>,
+    paused: bool,
+) -> Result<(), String> {
+    let mut sensing_paused = awareness
+        .sensing_paused
+        .lock()
+        .map_err(|_| "无法设置感知状态".to_string())?;
+    *sensing_paused = paused;
+    let _ = app.emit("foreground-sensing-changed", json!({ "paused": paused }));
+    Ok(())
+}
+
+// ============================================================================
+// DATA IMPORT/EXPORT COMMANDS
+// ============================================================================
+
+#[tauri::command]
+fn export_data(app: AppHandle) -> Result<serde_json::Value, String> {
+    let export = crate::sync::import_export::build_export_data(&app);
+    serde_json::to_value(export).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_to_file(app: AppHandle, file_path: String) -> Result<(), String> {
+    let path = std::path::Path::new(&file_path);
+    crate::sync::import_export::export_to_file(&app, path)
+}
+
+#[tauri::command]
+fn preview_import(file_path: String) -> Result<serde_json::Value, String> {
+    let path = std::path::Path::new(&file_path);
+    let preview = crate::sync::import_export::preview_import(path)?;
+    serde_json::to_value(preview).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_data(app: AppHandle, file_path: String) -> Result<serde_json::Value, String> {
+    let path = std::path::Path::new(&file_path);
+    let result = crate::sync::import_export::import_from_file(&app, path)?;
+    serde_json::to_value(result).map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// CALENDAR SYNC COMMANDS
+// ============================================================================
+
+#[tauri::command]
+fn get_calendar_sync_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    let mappings = crate::sync::calendar_sync::read_sync_mappings(&app);
+    let available = crate::sync::calendar_sync::is_sync_available();
+    let platform = crate::sync::calendar_sync::current_platform();
+
+    Ok(json!({
+        "platform": platform,
+        "available": available,
+        "mappingCount": mappings.len(),
+        "lastSync": mappings.iter().map(|m| m.last_synced_at).max(),
+    }))
+}
+
+#[tauri::command]
+fn sync_calendar_to_system(app: AppHandle) -> Result<serde_json::Value, String> {
+    let events = read_calendar_events(&app);
+    let pushed = crate::sync::calendar_sync::push_to_system_calendar(events.len())?;
+    Ok(json!({ "pushed": pushed }))
+}
+
+// ============================================================================
+// EXTENDED UPDATE COMMANDS
+// ============================================================================
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateStatus {
+    current_version: String,
+    latest_version: String,
+    available: bool,
+    release_url: String,
+    release_notes: Option<String>,
+    download_url: Option<String>,
+    asset_name: Option<String>,
+}
+
+#[tauri::command]
+async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
+    let base = check_for_updates().await?;
+
+    // Try to fetch more details from GitHub Releases
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get("https://api.github.com/repos/duanluyao/im-robot/releases/latest")
+        .header("User-Agent", "im-robot-update-checker")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !response.status().is_success() {
+        return Ok(UpdateStatus {
+            current_version: base.current_version,
+            latest_version: base.latest_version,
+            available: base.available,
+            release_url: base.release_url,
+            release_notes: None,
+            download_url: None,
+            asset_name: None,
+        });
+    }
+
+    let release: Value = response.json().await.map_err(|e| e.to_string())?;
+    let latest = release["tag_name"].as_str().unwrap_or("unknown").trim_start_matches('v').to_string();
+    let current = env!("CARGO_PKG_VERSION").to_string();
+
+    let available = version_parts(&latest) > version_parts(&current);
+
+    let release_notes = release["body"].as_str().map(|s| {
+        s.lines().take(10).collect::<Vec<_>>().join("\n")
+    });
+
+    let download_url = release["assets"]
+        .as_array()
+        .and_then(|assets| {
+            assets.iter()
+                .find(|asset| {
+                    let name = asset["name"].as_str().unwrap_or("");
+                    cfg!(target_os = "macos") && name.ends_with(".dmg")
+                        || cfg!(target_os = "windows") && name.ends_with(".exe")
+                })
+                .and_then(|asset| asset["browser_download_url"].as_str())
+                .map(String::from)
+        });
+
+    let asset_name = release["assets"]
+        .as_array()
+        .and_then(|assets| {
+            assets.iter()
+                .find(|asset| {
+                    let name = asset["name"].as_str().unwrap_or("");
+                    cfg!(target_os = "macos") && name.ends_with(".dmg")
+                        || cfg!(target_os = "windows") && name.ends_with(".exe")
+                })
+                .and_then(|asset| asset["name"].as_str())
+                .map(String::from)
+        });
+
+    Ok(UpdateStatus {
+        current_version: current,
+        latest_version: latest,
+        available,
+        release_url: release["html_url"].as_str().unwrap_or(&base.release_url).to_string(),
+        release_notes,
+        download_url,
+        asset_name,
+    })
+}
+
 fn configure_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show_pet = MenuItem::with_id(app, "show_pet", "Show Piko", true, None::<&str>)?;
     let hide_pet = MenuItem::with_id(app, "hide_pet", "Hide Piko", true, None::<&str>)?;
@@ -4200,6 +4490,7 @@ pub fn run() {
         .manage(IdleDetection::default())
         .manage(TextAttachmentStore::default())
         .manage(ScreenCaptureStore::default())
+        .manage(app_awareness::ForegroundAppState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -4208,11 +4499,20 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            // Initialize memory database
+            let memory_db = memory::init_memory_db(app.handle())
+                .expect("无法初始化内存数据库");
+            app.manage(memory_db);
+
             configure_tray(app)?;
             configure_global_shortcut(app)?;
             app.state::<PluginRegistry>()
                 .register_declarative_plugins(app.handle());
-            persist_settings(app.handle(), &read_settings(app.handle()));
+            let settings = read_settings(app.handle());
+            persist_settings(app.handle(), &settings);
+            if !settings.onboarding_completed {
+                show_and_focus(app.handle(), "panel");
+            }
             restore_pet_position(app.handle());
             watch_pet_position(app.handle());
             restore_bubble_size(app.handle());
@@ -4224,6 +4524,7 @@ pub fn run() {
             watch_focus_timer(app.handle());
             watch_ambient_nudges(app.handle());
             watch_idle_detection(app.handle());
+            watch_foreground_app(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -4241,6 +4542,7 @@ pub fn run() {
             get_settings,
             screen_capture_permission_status,
             check_for_updates,
+            check_for_updates_extended,
             list_chat_history,
             clear_chat_history,
             speak_local_text,
@@ -4272,7 +4574,26 @@ pub fn run() {
             update_ai_settings,
             list_models,
             chat_start,
-            chat_cancel
+            chat_cancel,
+            get_onboarding_status,
+            complete_onboarding,
+            skip_onboarding,
+            reset_onboarding,
+            get_foreground_app_state,
+            toggle_foreground_sensing,
+            export_data,
+            export_to_file,
+            preview_import,
+            import_data,
+            get_calendar_sync_status,
+            sync_calendar_to_system,
+            // Memory system
+            memory::list_memories,
+            memory::get_memory_detail,
+            memory::create_memory,
+            memory::update_memory,
+            memory::delete_memory,
+            memory::clear_memories
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piko desktop application");

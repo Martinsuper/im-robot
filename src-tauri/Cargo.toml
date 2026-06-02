@@ -30,8 +30,16 @@ tauri-plugin-autostart = "^2"
 screenshots = "0.8.10"
 base64 = "0.22"
 tauri-plugin-dialog = "^2"
+rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3"
 core-graphics = "0.23"
+objc2-foundation = "0.3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }

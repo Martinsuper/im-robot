@@ -17,6 +17,8 @@ import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { OnboardingWindow } from "./features/onboarding/OnboardingWindow";
+import { MemoryCenter } from "./features/memory/MemoryCenter";
 import { initialPetState, reducePetState } from "./features/pet/petState";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -906,6 +908,11 @@ function PanelWindow() {
   const [externalPlugins, setExternalPlugins] = useState<InstalledPlugin[]>([]);
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusState, setFocusState] = useState<FocusSnapshot>(defaultFocusSnapshot);
+  const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus>({
+    required: false,
+    completed: true,
+    version: "",
+  });
   const statuses = useMemo(
     () => [
       ["桌面精灵", "在线"],
@@ -932,6 +939,11 @@ function PanelWindow() {
     void runCommand<CalendarEvent[]>("list_calendar_events", undefined, []).then(setCalendarEvents);
     void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, []).then(setExternalPlugins);
     void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
+    void runCommand<OnboardingStatus>("get_onboarding_status", undefined, {
+      required: false,
+      completed: true,
+      version: "",
+    }).then(setOnboardingStatus);
     void runCommand<string>("screen_capture_permission_status", undefined, "截图时按需申请").then(
       setScreenCapturePermission,
     );
@@ -955,6 +967,13 @@ function PanelWindow() {
     const unlistenFocus = listen<FocusSnapshot>("focus-updated", (event) => {
       setFocusState(event.payload);
     });
+    const unlistenSettings = listen<AppSettings>("settings-updated", (event) => {
+      setQuietMode(event.payload.quietMode);
+      setAiSettings(event.payload.ai);
+      setCompanionName(event.payload.companionName);
+      setTheme(event.payload.theme);
+      setSensingPaused(event.payload.sensingPaused);
+    });
     const refreshFocus = window.setInterval(() => {
       void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
     }, 1000);
@@ -963,9 +982,20 @@ function PanelWindow() {
       void unlistenHistory.then((dispose) => dispose());
       void unlistenCalendar.then((dispose) => dispose());
       void unlistenFocus.then((dispose) => dispose());
+      void unlistenSettings.then((dispose) => dispose());
       window.clearInterval(refreshFocus);
     };
   }, []);
+
+  async function refreshOnboardingStatus() {
+    const status = await runCommand<OnboardingStatus>("get_onboarding_status", undefined, {
+      required: false,
+      completed: true,
+      version: "",
+    });
+    setOnboardingStatus(status);
+    return status;
+  }
 
   function updateQuietMode(mode: QuietMode) {
     setQuietMode(mode);
@@ -1168,6 +1198,19 @@ function PanelWindow() {
     } catch (error) {
       setUpdateStatus(`检查更新失败：${String(error)}`);
     }
+  }
+
+  if (onboardingStatus.required) {
+    return (
+      <OnboardingWindow
+        onComplete={() => {
+          void refreshOnboardingStatus();
+        }}
+        onSkip={() => {
+          void refreshOnboardingStatus();
+        }}
+      />
+    );
   }
 
   return (
@@ -1401,6 +1444,17 @@ function PanelWindow() {
           <button type="button" onClick={() => void savePreferences()}>
             保存个性化设置
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              void runCommand<AppSettings>("reset_onboarding", undefined, {
+                ...defaultAppSettings,
+                companionName,
+              }).then(() => refreshOnboardingStatus());
+            }}
+          >
+            重新运行引导
+          </button>
           {preferencesStatus && <p className="connection-status">{preferencesStatus}</p>}
         </div>
       </section>
@@ -1573,6 +1627,10 @@ function PanelWindow() {
         )}
       </section>
 
+      <section className={panelSectionClass("memory")}>
+        <MemoryCenter />
+      </section>
+
     </main>
   );
 }
@@ -1678,8 +1736,14 @@ interface InstalledPlugin {
 
 type AttachmentAction = "summarize" | "translate" | "explain";
 type Theme = "sage" | "blue" | "peach";
-type PanelTab = "companion" | "settings" | "reminders" | "calendar" | "history" | "about";
+type PanelTab = "companion" | "settings" | "reminders" | "calendar" | "history" | "memory" | "about";
 type ReminderRepeat = "none" | "daily" | "weekly" | "weekdays";
+
+interface OnboardingStatus {
+  required: boolean;
+  completed: boolean;
+  version: string;
+}
 
 type ChatEvent =
   | { type: "started"; requestId: string; working: boolean }
@@ -1750,6 +1814,7 @@ const panelTabOptions: Array<{ label: string; value: PanelTab }> = [
   { label: "提醒", value: "reminders" },
   { label: "日程", value: "calendar" },
   { label: "历史", value: "history" },
+  { label: "记忆", value: "memory" },
   { label: "关于", value: "about" },
 ];
 
