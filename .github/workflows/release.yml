@@ -59,8 +59,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p upload
+          # Without Apple signing/notarization this is a test-only macOS bundle.
           cp src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg upload/ 2>/dev/null || true
-          cp -r src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app upload/ 2>/dev/null || true
 
       - name: Collect Windows artifacts
         if: runner.os == 'Windows'
@@ -100,5 +100,5 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          files: release-assets/**/*
+          files: release-assets/*
           generate_release_notes: true

@@ -42,6 +42,10 @@ npm install
 npm run tauri dev
 ```
 
+## 发布说明
+
+如果没有 Apple Developer 证书和公证信息，GitHub Actions 生成的 macOS 安装包只能作为测试版分发，用户在首次打开时可能仍需要手动放行。
+
 ## 文档
 
 - [产品实施基线](docs/desktop-ai-pet-assistant-spec.md)
