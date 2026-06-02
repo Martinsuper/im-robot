@@ -639,6 +639,20 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   font-size: 9px; font-weight: 700;
 }
 .memory-delete-btn:hover { background: rgba(194, 84, 73, .18); }
+  font-weight: 600;
+}
+
+.memory-card__actions { justify-self: end; }
+.memory-delete-btn {
+  border: 0;
+  border-radius: 6px;
+  padding: 2px 7px;
+  color: #c25449;
+  background: rgba(194, 84, 73, .08);
+  font-size: 9px;
+  font-weight: 700;
+}
+.memory-delete-btn:hover { background: rgba(194, 84, 73, .18); }
 
 @keyframes sprite-frames {
   from { background-position: 0 calc(-208px * var(--sprite-row)); }
