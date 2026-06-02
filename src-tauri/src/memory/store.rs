@@ -780,4 +780,314 @@ impl MemoryDb {
         Ok(rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?)
     }
+
+    // === Phase 3+: Reflection helpers ===
+
+    pub fn get_in_range(&self, start: u64, end: u64) -> Result<Vec<MemoryItem>, String> {
+        let db = self
+            .0
+            .lock()
+            .map_err(|_| "数据库锁获取失败".to_string())?;
+
+        let mut stmt = db
+            .prepare(&format!(
+                "{SELECT_COLS} FROM memory_items \
+                 WHERE created_at >= ?1 AND created_at < ?2 AND status = 'Active' \
+                 ORDER BY updated_at DESC"
+            ))
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map(params![start, end], row_to_memory_item)
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?)
+    }
+
+    pub fn save_summary(&self, summary: &ReflectionSummary) -> Result<(), String> {
+        let db = self
+            .0
+            .lock()
+            .map_err(|_| "数据库锁获取失败".to_string())?;
+
+        db.execute(
+            "INSERT INTO memory_summaries (id, summary_type, content, created_at, period_start, period_end) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                summary.id,
+                summary.summary_type,
+                summary.content,
+                summary.created_at,
+                summary.period_start,
+                summary.period_end,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    pub fn get_summaries(&self, summary_type: Option<&str>, limit: usize) -> Result<Vec<ReflectionSummary>, String> {
+        let db = self
+            .0
+            .lock()
+            .map_err(|_| "数据库锁获取失败".to_string())?;
+
+        let (sql, params_count) = match summary_type {
+            Some(st) => (
+                "SELECT id, summary_type, content, created_at, period_start, period_end \
+                 FROM memory_summaries WHERE summary_type = ?1 \
+                 ORDER BY created_at DESC LIMIT ?2",
+                2,
+            ),
+            None => (
+                "SELECT id, summary_type, content, created_at, period_start, period_end \
+                 FROM memory_summaries \
+                 ORDER BY created_at DESC LIMIT ?1",
+                1,
+            ),
+        };
+
+        let mut stmt = db.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = match summary_type {
+            Some(st) => stmt.query_map(params![st, limit], |row| {
+                Ok(ReflectionSummary {
+                    id: row.get(0)?,
+                    summary_type: row.get(1)?,
+                    content: row.get(2)?,
+                    created_at: row.get(3)?,
+                    period_start: row.get(4)?,
+                    period_end: row.get(5)?,
+                })
+            }),
+            None => stmt.query_map(params![limit], |row| {
+                Ok(ReflectionSummary {
+                    id: row.get(0)?,
+                    summary_type: row.get(1)?,
+                    content: row.get(2)?,
+                    created_at: row.get(3)?,
+                    period_start: row.get(4)?,
+                    period_end: row.get(5)?,
+                })
+            }),
+        }
+        .map_err(|e| e.to_string())?;
+
+        Ok(rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?)
+    }
+
+    pub fn update_with_full(
+        &self,
+        id: &str,
+        content: &str,
+        importance: u8,
+        tags: &[String],
+    ) -> Result<MemoryItem, String> {
+        let db = self
+            .0
+            .lock()
+            .map_err(|_| "数据库锁获取失败".to_string())?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let tags_json = serde_json::to_string(tags).map_err(|e| e.to_string())?;
+
+        db.execute(
+            "UPDATE memory_items SET content = ?1, importance = ?2, tags = ?3, updated_at = ?4 \
+             WHERE id = ?5",
+            params![content, importance, tags_json, now, id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        drop(db);
+        self.get(id)?
+            .ok_or_else(|| "更新后找不到记忆".to_string())
+    }
+
+    // === Phase 3+: Expiration & Auto-archival ===
+
+    pub fn expire_old_memories(&self) -> Result<usize, String> {
+        let db = self
+            .0
+            .lock()
+            .map_err(|_| "数据库锁获取失败".to_string())?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let archived_str = serde_json::to_string(&MemoryStatus::Archived).map_err(|e| e.to_string())?;
+
+        db.execute(
+            "UPDATE memory_items SET status = ?1, updated_at = ?2 \
+             WHERE expires_at IS NOT NULL AND expires_at < ?3 AND status = 'Active'",
+            params![archived_str, now, now],
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn recalculate_confidence(&self) -> Result<usize, String> {
+        let db = self
+            .0
+            .lock()
+            .map_err(|_| "数据库锁获取失败".to_string())?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Recalculate recency score based on decay
+        let affected = db.execute(
+            "UPDATE memory_items SET \
+             recency_score = MAX(0.1, 1.0 / (1.0 + 0.02 * ((?1 - updated_at) / 86400.0))), \
+             updated_at = ?1 \
+             WHERE status = 'Active'",
+            params![now],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(affected)
+    }
+
+    // === Import/Export ===
+
+    pub fn export_all(&self) -> Result<(Vec<MemoryItem>, Vec<MemoryRelation>), String> {
+        let db = self
+            .0
+            .lock()
+            .map_err(|_| "数据库锁获取失败".to_string())?;
+
+        let mut stmt = db
+            .prepare(&format!(
+                "{SELECT_COLS} FROM memory_items ORDER BY created_at DESC"
+            ))
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![], row_to_memory_item)
+            .map_err(|e| e.to_string())?;
+        let memories = rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        let mut rel_stmt = db
+            .prepare("SELECT from_id, to_id, relation_type FROM memory_relations")
+            .map_err(|e| e.to_string())?;
+        let rel_rows = rel_stmt
+            .query_map(params![], |row| {
+                Ok(MemoryRelation {
+                    from_id: row.get(0)?,
+                    to_id: row.get(1)?,
+                    relation_type: row.get(2)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        let relations = rel_rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        Ok((memories, relations))
+    }
+
+    pub fn import_memories(
+        &self,
+        memories: &[MemoryItem],
+        relations: &[MemoryRelation],
+        mode: &str,
+    ) -> Result<usize, String> {
+        let db = self
+            .0
+            .lock()
+            .map_err(|_| "数据库锁获取失败".to_string())?;
+
+        let mut count = 0;
+
+        for item in memories {
+            if mode == "replace" {
+                // Delete existing and insert new
+                let _ = db.execute("DELETE FROM memory_items WHERE id = ?1", params![item.id]);
+                let tags_json = serde_json::to_string(&item.tags).map_err(|e| e.to_string())?;
+                let memory_type_str = serde_json::to_string(&item.memory_type).map_err(|e| e.to_string())?;
+                let source_str = serde_json::to_string(&item.source).map_err(|e| e.to_string())?;
+                let privacy_str = serde_json::to_string(&item.privacy_level).map_err(|e| e.to_string())?;
+                let status_str = serde_json::to_string(&item.status).map_err(|e| e.to_string())?;
+
+                db.execute(
+                    "INSERT INTO memory_items \
+                     (id, memory_type, title, content, source, importance, \
+                      confidence, recency_score, privacy_level, status, \
+                      created_at, updated_at, last_used_at, expires_at, tags, embedding_id, is_pinned) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                    params![
+                        item.id, memory_type_str, item.title, item.content, source_str,
+                        item.importance, item.confidence, item.recency_score, privacy_str,
+                        status_str, item.created_at, item.updated_at, item.last_used_at,
+                        item.expires_at, tags_json, item.embedding_id, if item.is_pinned { 1 } else { 0 },
+                    ],
+                ).map_err(|e| e.to_string())?;
+                count += 1;
+            } else {
+                // merge: only insert if not exists
+                let exists: bool = db
+                    .query_row("SELECT 1 FROM memory_items WHERE id = ?1", params![item.id], |row| {
+                        row.get::<_, i32>(0)
+                    })
+                    .optional()
+                    .map_err(|e| e.to_string())?
+                    .is_some();
+
+                if !exists {
+                    let tags_json = serde_json::to_string(&item.tags).map_err(|e| e.to_string())?;
+                    let memory_type_str = serde_json::to_string(&item.memory_type).map_err(|e| e.to_string())?;
+                    let source_str = serde_json::to_string(&item.source).map_err(|e| e.to_string())?;
+                    let privacy_str = serde_json::to_string(&item.privacy_level).map_err(|e| e.to_string())?;
+                    let status_str = serde_json::to_string(&item.status).map_err(|e| e.to_string())?;
+
+                    db.execute(
+                        "INSERT OR IGNORE INTO memory_items \
+                         (id, memory_type, title, content, source, importance, \
+                          confidence, recency_score, privacy_level, status, \
+                          created_at, updated_at, last_used_at, expires_at, tags, embedding_id, is_pinned) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                        params![
+                            item.id, memory_type_str, item.title, item.content, source_str,
+                            item.importance, item.confidence, item.recency_score, privacy_str,
+                            status_str, item.created_at, item.updated_at, item.last_used_at,
+                            item.expires_at, tags_json, item.embedding_id, if item.is_pinned { 1 } else { 0 },
+                        ],
+                    ).map_err(|e| e.to_string())?;
+                    count += 1;
+                }
+            }
+        }
+
+        // Import relations
+        for rel in relations {
+            let _ = db.execute(
+                "INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation_type) VALUES (?1, ?2, ?3)",
+                params![rel.from_id, rel.to_id, rel.relation_type],
+            );
+        }
+
+        Ok(count)
+    }
+
+    pub fn add_relation_direct(&self, from_id: &str, to_id: &str, relation_type: &str) -> Result<(), String> {
+        let db = self
+            .0
+            .lock()
+            .map_err(|_| "数据库锁获取失败".to_string())?;
+
+        db.execute(
+            "INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation_type) VALUES (?1, ?2, ?3)",
+            params![from_id, to_id, relation_type],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
 }
