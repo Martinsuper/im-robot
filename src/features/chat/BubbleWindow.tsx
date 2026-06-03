@@ -1,4 +1,4 @@
-import { FormEvent, isValidElement, type ReactNode, useEffect, useRef, useState } from "react";
+import { FormEvent, isValidElement, type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -107,6 +107,15 @@ export function BubbleWindow() {
     : pendingPromptSummary.hasScreenshot
       ? "正在分析截图并生成回复"
       : "正在生成回复";
+
+  function startBubbleDrag(event: PointerEvent<HTMLElement>) {
+    if (!isTauriRuntime || event.button !== 0) return;
+
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, textarea, select, a, [data-no-drag]")) return;
+
+    void getCurrentWindow().startDragging();
+  }
 
   function clearSkeletonHideTimer() {
     if (skeletonHideTimer.current) {
@@ -491,7 +500,7 @@ export function BubbleWindow() {
 
   return (
     <main className={`bubble-shell bubble-shell--${theme}`}>
-      <header className="bubble-header">
+      <header className="bubble-header" onPointerDown={startBubbleDrag}>
         <div className="companion-heading">
           <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
           <div>

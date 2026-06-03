@@ -5,8 +5,6 @@ import type {
   AttachmentAction,
   CalendarEvent,
   FocusSnapshot,
-  DesktopOrganizePlan,
-  DesktopOrganizeResult,
   PanelTab,
   QuietMode,
   ReminderRepeat,
@@ -128,24 +126,6 @@ export const defaultWorkRhythmState: WorkRhythmState = {
   focusStatus: "idle",
   focusKind: "focus",
   focusRemainingSeconds: 0,
-};
-
-export const defaultDesktopOrganizePlan: DesktopOrganizePlan = {
-  id: "",
-  desktopDir: "",
-  plannedMoves: [],
-  createdFolders: [],
-  skippedItems: [],
-  createdAt: 0,
-  status: "draft",
-};
-
-export const defaultDesktopOrganizeResult: DesktopOrganizeResult = {
-  planId: "",
-  movedCount: 0,
-  skippedCount: 0,
-  createdFolders: [],
-  errors: [],
 };
 
 export const providerOptions = [

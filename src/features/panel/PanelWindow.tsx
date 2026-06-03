@@ -12,9 +12,6 @@ import type {
   CalendarEvent,
   CalendarSyncStatus,
   ChatHistoryEntry,
-  DesktopItem,
-  DesktopOrganizePlan,
-  DesktopOrganizeResult,
   FocusSnapshot,
   InstalledPlugin,
   ModelInfo,
@@ -35,8 +32,6 @@ import {
   defaultCalendarEndTime,
   defaultCalendarStartTime,
   defaultFocusSnapshot,
-  defaultDesktopOrganizePlan,
-  defaultDesktopOrganizeResult,
   defaultReminderTime,
   defaultWorkRhythmState,
   formatDuration,
@@ -50,6 +45,55 @@ import {
   reminderRepeatOptions,
 } from "../app/appShared";
 import { isTauriRuntime, runCommand, runCommandAndRefresh } from "../app/appRuntime";
+
+type ChatHistoryFilter = "all" | "attachment" | "screenshot" | "code" | "link" | "long";
+
+const chatHistoryFilterOptions: Array<{ label: string; value: ChatHistoryFilter }> = [
+  { label: "全部", value: "all" },
+  { label: "附件", value: "attachment" },
+  { label: "截图", value: "screenshot" },
+  { label: "代码", value: "code" },
+  { label: "链接", value: "link" },
+  { label: "长回复", value: "long" },
+];
+
+function getChatHistoryTags(entry: ChatHistoryEntry): ChatHistoryFilter[] {
+  const text = `${entry.prompt}\n${entry.response}`;
+  const tags: ChatHistoryFilter[] = [];
+
+  if (entry.prompt.includes("[附件")) tags.push("attachment");
+  if (entry.prompt.includes("[截图")) tags.push("screenshot");
+  if (/```|<\/?[a-z][\s\S]*>/i.test(text)) tags.push("code");
+  if (/https?:\/\//i.test(text)) tags.push("link");
+  if (entry.response.length > 600) tags.push("long");
+
+  return tags;
+}
+
+function chatHistoryFilterLabel(filter: ChatHistoryFilter) {
+  return chatHistoryFilterOptions.find((option) => option.value === filter)?.label ?? filter;
+}
+
+function formatChatHistoryTime(timestamp: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp * 1000);
+}
+
+function summarizeChatText(text: string, fallback: string) {
+  const normalized = text.replace(/\s+/g, " ").trim() || fallback;
+  return normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
+}
+
+function chatHistoryMatchesSearch(entry: ChatHistoryEntry, search: string) {
+  const keyword = search.trim().toLocaleLowerCase();
+  if (!keyword) return true;
+
+  return `${entry.prompt}\n${entry.response}`.toLocaleLowerCase().includes(keyword);
+}
 
 export function PanelWindow() {
   const [panelTab, setPanelTab] = useState<PanelTab>("companion");
@@ -77,6 +121,9 @@ export function PanelWindow() {
   const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
   const [isTesting, setIsTesting] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] = useState("");
+  const [historyFilter, setHistoryFilter] = useState<ChatHistoryFilter>("all");
+  const [historySearch, setHistorySearch] = useState("");
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [reminderTitle, setReminderTitle] = useState("");
   const [reminderDueAt, setReminderDueAt] = useState(defaultReminderTime);
@@ -96,14 +143,6 @@ export function PanelWindow() {
   });
   const [calendarSyncNotice, setCalendarSyncNotice] = useState("");
   const [externalPlugins, setExternalPlugins] = useState<InstalledPlugin[]>([]);
-  const [desktopItems, setDesktopItems] = useState<DesktopItem[]>([]);
-  const [desktopItemsError, setDesktopItemsError] = useState("");
-  const [desktopOrganizePlan, setDesktopOrganizePlan] = useState<DesktopOrganizePlan>(defaultDesktopOrganizePlan);
-  const [desktopOrganizePlanError, setDesktopOrganizePlanError] = useState("");
-  const [desktopOrganizeResult, setDesktopOrganizeResult] = useState<DesktopOrganizeResult>(
-    defaultDesktopOrganizeResult,
-  );
-  const [desktopOrganizeBusy, setDesktopOrganizeBusy] = useState(false);
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusState, setFocusState] = useState<FocusSnapshot>(defaultFocusSnapshot);
   const [workRhythmState, setWorkRhythmState] = useState<WorkRhythmState>(defaultWorkRhythmState);
@@ -123,6 +162,19 @@ export function PanelWindow() {
   );
   const panelSectionClass = (tab: PanelTab, base = "panel-card") =>
     `${base}${panelTab === tab ? "" : " is-hidden"}`;
+  const filteredChatHistory = useMemo(
+    () => {
+      return chatHistory.filter((entry) => {
+        const matchesFilter = historyFilter === "all" || getChatHistoryTags(entry).includes(historyFilter);
+        return matchesFilter && chatHistoryMatchesSearch(entry, historySearch);
+      });
+    },
+    [chatHistory, historyFilter, historySearch],
+  );
+  const selectedHistoryEntry = useMemo(() => {
+    if (!filteredChatHistory.length) return undefined;
+    return filteredChatHistory.find((entry) => entry.id === selectedHistoryId) ?? filteredChatHistory[0];
+  }, [filteredChatHistory, selectedHistoryId]);
 
   async function loadChatHistory() {
     const items = await runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []);
@@ -152,65 +204,6 @@ export function PanelWindow() {
   async function loadWorkRhythmState() {
     const state = await runCommand<WorkRhythmState>("get_work_rhythm_state", undefined, defaultWorkRhythmState);
     setWorkRhythmState(state);
-  }
-
-  async function loadDesktopItems() {
-    setDesktopItemsError("");
-    try {
-      const items = await runCommand<DesktopItem[]>("list_desktop_items", undefined, []);
-      setDesktopItems(items);
-    } catch (error) {
-      setDesktopItems([]);
-      setDesktopItemsError(String(error));
-    }
-  }
-
-  async function buildDesktopOrganizePlan() {
-    setDesktopOrganizePlanError("");
-    setDesktopOrganizeResult(defaultDesktopOrganizeResult);
-    try {
-      const plan = await runCommand<DesktopOrganizePlan>(
-        "build_desktop_organize_plan",
-        undefined,
-        defaultDesktopOrganizePlan,
-      );
-      setDesktopOrganizePlan(plan);
-    } catch (error) {
-      setDesktopOrganizePlan(defaultDesktopOrganizePlan);
-      setDesktopOrganizePlanError(String(error));
-    }
-  }
-
-  async function executeDesktopOrganizePlan() {
-    if (!desktopOrganizePlan.id) return;
-    if (!window.confirm("确认执行桌面整理？文件将按预览方案移动。")) return;
-
-    setDesktopOrganizeBusy(true);
-    setDesktopOrganizePlanError("");
-    try {
-      const result = await runCommand<DesktopOrganizeResult>(
-        "execute_desktop_organize_plan",
-        { input: { planId: desktopOrganizePlan.id } },
-        defaultDesktopOrganizeResult,
-      );
-      setDesktopOrganizeResult(result);
-      setDesktopOrganizePlan((current) => ({ ...current, status: "completed" }));
-      await loadDesktopItems();
-    } catch (error) {
-      setDesktopOrganizePlanError(String(error));
-      setDesktopOrganizeResult(defaultDesktopOrganizeResult);
-    } finally {
-      setDesktopOrganizeBusy(false);
-    }
-  }
-
-  async function openDesktopPath(path: string) {
-    setDesktopItemsError("");
-    try {
-      await runCommand("open_path", { path });
-    } catch (error) {
-      setDesktopItemsError(String(error));
-    }
   }
 
   async function createReminderAndRefresh(input: { title: string; dueAt: number; repeat: ReminderRepeat }) {
@@ -264,7 +257,6 @@ export function PanelWindow() {
     void loadCalendarEvents();
     void loadCalendarSyncStatus();
     void loadWorkRhythmState();
-    void loadDesktopItems();
     void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, []).then(setExternalPlugins);
     void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
     void runCommand<OnboardingStatus>("get_onboarding_status", undefined, {
@@ -298,19 +290,6 @@ export function PanelWindow() {
     const unlistenWorkRhythm = listen<WorkRhythmState>("work-rhythm-updated", (event) => {
       setWorkRhythmState(event.payload);
     });
-    const unlistenDesktopItems = listen("desktop-items-updated", () => {
-      void loadDesktopItems();
-    });
-    const unlistenDesktopPlan = listen<DesktopOrganizePlan>("desktop-organize-planned", (event) => {
-      setDesktopOrganizePlan(event.payload);
-    });
-    const unlistenDesktopCompleted = listen<DesktopOrganizeResult>(
-      "desktop-organize-completed",
-      (event) => {
-        setDesktopOrganizeResult(event.payload);
-        setDesktopOrganizePlan((current) => ({ ...current, status: "completed" }));
-      },
-    );
     const unlistenTyping = listen("typing-stats-updated", () => {
       void loadWorkRhythmState();
     });
@@ -340,15 +319,22 @@ export function PanelWindow() {
       void unlistenCalendar.then((dispose) => dispose());
       void unlistenCalendarSync.then((dispose) => dispose());
       void unlistenWorkRhythm.then((dispose) => dispose());
-      void unlistenDesktopItems.then((dispose) => dispose());
-      void unlistenDesktopPlan.then((dispose) => dispose());
-      void unlistenDesktopCompleted.then((dispose) => dispose());
       void unlistenTyping.then((dispose) => dispose());
       void unlistenFocus.then((dispose) => dispose());
       void unlistenSettings.then((dispose) => dispose());
       window.clearInterval(refreshFocus);
     };
   }, []);
+
+  useEffect(() => {
+    if (!filteredChatHistory.length) {
+      setSelectedHistoryId("");
+      return;
+    }
+    if (!filteredChatHistory.some((entry) => entry.id === selectedHistoryId)) {
+      setSelectedHistoryId(filteredChatHistory[0].id);
+    }
+  }, [filteredChatHistory, selectedHistoryId]);
 
   async function refreshOnboardingStatus() {
     const status = await runCommand<OnboardingStatus>("get_onboarding_status", undefined, {
@@ -718,7 +704,7 @@ export function PanelWindow() {
           <div><span>通知权限</span><strong>{notificationPermission}</strong></div>
           <div><span>文件访问</span><strong>仅主动拖入</strong></div>
           <div><span>屏幕录制</span><strong>{screenCapturePermission}</strong></div>
-          <div><span>主动感知</span><strong>{sensingPaused ? "已暂停" : "未启用持续感知"}</strong></div>
+          <div><span>主动感知</span><strong>{sensingPaused ? "已暂停" : "运行中"}</strong></div>
         </div>
       </section>
 
@@ -1011,10 +997,10 @@ export function PanelWindow() {
           <label className="setting-toggle">
             <input
               type="checkbox"
-              checked={sensingPaused}
-              onChange={(event) => setSensingPaused(event.currentTarget.checked)}
+              checked={!sensingPaused}
+              onChange={(event) => setSensingPaused(!event.currentTarget.checked)}
             />
-            <span>暂停主动感知</span>
+            <span>主动感知</span>
           </label>
           <label className="setting-toggle">
             <input
@@ -1040,168 +1026,6 @@ export function PanelWindow() {
           </button>
           {preferencesStatus && <p className="connection-status">{preferencesStatus}</p>}
         </div>
-      </section>
-
-      <section className={panelSectionClass("settings")}>
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">DESKTOP ACCESS</p>
-            <h2>桌面概览</h2>
-          </div>
-          <div className="section-heading__actions">
-            <button type="button" onClick={() => void loadDesktopItems()}>
-              刷新
-            </button>
-          </div>
-        </div>
-        <p className="empty-state">仅列出桌面当前可见项目，打开操作会调用系统默认应用。</p>
-        {desktopItemsError && <p className="reminder-error">{desktopItemsError}</p>}
-        {desktopItems.length ? (
-          <ul className="history-list">
-            {desktopItems.map((item) => (
-              <li key={item.path}>
-                <div>
-                  <strong>{item.name}</strong>
-                  <span>
-                    {item.itemType} · {item.category}
-                  </span>
-                </div>
-                <button type="button" onClick={() => void openDesktopPath(item.path)}>
-                  打开
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="empty-state">桌面当前没有可列出的项目，或桌面目录暂时不可访问。</p>
-        )}
-      </section>
-
-      <section className={panelSectionClass("settings")}>
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">DESKTOP PLAN</p>
-            <h2>整理计划预览</h2>
-          </div>
-          <div className="section-heading__actions">
-            <button type="button" onClick={() => void buildDesktopOrganizePlan()}>
-              生成计划
-            </button>
-          </div>
-        </div>
-        <p className="empty-state">这里只生成预览，不会移动任何文件。确认后再进入执行步骤。</p>
-        {desktopOrganizePlanError && <p className="reminder-error">{desktopOrganizePlanError}</p>}
-        {desktopOrganizePlan.id ? (
-          <div className="panel-plan">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">EXECUTION</p>
-                <h3>{desktopOrganizePlan.status === "completed" ? "整理已完成" : "准备执行"}</h3>
-              </div>
-              <div className="section-heading__actions">
-                <button
-                  type="button"
-                  disabled={desktopOrganizeBusy || desktopOrganizePlan.status === "completed"}
-                  onClick={() => void executeDesktopOrganizePlan()}
-                >
-                  {desktopOrganizeBusy ? "正在执行..." : desktopOrganizePlan.status === "completed" ? "已执行" : "确认执行"}
-                </button>
-              </div>
-            </div>
-            <div className="status-grid">
-              <div className="status-item">
-                <span>计划 ID</span>
-                <strong>{desktopOrganizePlan.id}</strong>
-              </div>
-              <div className="status-item">
-                <span>移动数量</span>
-                <strong>{desktopOrganizePlan.plannedMoves.length}</strong>
-              </div>
-              <div className="status-item">
-                <span>创建文件夹</span>
-                <strong>{desktopOrganizePlan.createdFolders.length}</strong>
-              </div>
-              <div className="status-item">
-                <span>跳过项目</span>
-                <strong>{desktopOrganizePlan.skippedItems.length}</strong>
-              </div>
-            </div>
-            {desktopOrganizePlan.createdFolders.length > 0 && (
-              <>
-                <p className="eyebrow">将创建的文件夹</p>
-                <ul className="history-list">
-                  {desktopOrganizePlan.createdFolders.map((folder) => (
-                    <li key={folder}>
-                      <strong>{folder}</strong>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {desktopOrganizePlan.plannedMoves.length > 0 && (
-              <>
-                <p className="eyebrow">计划移动</p>
-                <ul className="history-list">
-                  {desktopOrganizePlan.plannedMoves.map((move) => (
-                    <li key={`${move.from}-${move.to}`}>
-                      <div>
-                        <strong>{move.from}</strong>
-                        <span>{move.category}</span>
-                      </div>
-                      <span>{move.to}</span>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {desktopOrganizePlan.skippedItems.length > 0 && (
-              <>
-                <p className="eyebrow">已跳过</p>
-                <ul className="history-list">
-                  {desktopOrganizePlan.skippedItems.map((item) => (
-                    <li key={item}>
-                      <strong>{item}</strong>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {(desktopOrganizeResult.movedCount > 0 || desktopOrganizeResult.errors.length > 0) && (
-              <>
-                <p className="eyebrow">执行结果</p>
-                <div className="status-grid">
-                  <div className="status-item">
-                    <span>实际移动</span>
-                    <strong>{desktopOrganizeResult.movedCount}</strong>
-                  </div>
-                  <div className="status-item">
-                    <span>执行跳过</span>
-                    <strong>{desktopOrganizeResult.skippedCount}</strong>
-                  </div>
-                  <div className="status-item">
-                    <span>执行创建</span>
-                    <strong>{desktopOrganizeResult.createdFolders.length}</strong>
-                  </div>
-                  <div className="status-item">
-                    <span>执行错误</span>
-                    <strong>{desktopOrganizeResult.errors.length}</strong>
-                  </div>
-                </div>
-                {desktopOrganizeResult.errors.length > 0 && (
-                  <ul className="history-list">
-                    {desktopOrganizeResult.errors.map((error) => (
-                      <li key={error}>
-                        <strong>{error}</strong>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-          </div>
-        ) : (
-          <p className="empty-state">还没有生成整理计划。</p>
-        )}
       </section>
 
       <section className={panelSectionClass("reminders")}>
@@ -1373,14 +1197,88 @@ export function PanelWindow() {
           </button>
         </div>
         {chatHistory.length ? (
-          <ul className="history-list">
-            {chatHistory.map((entry) => (
-              <li key={entry.id}>
-                <strong>{entry.prompt}</strong>
-                <span>{entry.response || "没有返回文本"}</span>
-              </li>
-            ))}
-          </ul>
+          <div className="chat-history-browser">
+            <div className="chat-history-search">
+              <input
+                value={historySearch}
+                onChange={(event) => setHistorySearch(event.currentTarget.value)}
+                placeholder="搜索历史对话"
+                aria-label="搜索历史对话"
+              />
+              {historySearch.trim() && (
+                <button type="button" onClick={() => setHistorySearch("")}>
+                  清空
+                </button>
+              )}
+            </div>
+            <div className="history-filter-bar" aria-label="历史筛选">
+              {chatHistoryFilterOptions.map((option) => {
+                const count =
+                  option.value === "all"
+                    ? chatHistory.filter((entry) => chatHistoryMatchesSearch(entry, historySearch)).length
+                    : chatHistory.filter(
+                        (entry) =>
+                          getChatHistoryTags(entry).includes(option.value) &&
+                          chatHistoryMatchesSearch(entry, historySearch),
+                      ).length;
+                return (
+                  <button
+                    className={historyFilter === option.value ? "is-active" : ""}
+                    disabled={count === 0}
+                    key={option.value}
+                    type="button"
+                    onClick={() => setHistoryFilter(option.value)}
+                  >
+                    {option.label}
+                    <span>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {filteredChatHistory.length ? (
+              <div className="chat-history-layout">
+                <ul className="history-list chat-history-list" aria-label="最近对话列表">
+                  {filteredChatHistory.map((entry) => {
+                    const tags = getChatHistoryTags(entry);
+                    return (
+                      <li className={entry.id === selectedHistoryEntry?.id ? "is-active" : ""} key={entry.id}>
+                        <button type="button" onClick={() => setSelectedHistoryId(entry.id)}>
+                          <span className="chat-history-list__time">{formatChatHistoryTime(entry.createdAt)}</span>
+                          <strong>{summarizeChatText(entry.prompt, "未命名对话")}</strong>
+                          <span>{summarizeChatText(entry.response, "没有返回文本")}</span>
+                          {tags.length ? (
+                            <div className="chat-history-tags">
+                              {tags.map((tag) => (
+                                <span key={tag}>{chatHistoryFilterLabel(tag)}</span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {selectedHistoryEntry && (
+                  <article className="chat-history-detail">
+                    <div className="chat-history-detail__meta">
+                      <span>{formatChatHistoryTime(selectedHistoryEntry.createdAt)}</span>
+                      <span>{selectedHistoryEntry.response.length.toLocaleString("zh-CN")} 字</span>
+                    </div>
+                    <div>
+                      <p className="eyebrow">PROMPT</p>
+                      <p>{selectedHistoryEntry.prompt}</p>
+                    </div>
+                    <div>
+                      <p className="eyebrow">RESPONSE</p>
+                      <p>{selectedHistoryEntry.response || "没有返回文本"}</p>
+                    </div>
+                  </article>
+                )}
+              </div>
+            ) : (
+              <p className="empty-state">当前搜索或筛选下没有对话。</p>
+            )}
+          </div>
         ) : (
           <p className="empty-state">暂无对话历史。</p>
         )}

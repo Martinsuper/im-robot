@@ -12,6 +12,7 @@ export function PetWindow() {
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [sensingPaused, setSensingPaused] = useState(false);
   const [theme, setTheme] = useState<Theme>("sage");
+  const [petNotice, setPetNotice] = useState("");
   const currentTime = useCurrentTime();
   const isResting = petState.mode === "resting";
   const resetTimer = useRef<number | undefined>(undefined);
@@ -63,13 +64,19 @@ export function PetWindow() {
         showTransient({ type: "ATTACHMENT_READY" }, 2200);
       }
       if (event.payload.type === "reminder-fired") {
-        showTransient({ type: "REMINDER_FIRED", message: event.payload.message }, 2600);
+        dispatch({ type: "REMINDER_FIRED", message: event.payload.message });
+        setPetNotice(event.payload.message);
+      }
+      if (event.payload.type === "calendar-event-due") {
+        dispatch({ type: "REMINDER_FIRED", message: event.payload.message });
+        setPetNotice(event.payload.message);
       }
       if (event.payload.type === "ambient-nudge") {
         showTransient({ type: "AMBIENT_NUDGE" }, 1800);
       }
       if (event.payload.type === "break-reminder") {
-        showTransient({ type: "BREAK_REMINDER", message: event.payload.message }, 2600);
+        dispatch({ type: "BREAK_REMINDER", message: event.payload.message });
+        setPetNotice(event.payload.message);
       }
       if (event.payload.type === "idle-started") {
         dispatch({ type: "REST" });
@@ -107,10 +114,6 @@ export function PetWindow() {
     if (resetTimer.current) window.clearTimeout(resetTimer.current);
   }, []);
 
-  function toggleRest() {
-    dispatch({ type: isResting ? "WAKE" : "REST" });
-  }
-
   const DRAG_THRESHOLD_PX = 4;
   const [dragOrigin, setDragOrigin] = useState<{ x: number; y: number } | null>(null);
   const didDrag = useRef(false);
@@ -136,6 +139,20 @@ export function PetWindow() {
         void runCommand("move_pet", { x: event.screenX - 78, y: event.screenY - 70 });
       }}
     >
+      {petNotice && (
+        <button
+          className="pet-notice-bubble"
+          type="button"
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            setPetNotice("");
+          }}
+          aria-label="关闭提醒"
+        >
+          {petNotice}
+        </button>
+      )}
       <div
         className={`pet pet--${petState.mode} pet-reaction--${petState.reaction}`}
         aria-label="拖动 Piko"
@@ -164,13 +181,6 @@ export function PetWindow() {
           }}
         >
           对话
-        </button>
-        <button
-          className="icon-button"
-          type="button"
-          onClick={toggleRest}
-        >
-          {isResting ? "唤醒" : "休息"}
         </button>
         <button className="icon-button" type="button" onClick={() => runCommand("open_panel")}>
           面板

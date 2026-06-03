@@ -99,37 +99,6 @@ export interface InstalledPlugin {
   status: string;
 }
 
-export interface DesktopItem {
-  name: string;
-  path: string;
-  itemType: "file" | "folder" | "shortcut";
-  category: "images" | "documents" | "archives" | "code" | "shortcuts" | "other";
-}
-
-export interface DesktopOrganizeMove {
-  from: string;
-  to: string;
-  category: string;
-}
-
-export interface DesktopOrganizePlan {
-  id: string;
-  desktopDir: string;
-  plannedMoves: DesktopOrganizeMove[];
-  createdFolders: string[];
-  skippedItems: string[];
-  createdAt: number;
-  status: "draft" | "confirmed" | "executing" | "completed" | "failed";
-}
-
-export interface DesktopOrganizeResult {
-  planId: string;
-  movedCount: number;
-  skippedCount: number;
-  createdFolders: string[];
-  errors: string[];
-}
-
 export type AttachmentAction = "summarize" | "translate" | "explain";
 export type Theme = "sage" | "blue" | "peach";
 export type PanelTab = "companion" | "settings" | "reminders" | "calendar" | "history" | "memory" | "about";
@@ -144,6 +113,7 @@ export interface OnboardingStatus {
 export type PetVisualEvent =
   | { type: "attachment-ready" }
   | { type: "reminder-fired"; message: string }
+  | { type: "calendar-event-due"; message: string }
   | { type: "ambient-nudge" }
   | { type: "break-reminder"; message: string }
   | { type: "idle-started" }

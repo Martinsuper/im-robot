@@ -33,7 +33,7 @@
         "minHeight": 300,
         "decorations": false,
         "transparent": true,
-        "alwaysOnTop": true,
+        "alwaysOnTop": false,
         "skipTaskbar": true,
         "visible": false
       },
@@ -44,6 +44,7 @@
         "height": 700,
         "minWidth": 360,
         "minHeight": 560,
+        "alwaysOnTop": false,
         "visible": false
       },
       {

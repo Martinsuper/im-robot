@@ -3,7 +3,6 @@
 /// The local calendar store remains the source of truth. On macOS we mirror
 /// synced events into Calendar.app and pull back events that carry the Piko
 /// sync marker. Other platforms keep the file-based iCalendar fallback path.
-
 use crate::CalendarEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -18,6 +17,7 @@ use tauri::{AppHandle, Manager};
 
 const SYNC_MARKER_PREFIX: &str = "PIKO_SYNC local_id=";
 const DEFAULT_SYNC_CALENDAR_NAME: &str = "Piko";
+const IMPORTED_SYSTEM_ID_PREFIX: &str = "system-macos-";
 
 /// Mapping between local and system calendar event IDs.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -111,7 +111,9 @@ pub fn persist_sync_mappings(
     mappings: &[CalendarSyncMapping],
 ) -> Result<(), String> {
     let path = sync_mapping_path(app).ok_or_else(|| "无法获取同步映射路径".to_string())?;
-    let dir = path.parent().ok_or_else(|| "无法获取同步映射目录".to_string())?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| "无法获取同步映射目录".to_string())?;
     let json = serde_json::to_string_pretty(mappings).map_err(|e| e.to_string())?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())
@@ -142,8 +144,7 @@ pub(crate) fn mark_local_events_deleted(
     app: &tauri::AppHandle,
     local_ids: &[String],
 ) -> Result<(), String> {
-    let path =
-        deleted_local_ids_path(app).ok_or_else(|| "无法获取日程删除记录路径".to_string())?;
+    let path = deleted_local_ids_path(app).ok_or_else(|| "无法获取日程删除记录路径".to_string())?;
     let dir = path
         .parent()
         .ok_or_else(|| "无法获取日程删除记录目录".to_string())?;
@@ -162,6 +163,17 @@ fn sync_marker(local_id: &str) -> String {
     format!("{SYNC_MARKER_PREFIX}{local_id}")
 }
 
+fn local_id_for_system_event(system_id: &str) -> String {
+    let mut escaped = String::new();
+    for byte in system_id.as_bytes() {
+        match *byte {
+            b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'-' | b'_' => escaped.push(*byte as char),
+            _ => escaped.push_str(&format!("{byte:02x}")),
+        }
+    }
+    format!("{IMPORTED_SYSTEM_ID_PREFIX}{escaped}")
+}
+
 fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -171,7 +183,12 @@ fn now_unix() -> u64 {
 
 fn description_for_event(event: &CalendarEvent, local_id: &str) -> String {
     let marker = sync_marker(local_id);
-    match event.notes.as_deref().map(str::trim).filter(|notes| !notes.is_empty()) {
+    match event
+        .notes
+        .as_deref()
+        .map(str::trim)
+        .filter(|notes| !notes.is_empty())
+    {
         Some(notes) => format!("{notes}\n{marker}"),
         None => marker,
     }
@@ -266,7 +283,7 @@ const Calendar = Application("Calendar");
 Calendar.includeStandardAdditions = true;
 const markerPrefix = "PIKO_SYNC local_id=";
 const result = [];
-const calendars = Calendar.calendars.whose({ writable: true });
+const calendars = Calendar.calendars();
 for (let i = 0; i < calendars.length; i += 1) {
   const calendar = calendars[i];
   const events = calendar.events;
@@ -274,20 +291,22 @@ for (let i = 0; i < calendars.length; i += 1) {
     const event = events[j];
     const description = String(event.description ? event.description() : "");
     const markerIndex = description.indexOf(markerPrefix);
-    if (markerIndex < 0) continue;
-    const localId = description.slice(markerIndex + markerPrefix.length).split(/\r?\n/)[0].trim();
-    if (!localId) continue;
+    const systemId = String(event.uid());
+    const localId = markerIndex >= 0
+      ? description.slice(markerIndex + markerPrefix.length).split(/\r?\n/)[0].trim()
+      : "";
+    if (markerIndex >= 0 && !localId) continue;
     const startDate = new Date(event.startDate());
     const endDate = new Date(event.endDate());
     result.push({
       localId,
-      systemId: String(event.uid()),
+      systemId,
       title: String(event.summary()),
       startAt: Math.floor(startDate.getTime() / 1000),
       endAt: Math.floor(endDate.getTime() / 1000),
       location: event.location ? String(event.location()) : null,
       notes: (() => {
-        const raw = description.slice(0, markerIndex).trim();
+        const raw = markerIndex >= 0 ? description.slice(0, markerIndex).trim() : description.trim();
         return raw.length ? raw : null;
       })(),
       systemModifiedAt: Math.floor((event.modificationDate ? new Date(event.modificationDate()) : new Date()).getTime() / 1000),
@@ -381,8 +400,16 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
         return Err("当前平台尚未开放系统日历同步".to_string());
     }
 
-    let mut events = read_system_synced_events(since)?;
-    exclude_deleted_local_events(&mut events, &read_deleted_local_ids(app));
+    let deleted_ids = read_deleted_local_ids(app);
+    let system_events = read_system_events(since)?
+        .into_iter()
+        .filter(|event| !deleted_ids.contains(&event.resolved_local_id()))
+        .collect::<Vec<_>>();
+    let mut events = system_events
+        .iter()
+        .map(SystemCalendarEvent::to_calendar_event)
+        .collect::<Vec<_>>();
+    exclude_deleted_local_events(&mut events, &deleted_ids);
     if events.is_empty() {
         return Ok(PullResult {
             imported: 0,
@@ -406,6 +433,8 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
         }
     }
 
+    update_mappings_from_system_events(app, &system_events)?;
+
     local_events.sort_by(|a, b| a.start_at.cmp(&b.start_at));
     persist_local_calendar_events(app, &local_events)?;
 
@@ -419,7 +448,40 @@ fn exclude_deleted_local_events(events: &mut Vec<CalendarEvent>, deleted_ids: &H
     events.retain(|event| !deleted_ids.contains(&event.id));
 }
 
-fn read_system_synced_events(_since: u64) -> Result<Vec<CalendarEvent>, String> {
+fn update_mappings_from_system_events(
+    app: &AppHandle,
+    system_events: &[SystemCalendarEvent],
+) -> Result<(), String> {
+    let mut mappings = read_sync_mappings(app);
+    let now = now_unix();
+
+    for event in system_events {
+        let local_id = event.resolved_local_id();
+        if let Some(mapping) = mappings
+            .iter_mut()
+            .find(|mapping| mapping.local_id == local_id)
+        {
+            mapping.system_id = event.system_id.clone();
+            mapping.platform = event.platform.clone();
+            mapping.last_synced_at = now;
+            mapping.system_modified_at = event.system_modified_at;
+        } else {
+            mappings.push(CalendarSyncMapping {
+                local_id,
+                system_id: event.system_id.clone(),
+                platform: event.platform.clone(),
+                last_synced_at: now,
+                local_modified_at: now,
+                system_modified_at: event.system_modified_at,
+            });
+        }
+    }
+
+    mappings.sort_by(|a, b| a.local_id.cmp(&b.local_id));
+    persist_sync_mappings(app, &mappings)
+}
+
+fn read_system_events(_since: u64) -> Result<Vec<SystemCalendarEvent>, String> {
     if !cfg!(target_os = "macos") {
         return Err("当前平台尚未开放系统日历同步".to_string());
     }
@@ -448,28 +510,42 @@ fn read_system_synced_events(_since: u64) -> Result<Vec<CalendarEvent>, String> 
         serde_json::from_str(&raw).map_err(|e| e.to_string())?
     };
 
-    Ok(system_events
-        .into_iter()
-        .map(|event| CalendarEvent {
-            id: event.local_id,
-            title: event.title,
-            start_at: event.start_at,
-            end_at: event.end_at,
-            location: event.location,
-            notes: event.notes,
-        })
-        .collect())
+    Ok(system_events)
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SystemCalendarEvent {
     local_id: String,
+    system_id: String,
     title: String,
     start_at: u64,
     end_at: u64,
     location: Option<String>,
     notes: Option<String>,
+    system_modified_at: u64,
+    platform: String,
+}
+
+impl SystemCalendarEvent {
+    fn resolved_local_id(&self) -> String {
+        if self.local_id.trim().is_empty() {
+            local_id_for_system_event(&self.system_id)
+        } else {
+            self.local_id.clone()
+        }
+    }
+
+    fn to_calendar_event(&self) -> CalendarEvent {
+        CalendarEvent {
+            id: self.resolved_local_id(),
+            title: self.title.clone(),
+            start_at: self.start_at,
+            end_at: self.end_at,
+            location: self.location.clone(),
+            notes: self.notes.clone(),
+        }
+    }
 }
 
 fn read_local_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
@@ -498,7 +574,7 @@ fn calendar_events_path(app: &AppHandle) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::exclude_deleted_local_events;
+    use super::{exclude_deleted_local_events, local_id_for_system_event, SystemCalendarEvent};
     use crate::CalendarEvent;
     use std::collections::HashSet;
 
@@ -527,5 +603,35 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].id, "active");
+    }
+
+    #[test]
+    fn creates_stable_local_ids_for_unmarked_system_events() {
+        assert_eq!(
+            local_id_for_system_event("ABC/123"),
+            "system-macos-ABC2f123"
+        );
+    }
+
+    #[test]
+    fn converts_unmarked_system_events_to_local_calendar_events() {
+        let event = SystemCalendarEvent {
+            local_id: "".to_string(),
+            system_id: "system-id".to_string(),
+            title: "系统会议".to_string(),
+            start_at: 100,
+            end_at: 200,
+            location: Some("会议室".to_string()),
+            notes: Some("来自系统日历".to_string()),
+            system_modified_at: 300,
+            platform: "macos".to_string(),
+        };
+
+        let local = event.to_calendar_event();
+
+        assert_eq!(local.id, "system-macos-system-id");
+        assert_eq!(local.title, "系统会议");
+        assert_eq!(local.location.as_deref(), Some("会议室"));
+        assert_eq!(local.notes.as_deref(), Some("来自系统日历"));
     }
 }

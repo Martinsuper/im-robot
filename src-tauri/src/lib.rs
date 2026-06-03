@@ -30,8 +30,8 @@ use wasmtime_wasi::WasiCtxBuilder;
 
 // --- Module declarations for new features ---
 pub mod app_awareness;
-pub mod sync;
 pub mod memory;
+pub mod sync;
 pub mod typing_activity;
 
 const PET_MARGIN: i32 = 16;
@@ -51,51 +51,6 @@ struct PetPosition {
 struct BubbleSize {
     width: u32,
     height: u32,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DesktopItem {
-    name: String,
-    path: String,
-    item_type: String,
-    category: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DesktopOrganizeMove {
-    from: String,
-    to: String,
-    category: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DesktopOrganizePlan {
-    id: String,
-    desktop_dir: String,
-    planned_moves: Vec<DesktopOrganizeMove>,
-    created_folders: Vec<String>,
-    skipped_items: Vec<String>,
-    created_at: u64,
-    status: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DesktopOrganizeResult {
-    plan_id: String,
-    moved_count: usize,
-    skipped_count: usize,
-    created_folders: Vec<String>,
-    errors: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ExecuteDesktopOrganizePlanInput {
-    plan_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -499,7 +454,7 @@ struct WorkRhythmReminderState {
 struct WorkRhythmReminderCache(Mutex<WorkRhythmReminderState>);
 
 #[derive(Default)]
-struct DesktopOrganizePlanCache(Mutex<Option<DesktopOrganizePlan>>);
+struct CalendarNotificationCache(Mutex<HashSet<String>>);
 
 fn default_repeat_rule() -> String {
     "none".to_string()
@@ -757,13 +712,7 @@ impl PikoPlugin for DeclarativePlugin {
 
     fn execute(&self, app: &AppHandle, tool: &str, input: Value) -> Result<Value, String> {
         match self.package.runtime.as_deref() {
-            Some("wasm") => execute_wasm_plugin(
-                app,
-                &self.directory,
-                &self.package,
-                tool,
-                input,
-            ),
+            Some("wasm") => execute_wasm_plugin(app, &self.directory, &self.package, tool, input),
             _ => self
                 .package
                 .responses
@@ -889,6 +838,7 @@ impl PluginRegistry {
 enum PetVisualEvent {
     AttachmentReady,
     ReminderFired { message: String },
+    CalendarEventDue { message: String },
     AmbientNudge,
     BreakReminder { message: String },
     IdleStarted,
@@ -1012,11 +962,6 @@ fn external_plugins_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|directory| directory.join("plugins"))
 }
 
-fn desktop_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().desktop_dir().ok()
-}
-
-
 fn focus_records_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
@@ -1129,275 +1074,6 @@ fn read_external_plugin_packages(app: &AppHandle) -> Vec<ExternalPluginPackage> 
                 })
         })
         .collect()
-}
-
-fn desktop_item_type(path: &Path, file_type: &fs::FileType) -> String {
-    if file_type.is_dir() {
-        "folder".to_string()
-    } else if file_type.is_symlink() || is_shortcut_extension(path) {
-        "shortcut".to_string()
-    } else {
-        "file".to_string()
-    }
-}
-
-fn desktop_item_category(path: &Path, item_type: &str) -> String {
-    if item_type == "shortcut" {
-        return "shortcuts".to_string();
-    }
-    if item_type == "folder" {
-        return "other".to_string();
-    }
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match extension.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "heic" => "images".to_string(),
-        "pdf" | "doc" | "docx" | "txt" | "rtf" | "md" | "csv" | "xls" | "xlsx" | "ppt" | "pptx" => {
-            "documents".to_string()
-        }
-        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" => "archives".to_string(),
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "kt" | "c" | "cc" | "cpp"
-        | "h" | "hpp" | "json" | "toml" | "yaml" | "yml" | "html" | "css" => "code".to_string(),
-        _ => "other".to_string(),
-    }
-}
-
-fn is_shortcut_extension(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.to_ascii_lowercase()),
-        Some(ext) if matches!(ext.as_str(), "lnk" | "url" | "alias")
-    )
-}
-
-fn is_hidden_desktop_entry(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.starts_with('.'))
-        .unwrap_or(false)
-}
-
-fn read_desktop_items(app: &AppHandle) -> Result<Vec<DesktopItem>, String> {
-    let desktop = desktop_path(app).ok_or_else(|| "无法获取桌面目录".to_string())?;
-    let mut items = Vec::new();
-    let entries = fs::read_dir(&desktop).map_err(|error| error.to_string())?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if is_hidden_desktop_entry(&path) {
-            continue;
-        }
-        let file_type = entry.file_type().map_err(|error| error.to_string())?;
-        let item_type = desktop_item_type(&path, &file_type);
-        let name = entry.file_name().to_string_lossy().to_string();
-        items.push(DesktopItem {
-            category: desktop_item_category(&path, &item_type),
-            item_type,
-            name,
-            path: path.to_string_lossy().to_string(),
-        });
-    }
-    items.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
-    Ok(items)
-}
-
-fn desktop_category_folder_name(category: &str) -> &'static str {
-    match category {
-        "images" => "图片",
-        "documents" => "文档",
-        "archives" => "压缩包",
-        "code" => "代码",
-        "shortcuts" => "快捷方式",
-        _ => "其他",
-    }
-}
-
-fn desktop_target_path_for_name(folder: &Path, name: &str, used_targets: &mut HashSet<String>) -> PathBuf {
-    let original_target = folder.join(name);
-    if !original_target.exists() && !used_targets.contains(&original_target.to_string_lossy().to_string()) {
-        used_targets.insert(original_target.to_string_lossy().to_string());
-        return original_target;
-    }
-
-    let path = Path::new(name);
-    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or(name);
-    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("");
-    for index in 1..=999 {
-        let candidate = if extension.is_empty() {
-            format!("{stem} ({index})")
-        } else {
-            format!("{stem} ({index}).{extension}")
-        };
-        let candidate_path = folder.join(candidate);
-        let candidate_key = candidate_path.to_string_lossy().to_string();
-        if !candidate_path.exists() && !used_targets.contains(&candidate_key) {
-            used_targets.insert(candidate_key);
-            return candidate_path;
-        }
-    }
-
-    folder.join(name)
-}
-
-fn build_desktop_organize_plan_inner(app: &AppHandle) -> Result<DesktopOrganizePlan, String> {
-    let desktop = desktop_path(app).ok_or_else(|| "无法获取桌面目录".to_string())?;
-    let items = read_desktop_items(app)?;
-    let now = unix_timestamp();
-    let created_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(now);
-    let mut planned_moves = Vec::new();
-    let mut created_folders = Vec::new();
-    let mut skipped_items = Vec::new();
-    let mut used_targets = HashSet::new();
-    let mut folder_targets = HashSet::new();
-
-    for item in items {
-        if item.item_type != "file" && item.item_type != "shortcut" {
-            skipped_items.push(format!("已跳过文件夹：{}", item.path));
-            continue;
-        }
-        if item.category == "other" {
-            skipped_items.push(format!("已跳过未分类项目：{}", item.path));
-            continue;
-        }
-        let folder_name = desktop_category_folder_name(&item.category);
-        let target_folder = desktop.join(folder_name);
-        let target_folder_key = target_folder.to_string_lossy().to_string();
-        if folder_targets.insert(target_folder_key.clone()) {
-            created_folders.push(target_folder_key.clone());
-        }
-        let target_path = desktop_target_path_for_name(&target_folder, &item.name, &mut used_targets);
-        planned_moves.push(DesktopOrganizeMove {
-            from: item.path,
-            to: target_path.to_string_lossy().to_string(),
-            category: item.category,
-        });
-    }
-
-    Ok(DesktopOrganizePlan {
-        id: format!("desktop-plan-{created_at}"),
-        desktop_dir: desktop.to_string_lossy().to_string(),
-        planned_moves,
-        created_folders,
-        skipped_items,
-        created_at,
-        status: "draft".to_string(),
-    })
-}
-
-fn execute_desktop_organize_plan_inner(
-    app: &AppHandle,
-    plan: &DesktopOrganizePlan,
-) -> DesktopOrganizeResult {
-    let mut moved_count = 0;
-    let mut skipped_count = 0;
-    let mut errors = Vec::new();
-    let mut created_folders = Vec::new();
-
-    for folder in &plan.created_folders {
-        let folder_path = PathBuf::from(folder);
-        if !folder_path.exists() {
-            match fs::create_dir_all(&folder_path) {
-                Ok(()) => created_folders.push(folder.clone()),
-                Err(error) => errors.push(format!("创建文件夹失败 {}：{}", folder, error)),
-            }
-        }
-    }
-
-    for move_item in &plan.planned_moves {
-        let from = PathBuf::from(&move_item.from);
-        let to = PathBuf::from(&move_item.to);
-        if !from.exists() {
-            skipped_count += 1;
-            errors.push(format!("源文件不存在：{}", move_item.from));
-            continue;
-        }
-        if let Some(parent) = to.parent() {
-            if let Err(error) = fs::create_dir_all(parent) {
-                errors.push(format!("创建目标目录失败 {}：{}", parent.to_string_lossy(), error));
-                continue;
-            }
-        }
-        match fs::rename(&from, &to) {
-            Ok(()) => {
-                moved_count += 1;
-            }
-            Err(rename_error) => {
-                match fs::copy(&from, &to).and_then(|_| fs::remove_file(&from)) {
-                    Ok(_) => {
-                        moved_count += 1;
-                    }
-                    Err(copy_error) => {
-                        errors.push(format!(
-                            "移动失败 {} -> {}：{}；回退失败：{}",
-                            from.to_string_lossy(),
-                            to.to_string_lossy(),
-                            rename_error,
-                            copy_error
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    let result_plan_id = plan.id.clone();
-    let result_created_folders = created_folders.clone();
-    let result_errors = errors.clone();
-    let result = DesktopOrganizeResult {
-        plan_id: result_plan_id.clone(),
-        moved_count,
-        skipped_count,
-        created_folders: result_created_folders.clone(),
-        errors: result_errors.clone(),
-    };
-
-    let _ = app.emit_to("panel", "desktop-items-updated", ());
-    let _ = app.emit_to("panel", "desktop-organize-completed", &result);
-
-    result
-}
-
-fn open_system_path(path: &Path) -> Result<(), String> {
-    if !path.exists() {
-        return Err("路径不存在".to_string());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(path)
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let target = path.to_string_lossy().to_string();
-        Command::new("cmd")
-            .args(["/C", "start", "", &target])
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(path)
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-
-    #[allow(unreachable_code)]
-    Err("当前平台不支持打开路径".to_string())
 }
 
 fn validate_declarative_plugin(package: &DeclarativePluginPackage) -> Result<(), String> {
@@ -2567,16 +2243,7 @@ fn enable_pet_background_drag(app: &AppHandle) {
 fn enable_pet_background_drag(_app: &AppHandle) {}
 
 #[cfg(target_os = "macos")]
-fn enable_bubble_background_drag(app: &AppHandle) {
-    let Some(window) = app.get_webview_window("bubble") else {
-        return;
-    };
-
-    let _ = window.with_webview(|webview| unsafe {
-        let ns_window: &objc2_app_kit::NSWindow = &*webview.ns_window().cast();
-        ns_window.setMovableByWindowBackground(true);
-    });
-}
+fn enable_bubble_background_drag(_app: &AppHandle) {}
 
 #[cfg(not(target_os = "macos"))]
 fn enable_bubble_background_drag(_app: &AppHandle) {}
@@ -3063,7 +2730,10 @@ fn delete_calendar_event_batch_record(
 ) -> Result<Vec<CalendarEvent>, String> {
     let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
     let deleted = delete_calendar_event_batch_record_at_path(&path, input)?;
-    let deleted_ids = deleted.iter().map(|event| event.id.clone()).collect::<Vec<_>>();
+    let deleted_ids = deleted
+        .iter()
+        .map(|event| event.id.clone())
+        .collect::<Vec<_>>();
     crate::sync::calendar_sync::mark_local_events_deleted(app, &deleted_ids)?;
     let _ = app.emit("calendar-events-updated", ());
     Ok(deleted)
@@ -3459,11 +3129,78 @@ fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String> {
     Ok(due)
 }
 
+fn collect_due_calendar_events(
+    events: &[CalendarEvent],
+    now: u64,
+    already_notified: &mut HashSet<String>,
+) -> Vec<CalendarEvent> {
+    const CALENDAR_EVENT_NOTICE_WINDOW_SECONDS: u64 = 60;
+
+    events
+        .iter()
+        .filter(|event| {
+            event.start_at <= now
+                && now.saturating_sub(event.start_at) <= CALENDAR_EVENT_NOTICE_WINDOW_SECONDS
+                && already_notified.insert(event.id.clone())
+        })
+        .cloned()
+        .collect()
+}
+
+fn format_calendar_notice(event: &CalendarEvent) -> String {
+    match event
+        .location
+        .as_deref()
+        .map(str::trim)
+        .filter(|location| !location.is_empty())
+    {
+        Some(location) => format!("日程：{} · {}", event.title, location),
+        None => format!("日程：{}", event.title),
+    }
+}
+
+fn process_due_calendar_events(app: &AppHandle) -> Result<Vec<CalendarEvent>, String> {
+    let now = unix_timestamp();
+    let events = read_calendar_events(app);
+    let calendar_notifications = app.state::<CalendarNotificationCache>();
+    let mut already_notified = calendar_notifications
+        .0
+        .lock()
+        .map_err(|_| "无法读取日程提醒状态".to_string())?;
+    let due = collect_due_calendar_events(&events, now, &mut already_notified);
+    drop(already_notified);
+
+    for event in &due {
+        let message = format_calendar_notice(event);
+        let _ = app
+            .notification()
+            .builder()
+            .title("Piko 日程")
+            .body(&message)
+            .show();
+        let _ = app.emit_to(
+            "pet",
+            "pet-visual-event",
+            PetVisualEvent::CalendarEventDue { message },
+        );
+    }
+
+    Ok(due)
+}
+
 fn watch_reminders(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || loop {
         let _ = process_due_reminders(&app);
         thread::sleep(Duration::from_secs(1));
+    });
+}
+
+fn watch_calendar_events(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || loop {
+        let _ = process_due_calendar_events(&app);
+        thread::sleep(Duration::from_secs(10));
     });
 }
 
@@ -3573,7 +3310,10 @@ fn maybe_emit_break_reminder(app: &AppHandle) {
     if snapshot.is_idle || snapshot.focus_status == "running" || snapshot.focus_kind == "break" {
         return;
     }
-    if matches!(snapshot.active_app_category.as_str(), "video_conference" | "game") {
+    if matches!(
+        snapshot.active_app_category.as_str(),
+        "video_conference" | "game"
+    ) {
         return;
     }
 
@@ -3624,7 +3364,11 @@ fn maybe_emit_break_reminder(app: &AppHandle) {
         .title("Piko 休息提醒")
         .body(&message)
         .show();
-    let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::BreakReminder { message });
+    let _ = app.emit_to(
+        "pet",
+        "pet-visual-event",
+        PetVisualEvent::BreakReminder { message },
+    );
     state.last_sent_bucket = bucket;
     state.last_notified_at = now;
 }
@@ -3680,63 +3424,6 @@ fn get_work_rhythm_state(
     focus: State<'_, FocusTimer>,
 ) -> Result<WorkRhythmState, String> {
     work_rhythm_snapshot(&app, &typing, &focus)
-}
-
-#[tauri::command]
-fn list_desktop_items(app: AppHandle) -> Result<Vec<DesktopItem>, String> {
-    read_desktop_items(&app)
-}
-
-#[tauri::command]
-fn build_desktop_organize_plan(
-    app: AppHandle,
-    cache: State<'_, DesktopOrganizePlanCache>,
-) -> Result<DesktopOrganizePlan, String> {
-    let plan = build_desktop_organize_plan_inner(&app)?;
-    let mut current = cache
-        .0
-        .lock()
-        .map_err(|_| "无法保存桌面整理计划".to_string())?;
-    *current = Some(plan.clone());
-    let _ = app.emit_to("panel", "desktop-organize-planned", &plan);
-    Ok(plan)
-}
-
-#[tauri::command]
-fn execute_desktop_organize_plan(
-    app: AppHandle,
-    cache: State<'_, DesktopOrganizePlanCache>,
-    input: ExecuteDesktopOrganizePlanInput,
-) -> Result<DesktopOrganizeResult, String> {
-    let plan = {
-        let current = cache
-            .0
-            .lock()
-            .map_err(|_| "无法读取桌面整理计划".to_string())?;
-        current
-            .clone()
-            .ok_or_else(|| "请先生成桌面整理计划".to_string())?
-    };
-    if plan.id != input.plan_id {
-        return Err("整理计划已过期，请重新生成".to_string());
-    }
-
-    let result = execute_desktop_organize_plan_inner(&app, &plan);
-    let mut updated_plan = plan.clone();
-    updated_plan.status = "completed".to_string();
-    if let Ok(mut current) = cache.0.lock() {
-        *current = Some(updated_plan);
-    }
-    Ok(result)
-}
-
-#[tauri::command]
-fn open_path(path: String) -> Result<(), String> {
-    let path = PathBuf::from(path.trim());
-    if path.as_os_str().is_empty() {
-        return Err("路径不能为空".to_string());
-    }
-    open_system_path(&path)
 }
 
 #[tauri::command]
@@ -4038,10 +3725,14 @@ fn watch_foreground_app(app: &AppHandle) {
             // Check if sensing is paused
             let paused = state.sensing_paused.lock().map(|p| *p).unwrap_or(false);
             if !paused {
-                let _ = app.emit_to("pet", "foreground-app-changed", json!({
-                    "category": format!("{category}"),
-                    "appName": name,
-                }));
+                let _ = app.emit_to(
+                    "pet",
+                    "foreground-app-changed",
+                    json!({
+                        "category": format!("{category}"),
+                        "appName": name,
+                    }),
+                );
             }
             emit_work_rhythm_updated(&app);
         }
@@ -4209,8 +3900,10 @@ fn update_work_rhythm_preferences(
     settings.break_reminder_interval_minutes = input.break_reminder_interval_minutes;
     settings.break_reminder_cooldown_minutes = input.break_reminder_cooldown_minutes;
     settings.break_reminder_quiet_hours_enabled = input.break_reminder_quiet_hours_enabled;
-    settings.break_reminder_quiet_hours_start = normalize_clock_label(&input.break_reminder_quiet_hours_start)?;
-    settings.break_reminder_quiet_hours_end = normalize_clock_label(&input.break_reminder_quiet_hours_end)?;
+    settings.break_reminder_quiet_hours_start =
+        normalize_clock_label(&input.break_reminder_quiet_hours_start)?;
+    settings.break_reminder_quiet_hours_end =
+        normalize_clock_label(&input.break_reminder_quiet_hours_end)?;
     persist_settings(&app, &settings);
     let _ = app.emit_to("panel", "settings-updated", &settings);
     let _ = app.emit_to("pet", "settings-updated", &settings);
@@ -4335,7 +4028,14 @@ fn looks_like_unconfirmed_local_action_response(response: &str) -> bool {
     .iter()
     .any(|term| normalized.contains(term));
     let claims_success = [
-        "已", "成功", "完成", "created", "scheduled", "deleted", "removed", "done",
+        "已",
+        "成功",
+        "完成",
+        "created",
+        "scheduled",
+        "deleted",
+        "removed",
+        "done",
     ]
     .iter()
     .any(|term| normalized.contains(term));
@@ -4540,21 +4240,20 @@ async fn stream_chat(
         .clone();
 
     // Build memory context from relevant long-term memories
-    let memory_context_text = memory_db.build_context(
-        memory::BuildContextInput {
+    let memory_context_text = memory_db
+        .build_context(memory::BuildContextInput {
             current_query: Some(prompt.to_string()),
             window_type: None,
             limit: Some(10),
-        },
-    )
-    .ok()
-    .map(|memories| {
-        memories
-            .iter()
-            .map(|m| format!("- [{}] {}: {}", m.memory_type.label(), m.title, m.content))
-            .collect::<Vec<_>>()
-            .join("\n")
-    });
+        })
+        .ok()
+        .map(|memories| {
+            memories
+                .iter()
+                .map(|m| format!("- [{}] {}: {}", m.memory_type.label(), m.title, m.content))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
 
     let mut request_body = chat_request_body(
         &settings,
@@ -4759,8 +4458,7 @@ async fn chat_start(
     memory_db: State<'_, memory::MemoryDb>,
     input: ChatStartInput,
 ) -> Result<(), String> {
-    if input.attachment_action.is_none() && !input.include_screenshot.unwrap_or(false) {
-    }
+    if input.attachment_action.is_none() && !input.include_screenshot.unwrap_or(false) {}
     let attachment = attachments
         .0
         .lock()
@@ -5109,46 +4807,51 @@ async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
     }
 
     let release: Value = response.json().await.map_err(|e| e.to_string())?;
-    let latest = release["tag_name"].as_str().unwrap_or("unknown").trim_start_matches('v').to_string();
+    let latest = release["tag_name"]
+        .as_str()
+        .unwrap_or("unknown")
+        .trim_start_matches('v')
+        .to_string();
     let current = env!("CARGO_PKG_VERSION").to_string();
 
     let available = version_parts(&latest) > version_parts(&current);
 
-    let release_notes = release["body"].as_str().map(|s| {
-        s.lines().take(10).collect::<Vec<_>>().join("\n")
+    let release_notes = release["body"]
+        .as_str()
+        .map(|s| s.lines().take(10).collect::<Vec<_>>().join("\n"));
+
+    let download_url = release["assets"].as_array().and_then(|assets| {
+        assets
+            .iter()
+            .find(|asset| {
+                let name = asset["name"].as_str().unwrap_or("");
+                cfg!(target_os = "macos") && name.ends_with(".dmg")
+                    || cfg!(target_os = "windows") && name.ends_with(".exe")
+            })
+            .and_then(|asset| asset["browser_download_url"].as_str())
+            .map(String::from)
     });
 
-    let download_url = release["assets"]
-        .as_array()
-        .and_then(|assets| {
-            assets.iter()
-                .find(|asset| {
-                    let name = asset["name"].as_str().unwrap_or("");
-                    cfg!(target_os = "macos") && name.ends_with(".dmg")
-                        || cfg!(target_os = "windows") && name.ends_with(".exe")
-                })
-                .and_then(|asset| asset["browser_download_url"].as_str())
-                .map(String::from)
-        });
-
-    let asset_name = release["assets"]
-        .as_array()
-        .and_then(|assets| {
-            assets.iter()
-                .find(|asset| {
-                    let name = asset["name"].as_str().unwrap_or("");
-                    cfg!(target_os = "macos") && name.ends_with(".dmg")
-                        || cfg!(target_os = "windows") && name.ends_with(".exe")
-                })
-                .and_then(|asset| asset["name"].as_str())
-                .map(String::from)
-        });
+    let asset_name = release["assets"].as_array().and_then(|assets| {
+        assets
+            .iter()
+            .find(|asset| {
+                let name = asset["name"].as_str().unwrap_or("");
+                cfg!(target_os = "macos") && name.ends_with(".dmg")
+                    || cfg!(target_os = "windows") && name.ends_with(".exe")
+            })
+            .and_then(|asset| asset["name"].as_str())
+            .map(String::from)
+    });
 
     Ok(UpdateStatus {
         current_version: current,
         latest_version: latest,
         available,
-        release_url: release["html_url"].as_str().unwrap_or(&base.release_url).to_string(),
+        release_url: release["html_url"]
+            .as_str()
+            .unwrap_or(&base.release_url)
+            .to_string(),
         release_notes,
         download_url,
         asset_name,
@@ -5156,7 +4859,11 @@ async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
 }
 
 #[tauri::command]
-async fn download_update_asset(app: AppHandle, download_url: String, asset_name: Option<String>) -> Result<DownloadedUpdate, String> {
+async fn download_update_asset(
+    app: AppHandle,
+    download_url: String,
+    asset_name: Option<String>,
+) -> Result<DownloadedUpdate, String> {
     if download_url.trim().is_empty() {
         return Err("未提供可下载的更新地址".to_string());
     }
@@ -5179,10 +4886,7 @@ async fn download_update_asset(app: AppHandle, download_url: String, asset_name:
     let file_name = asset_name
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| "piko-update.bin".to_string());
-    let cache_dir = app
-        .path()
-        .app_cache_dir()
-        .map_err(|e| e.to_string())?;
+    let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     let update_dir = cache_dir.join("updates");
     std::fs::create_dir_all(&update_dir).map_err(|e| e.to_string())?;
     let file_path = update_dir.join(&file_name);
@@ -5266,7 +4970,7 @@ pub fn run() {
         .manage(IdleDetection::default())
         .manage(WorkRhythmCache::default())
         .manage(WorkRhythmReminderCache::default())
-        .manage(DesktopOrganizePlanCache::default())
+        .manage(CalendarNotificationCache::default())
         .manage(TextAttachmentStore::default())
         .manage(ScreenCaptureStore::default())
         .manage(app_awareness::ForegroundAppState::default())
@@ -5279,8 +4983,7 @@ pub fn run() {
         ))
         .setup(|app| {
             // Initialize memory database
-            let memory_db = memory::init_memory_db(app.handle())
-                .expect("无法初始化内存数据库");
+            let memory_db = memory::init_memory_db(app.handle()).expect("无法初始化内存数据库");
             app.manage(memory_db);
             app.manage(memory::CandidateCache::default());
             app.manage(typing_activity::TypingActivityState::new(app.handle()));
@@ -5309,6 +5012,7 @@ pub fn run() {
             enable_pet_background_drag(app.handle());
             enable_bubble_background_drag(app.handle());
             watch_reminders(app.handle());
+            watch_calendar_events(app.handle());
             watch_focus_timer(app.handle());
             watch_ambient_nudges(app.handle());
             watch_idle_detection(app.handle());
@@ -5342,10 +5046,6 @@ pub fn run() {
             get_focus_state,
             get_typing_stats_today,
             get_work_rhythm_state,
-            list_desktop_items,
-            build_desktop_organize_plan,
-            execute_desktop_organize_plan,
-            open_path,
             start_focus,
             start_break,
             pause_focus,
@@ -5436,16 +5136,16 @@ mod tests {
         append_session_chat_history, build_attachment_prompt, calendar_conflict_note,
         calendar_delete_batch_input_from_value, calendar_event_batch_input_from_value,
         calendar_event_input_from_value, chat_request_body, chat_url,
-        coalesce_calendar_delete_calls, collect_due_reminders, create_calendar_event_record_at_path,
-        decode_openai_tool_calls,
+        coalesce_calendar_delete_calls, collect_due_reminders,
+        create_calendar_event_record_at_path, decode_openai_tool_calls,
         delete_calendar_event_batch_record_at_path, extract_chat_deltas, extract_model_ids,
-        find_calendar_conflicts, idle_threshold_seconds, models_url, monitor_contains,
-        next_idle_state, next_repeat_due, normalize_base_url, parse_data_url, provider_tools,
-        prompt_requests_local_action, read_calendar_events_from_path, read_text_attachment,
-        render_icalendar, should_bypass_system_proxy, system_prompt, text_for_speech,
-        today_focus_minutes,
-        update_anthropic_tool_calls, update_gemini_tool_calls, update_openai_tool_calls,
-        validate_ai_settings, looks_like_unconfirmed_local_action_response,
+        find_calendar_conflicts, idle_threshold_seconds,
+        looks_like_unconfirmed_local_action_response, models_url, monitor_contains,
+        next_idle_state, next_repeat_due, normalize_base_url, parse_data_url,
+        prompt_requests_local_action, provider_tools, read_calendar_events_from_path,
+        read_text_attachment, render_icalendar, should_bypass_system_proxy, system_prompt,
+        text_for_speech, today_focus_minutes, update_anthropic_tool_calls,
+        update_gemini_tool_calls, update_openai_tool_calls, validate_ai_settings,
         validate_declarative_plugin, validate_save_path, version_parts, AiSettings, AppSettings,
         CalendarEvent, ChatEvent, ChatHistoryEntry, DeclarativePluginPackage, FocusRecord,
         OpenAiToolCallAccumulator, PluginManifest, PluginRegistry, PluginToolManifest, Reminder,
@@ -5572,56 +5272,19 @@ mod tests {
             .expect("valid local time")
             .timestamp() as u64;
 
-        assert!(super::is_within_quiet_hours("22:00", "08:00", true, late_night));
-        assert!(super::is_within_quiet_hours("22:00", "08:00", true, early_morning));
-        assert!(!super::is_within_quiet_hours("22:00", "08:00", true, noon));
-        assert!(!super::is_within_quiet_hours("22:00", "08:00", false, late_night));
-    }
-
-    #[test]
-    fn classifies_desktop_items_by_extension_and_type() {
-        assert_eq!(
-            super::desktop_item_category(PathBuf::from("photo.png").as_path(), "file"),
-            "images"
-        );
-        assert_eq!(
-            super::desktop_item_category(PathBuf::from("notes.md").as_path(), "file"),
-            "documents"
-        );
-        assert_eq!(
-            super::desktop_item_category(PathBuf::from("archive.zip").as_path(), "file"),
-            "archives"
-        );
-        assert_eq!(
-            super::desktop_item_category(PathBuf::from("main.rs").as_path(), "file"),
-            "code"
-        );
-        assert_eq!(
-            super::desktop_item_category(PathBuf::from("shortcut.url").as_path(), "shortcut"),
-            "shortcuts"
-        );
-        assert_eq!(
-            super::desktop_item_category(PathBuf::from("folder").as_path(), "folder"),
-            "other"
-        );
-    }
-
-    #[test]
-    fn chooses_unique_desktop_targets_when_names_conflict() {
-        let root = std::env::temp_dir().join(format!(
-            "im-robot-desktop-plan-{}",
-            Local::now().timestamp_nanos_opt().unwrap_or_default()
+        assert!(super::is_within_quiet_hours(
+            "22:00", "08:00", true, late_night
         ));
-        let folder = root.join("文档");
-        fs::create_dir_all(&folder).expect("create temp folder");
-        let existing = folder.join("notes.md");
-        fs::write(&existing, "already here").expect("write existing file");
-
-        let mut used_targets = HashSet::new();
-        let target = super::desktop_target_path_for_name(&folder, "notes.md", &mut used_targets);
-        assert_eq!(target.file_name().and_then(|value| value.to_str()), Some("notes (1).md"));
-
-        let _ = fs::remove_dir_all(&root);
+        assert!(super::is_within_quiet_hours(
+            "22:00",
+            "08:00",
+            true,
+            early_morning
+        ));
+        assert!(!super::is_within_quiet_hours("22:00", "08:00", true, noon));
+        assert!(!super::is_within_quiet_hours(
+            "22:00", "08:00", false, late_night
+        ));
     }
 
     #[test]
@@ -5634,6 +5297,44 @@ mod tests {
         let (is_idle, event) = next_idle_state(is_idle, &settings, 0, false);
         assert!(!is_idle);
         assert!(matches!(event, Some(super::PetVisualEvent::IdleEnded)));
+    }
+
+    #[test]
+    fn calendar_event_notices_fire_once_near_start_time() {
+        let events = vec![
+            CalendarEvent {
+                id: "soon".to_string(),
+                title: "站会".to_string(),
+                start_at: 100,
+                end_at: 160,
+                location: None,
+                notes: None,
+            },
+            CalendarEvent {
+                id: "old".to_string(),
+                title: "旧日程".to_string(),
+                start_at: 30,
+                end_at: 40,
+                location: None,
+                notes: None,
+            },
+            CalendarEvent {
+                id: "future".to_string(),
+                title: "稍后".to_string(),
+                start_at: 130,
+                end_at: 160,
+                location: None,
+                notes: None,
+            },
+        ];
+        let mut notified = HashSet::new();
+
+        let due = super::collect_due_calendar_events(&events, 110, &mut notified);
+        let repeated = super::collect_due_calendar_events(&events, 111, &mut notified);
+
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].id, "soon");
+        assert!(repeated.is_empty());
     }
 
     #[test]
