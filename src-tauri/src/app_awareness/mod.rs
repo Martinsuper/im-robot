@@ -158,7 +158,7 @@ pub fn get_foreground_app_name() -> Option<String> {
 
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd == HWND(0) {
+        if hwnd == HWND(std::ptr::null_mut()) {
             return None;
         }
 
