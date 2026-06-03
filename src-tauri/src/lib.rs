@@ -4308,6 +4308,41 @@ fn system_prompt(companion_name: &str, memory_context: Option<&str>) -> String {
     }
 }
 
+fn prompt_requests_local_action(prompt: &str) -> bool {
+    let normalized = prompt.to_lowercase();
+    let has_local_target = ["提醒", "日程", "calendar", "reminder"]
+        .iter()
+        .any(|term| normalized.contains(term));
+    let has_mutation = [
+        "创建", "新增", "添加", "设置", "安排", "删除", "移除", "取消", "create", "add", "set",
+        "schedule", "delete", "remove", "cancel",
+    ]
+    .iter()
+    .any(|term| normalized.contains(term));
+
+    has_local_target && has_mutation
+}
+
+fn looks_like_unconfirmed_local_action_response(response: &str) -> bool {
+    let normalized = response.to_lowercase();
+    let has_local_target = ["提醒", "日程", "calendar", "reminder"]
+        .iter()
+        .any(|term| normalized.contains(term));
+    let has_mutation = [
+        "创建", "新增", "添加", "设置", "安排", "删除", "移除", "取消", "create", "add", "set",
+        "schedule", "delete", "remove", "cancel",
+    ]
+    .iter()
+    .any(|term| normalized.contains(term));
+    let claims_success = [
+        "已", "成功", "完成", "created", "scheduled", "deleted", "removed", "done",
+    ]
+    .iter()
+    .any(|term| normalized.contains(term));
+
+    has_local_target && has_mutation && claims_success
+}
+
 fn openai_user_content(prompt: &str, screenshot: Option<&ScreenCapture>) -> Value {
     if let Some(screenshot) = screenshot {
         json!([
@@ -4540,6 +4575,12 @@ async fn stream_chat(
         let response = match send_chat_request(&client, &settings.ai, &request_body).await {
             Ok(response) => response,
             Err(_) if tool_round == 0 && request_body.get("tools").is_some() => {
+                if prompt_requests_local_action(prompt) {
+                    return Err(
+                        "当前模型服务没有接受工具调用，不能安全创建或删除日程/提醒。请换用支持工具调用的模型服务后重试。"
+                            .to_string(),
+                    );
+                }
                 request_body
                     .as_object_mut()
                     .ok_or_else(|| "模型请求格式无效".to_string())?
@@ -4590,6 +4631,12 @@ async fn stream_chat(
         }
 
         if openai_tool_calls.is_empty() {
+            if looks_like_unconfirmed_local_action_response(&assistant_response) {
+                return Err(
+                    "模型没有返回可执行的工具调用，因此不会创建或删除日程/提醒。请重试，或换用支持工具调用的模型。"
+                        .to_string(),
+                );
+            }
             break;
         }
         if tool_round == 4 {
@@ -5394,10 +5441,11 @@ mod tests {
         delete_calendar_event_batch_record_at_path, extract_chat_deltas, extract_model_ids,
         find_calendar_conflicts, idle_threshold_seconds, models_url, monitor_contains,
         next_idle_state, next_repeat_due, normalize_base_url, parse_data_url, provider_tools,
-        read_calendar_events_from_path, read_text_attachment, render_icalendar,
-        should_bypass_system_proxy, system_prompt, text_for_speech, today_focus_minutes,
+        prompt_requests_local_action, read_calendar_events_from_path, read_text_attachment,
+        render_icalendar, should_bypass_system_proxy, system_prompt, text_for_speech,
+        today_focus_minutes,
         update_anthropic_tool_calls, update_gemini_tool_calls, update_openai_tool_calls,
-        validate_ai_settings,
+        validate_ai_settings, looks_like_unconfirmed_local_action_response,
         validate_declarative_plugin, validate_save_path, version_parts, AiSettings, AppSettings,
         CalendarEvent, ChatEvent, ChatHistoryEntry, DeclarativePluginPackage, FocusRecord,
         OpenAiToolCallAccumulator, PluginManifest, PluginRegistry, PluginToolManifest, Reminder,
@@ -5851,6 +5899,31 @@ mod tests {
         assert!(prompt.contains("查询、删除或定位日程时优先调用 list_events"));
         assert!(prompt.contains("删除提醒或日程前"));
         assert!(prompt.contains("删除多个或全部日程时必须使用 delete_event_batch"));
+    }
+
+    #[test]
+    fn detects_local_action_requests_that_require_tools() {
+        assert!(prompt_requests_local_action("帮我创建明天下午 3 点的日程"));
+        assert!(prompt_requests_local_action("delete this calendar event"));
+        assert!(prompt_requests_local_action("设置一个喝水提醒"));
+        assert!(!prompt_requests_local_action("解释一下怎么规划日程"));
+        assert!(!prompt_requests_local_action("今天适合做什么"));
+    }
+
+    #[test]
+    fn detects_unconfirmed_local_action_success_claims() {
+        assert!(looks_like_unconfirmed_local_action_response(
+            "已成功创建日程：项目评审"
+        ));
+        assert!(looks_like_unconfirmed_local_action_response(
+            "Reminder deleted successfully."
+        ));
+        assert!(!looks_like_unconfirmed_local_action_response(
+            "我可以帮你创建日程，但需要先确认。"
+        ));
+        assert!(!looks_like_unconfirmed_local_action_response(
+            "这是一个普通回答。"
+        ));
     }
 
     #[test]
