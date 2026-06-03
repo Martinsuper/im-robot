@@ -35,7 +35,7 @@ export function MemoryDetail({
 }: {
   memory: MemoryItem;
   onClose: () => void;
-  onDeleted: () => void;
+  onDeleted: () => void | Promise<void>;
   onUpdated?: (memory: MemoryItem) => void;
 }) {
   const [relations, setRelations] = useState<MemoryRelation[]>([]);
@@ -71,7 +71,7 @@ export function MemoryDetail({
     if (!confirm("确定要删除这条记忆吗？")) return;
     try {
       await runCommand("delete_memory", { id: memory.id });
-      onDeleted();
+      await onDeleted();
       onClose();
     } catch {
       // ignore
@@ -87,7 +87,7 @@ export function MemoryDetail({
         id: memory.id,
       });
       onUpdated?.(updated);
-      onDeleted();
+      await onDeleted();
     } catch {
       // ignore
     }

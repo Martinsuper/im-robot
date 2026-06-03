@@ -1,12 +1,10 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use chrono::{
-    DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDateTime, TimeZone, Timelike,
-};
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Timelike};
 use screenshots::{image::DynamicImage, Screen};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::Cursor,
     path::{Path, PathBuf},
@@ -34,6 +32,7 @@ use wasmtime_wasi::WasiCtxBuilder;
 pub mod app_awareness;
 pub mod sync;
 pub mod memory;
+pub mod typing_activity;
 
 const PET_MARGIN: i32 = 16;
 const PET_MOVE_DEBOUNCE_MS: u64 = 220;
@@ -54,6 +53,51 @@ struct BubbleSize {
     height: u32,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopItem {
+    name: String,
+    path: String,
+    item_type: String,
+    category: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopOrganizeMove {
+    from: String,
+    to: String,
+    category: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopOrganizePlan {
+    id: String,
+    desktop_dir: String,
+    planned_moves: Vec<DesktopOrganizeMove>,
+    created_folders: Vec<String>,
+    skipped_items: Vec<String>,
+    created_at: u64,
+    status: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopOrganizeResult {
+    plan_id: String,
+    moved_count: usize,
+    skipped_count: usize,
+    created_folders: Vec<String>,
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecuteDesktopOrganizePlanInput {
+    plan_id: String,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
@@ -64,10 +108,24 @@ struct AppSettings {
     theme: String,
     #[serde(default)]
     sensing_paused: bool,
+    #[serde(default = "default_break_reminders_enabled")]
+    break_reminders_enabled: bool,
+    #[serde(default = "default_break_reminder_interval_minutes")]
+    break_reminder_interval_minutes: u64,
+    #[serde(default = "default_break_reminder_cooldown_minutes")]
+    break_reminder_cooldown_minutes: u64,
+    #[serde(default = "default_break_reminder_quiet_hours_enabled")]
+    break_reminder_quiet_hours_enabled: bool,
+    #[serde(default = "default_break_reminder_quiet_hours_start")]
+    break_reminder_quiet_hours_start: String,
+    #[serde(default = "default_break_reminder_quiet_hours_end")]
+    break_reminder_quiet_hours_end: String,
     #[serde(default)]
     ai: AiSettings,
     #[serde(default)]
     has_api_key: bool,
+    #[serde(default)]
+    html_preview_enabled: bool,
     #[serde(default)]
     onboarding_completed: bool,
     #[serde(default)]
@@ -110,6 +168,17 @@ struct PreferencesInput {
     companion_name: String,
     theme: String,
     sensing_paused: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkRhythmPreferencesInput {
+    break_reminders_enabled: bool,
+    break_reminder_interval_minutes: u64,
+    break_reminder_cooldown_minutes: u64,
+    break_reminder_quiet_hours_enabled: bool,
+    break_reminder_quiet_hours_start: String,
+    break_reminder_quiet_hours_end: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -402,6 +471,36 @@ struct FocusTimer(Mutex<Option<ActiveFocus>>);
 #[derive(Default)]
 struct IdleDetection(Mutex<bool>);
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkRhythmState {
+    date: String,
+    is_idle: bool,
+    idle_seconds: u64,
+    active_app_category: String,
+    typing_characters_today: u64,
+    typing_seconds_today: u64,
+    focus_status: String,
+    focus_kind: String,
+    focus_remaining_seconds: u64,
+}
+
+#[derive(Default)]
+struct WorkRhythmCache(Mutex<Option<WorkRhythmState>>);
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct WorkRhythmReminderState {
+    date: String,
+    last_sent_bucket: u64,
+    last_notified_at: u64,
+}
+
+#[derive(Default)]
+struct WorkRhythmReminderCache(Mutex<WorkRhythmReminderState>);
+
+#[derive(Default)]
+struct DesktopOrganizePlanCache(Mutex<Option<DesktopOrganizePlan>>);
+
 fn default_repeat_rule() -> String {
     "none".to_string()
 }
@@ -567,6 +666,33 @@ impl CalendarPlugin {
                 risk: "sensitive".to_string(),
                 confirmation: "always".to_string(),
             },
+            PluginToolManifest {
+                name: "delete_event_batch".to_string(),
+                description: "批量删除本地日程；删除多个或全部日程时使用，必须先调用 list_events 获取目标 ID，整批需要用户确认".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["events"],
+                    "properties": {
+                        "events": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "items": {
+                                "type": "object",
+                                "required": ["id"],
+                                "properties": {
+                                    "id": { "type": "string", "description": "日程 ID" },
+                                    "title": { "type": "string", "description": "用于确认展示的日程标题" },
+                                    "startAt": { "type": "string", "description": "用于确认展示的日程开始时间" },
+                                    "endAt": { "type": "string", "description": "用于确认展示的日程结束时间" }
+                                }
+                            }
+                        }
+                    }
+                }),
+                risk: "sensitive".to_string(),
+                confirmation: "always".to_string(),
+            },
         ]
     }
 }
@@ -610,6 +736,13 @@ impl PikoPlugin for CalendarPlugin {
             "delete_event" => {
                 let deleted =
                     delete_calendar_event_record(app, calendar_delete_input_from_value(&input)?)?;
+                serde_json::to_value(deleted).map_err(|error| error.to_string())
+            }
+            "delete_event_batch" => {
+                let deleted = delete_calendar_event_batch_record(
+                    app,
+                    calendar_delete_batch_input_from_value(&input)?,
+                )?;
                 serde_json::to_value(deleted).map_err(|error| error.to_string())
             }
             _ => Err("日程插件不支持该工具".to_string()),
@@ -757,6 +890,7 @@ enum PetVisualEvent {
     AttachmentReady,
     ReminderFired { message: String },
     AmbientNudge,
+    BreakReminder { message: String },
     IdleStarted,
     IdleEnded,
     FocusStarted,
@@ -770,8 +904,15 @@ impl Default for AppSettings {
             companion_name: default_companion_name(),
             theme: default_theme(),
             sensing_paused: false,
+            break_reminders_enabled: default_break_reminders_enabled(),
+            break_reminder_interval_minutes: default_break_reminder_interval_minutes(),
+            break_reminder_cooldown_minutes: default_break_reminder_cooldown_minutes(),
+            break_reminder_quiet_hours_enabled: default_break_reminder_quiet_hours_enabled(),
+            break_reminder_quiet_hours_start: default_break_reminder_quiet_hours_start(),
+            break_reminder_quiet_hours_end: default_break_reminder_quiet_hours_end(),
             ai: AiSettings::default(),
             has_api_key: false,
+            html_preview_enabled: false,
             onboarding_completed: false,
             onboarding_version: String::new(),
         }
@@ -784,6 +925,30 @@ fn default_companion_name() -> String {
 
 fn default_theme() -> String {
     "sage".to_string()
+}
+
+fn default_break_reminders_enabled() -> bool {
+    true
+}
+
+fn default_break_reminder_interval_minutes() -> u64 {
+    45
+}
+
+fn default_break_reminder_cooldown_minutes() -> u64 {
+    30
+}
+
+fn default_break_reminder_quiet_hours_enabled() -> bool {
+    false
+}
+
+fn default_break_reminder_quiet_hours_start() -> String {
+    "22:00".to_string()
+}
+
+fn default_break_reminder_quiet_hours_end() -> String {
+    "08:00".to_string()
 }
 
 impl Default for AiSettings {
@@ -846,6 +1011,11 @@ fn external_plugins_path(app: &AppHandle) -> Option<PathBuf> {
         .ok()
         .map(|directory| directory.join("plugins"))
 }
+
+fn desktop_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().desktop_dir().ok()
+}
+
 
 fn focus_records_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
@@ -959,6 +1129,275 @@ fn read_external_plugin_packages(app: &AppHandle) -> Vec<ExternalPluginPackage> 
                 })
         })
         .collect()
+}
+
+fn desktop_item_type(path: &Path, file_type: &fs::FileType) -> String {
+    if file_type.is_dir() {
+        "folder".to_string()
+    } else if file_type.is_symlink() || is_shortcut_extension(path) {
+        "shortcut".to_string()
+    } else {
+        "file".to_string()
+    }
+}
+
+fn desktop_item_category(path: &Path, item_type: &str) -> String {
+    if item_type == "shortcut" {
+        return "shortcuts".to_string();
+    }
+    if item_type == "folder" {
+        return "other".to_string();
+    }
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "heic" => "images".to_string(),
+        "pdf" | "doc" | "docx" | "txt" | "rtf" | "md" | "csv" | "xls" | "xlsx" | "ppt" | "pptx" => {
+            "documents".to_string()
+        }
+        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" => "archives".to_string(),
+        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "kt" | "c" | "cc" | "cpp"
+        | "h" | "hpp" | "json" | "toml" | "yaml" | "yml" | "html" | "css" => "code".to_string(),
+        _ => "other".to_string(),
+    }
+}
+
+fn is_shortcut_extension(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase()),
+        Some(ext) if matches!(ext.as_str(), "lnk" | "url" | "alias")
+    )
+}
+
+fn is_hidden_desktop_entry(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.starts_with('.'))
+        .unwrap_or(false)
+}
+
+fn read_desktop_items(app: &AppHandle) -> Result<Vec<DesktopItem>, String> {
+    let desktop = desktop_path(app).ok_or_else(|| "无法获取桌面目录".to_string())?;
+    let mut items = Vec::new();
+    let entries = fs::read_dir(&desktop).map_err(|error| error.to_string())?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if is_hidden_desktop_entry(&path) {
+            continue;
+        }
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        let item_type = desktop_item_type(&path, &file_type);
+        let name = entry.file_name().to_string_lossy().to_string();
+        items.push(DesktopItem {
+            category: desktop_item_category(&path, &item_type),
+            item_type,
+            name,
+            path: path.to_string_lossy().to_string(),
+        });
+    }
+    items.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    Ok(items)
+}
+
+fn desktop_category_folder_name(category: &str) -> &'static str {
+    match category {
+        "images" => "图片",
+        "documents" => "文档",
+        "archives" => "压缩包",
+        "code" => "代码",
+        "shortcuts" => "快捷方式",
+        _ => "其他",
+    }
+}
+
+fn desktop_target_path_for_name(folder: &Path, name: &str, used_targets: &mut HashSet<String>) -> PathBuf {
+    let original_target = folder.join(name);
+    if !original_target.exists() && !used_targets.contains(&original_target.to_string_lossy().to_string()) {
+        used_targets.insert(original_target.to_string_lossy().to_string());
+        return original_target;
+    }
+
+    let path = Path::new(name);
+    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or(name);
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("");
+    for index in 1..=999 {
+        let candidate = if extension.is_empty() {
+            format!("{stem} ({index})")
+        } else {
+            format!("{stem} ({index}).{extension}")
+        };
+        let candidate_path = folder.join(candidate);
+        let candidate_key = candidate_path.to_string_lossy().to_string();
+        if !candidate_path.exists() && !used_targets.contains(&candidate_key) {
+            used_targets.insert(candidate_key);
+            return candidate_path;
+        }
+    }
+
+    folder.join(name)
+}
+
+fn build_desktop_organize_plan_inner(app: &AppHandle) -> Result<DesktopOrganizePlan, String> {
+    let desktop = desktop_path(app).ok_or_else(|| "无法获取桌面目录".to_string())?;
+    let items = read_desktop_items(app)?;
+    let now = unix_timestamp();
+    let created_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(now);
+    let mut planned_moves = Vec::new();
+    let mut created_folders = Vec::new();
+    let mut skipped_items = Vec::new();
+    let mut used_targets = HashSet::new();
+    let mut folder_targets = HashSet::new();
+
+    for item in items {
+        if item.item_type != "file" && item.item_type != "shortcut" {
+            skipped_items.push(format!("已跳过文件夹：{}", item.path));
+            continue;
+        }
+        if item.category == "other" {
+            skipped_items.push(format!("已跳过未分类项目：{}", item.path));
+            continue;
+        }
+        let folder_name = desktop_category_folder_name(&item.category);
+        let target_folder = desktop.join(folder_name);
+        let target_folder_key = target_folder.to_string_lossy().to_string();
+        if folder_targets.insert(target_folder_key.clone()) {
+            created_folders.push(target_folder_key.clone());
+        }
+        let target_path = desktop_target_path_for_name(&target_folder, &item.name, &mut used_targets);
+        planned_moves.push(DesktopOrganizeMove {
+            from: item.path,
+            to: target_path.to_string_lossy().to_string(),
+            category: item.category,
+        });
+    }
+
+    Ok(DesktopOrganizePlan {
+        id: format!("desktop-plan-{created_at}"),
+        desktop_dir: desktop.to_string_lossy().to_string(),
+        planned_moves,
+        created_folders,
+        skipped_items,
+        created_at,
+        status: "draft".to_string(),
+    })
+}
+
+fn execute_desktop_organize_plan_inner(
+    app: &AppHandle,
+    plan: &DesktopOrganizePlan,
+) -> DesktopOrganizeResult {
+    let mut moved_count = 0;
+    let mut skipped_count = 0;
+    let mut errors = Vec::new();
+    let mut created_folders = Vec::new();
+
+    for folder in &plan.created_folders {
+        let folder_path = PathBuf::from(folder);
+        if !folder_path.exists() {
+            match fs::create_dir_all(&folder_path) {
+                Ok(()) => created_folders.push(folder.clone()),
+                Err(error) => errors.push(format!("创建文件夹失败 {}：{}", folder, error)),
+            }
+        }
+    }
+
+    for move_item in &plan.planned_moves {
+        let from = PathBuf::from(&move_item.from);
+        let to = PathBuf::from(&move_item.to);
+        if !from.exists() {
+            skipped_count += 1;
+            errors.push(format!("源文件不存在：{}", move_item.from));
+            continue;
+        }
+        if let Some(parent) = to.parent() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                errors.push(format!("创建目标目录失败 {}：{}", parent.to_string_lossy(), error));
+                continue;
+            }
+        }
+        match fs::rename(&from, &to) {
+            Ok(()) => {
+                moved_count += 1;
+            }
+            Err(rename_error) => {
+                match fs::copy(&from, &to).and_then(|_| fs::remove_file(&from)) {
+                    Ok(_) => {
+                        moved_count += 1;
+                    }
+                    Err(copy_error) => {
+                        errors.push(format!(
+                            "移动失败 {} -> {}：{}；回退失败：{}",
+                            from.to_string_lossy(),
+                            to.to_string_lossy(),
+                            rename_error,
+                            copy_error
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    let result_plan_id = plan.id.clone();
+    let result_created_folders = created_folders.clone();
+    let result_errors = errors.clone();
+    let result = DesktopOrganizeResult {
+        plan_id: result_plan_id.clone(),
+        moved_count,
+        skipped_count,
+        created_folders: result_created_folders.clone(),
+        errors: result_errors.clone(),
+    };
+
+    let _ = app.emit_to("panel", "desktop-items-updated", ());
+    let _ = app.emit_to("panel", "desktop-organize-completed", &result);
+
+    result
+}
+
+fn open_system_path(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("路径不存在".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let target = path.to_string_lossy().to_string();
+        Command::new("cmd")
+            .args(["/C", "start", "", &target])
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("当前平台不支持打开路径".to_string())
 }
 
 fn validate_declarative_plugin(package: &DeclarativePluginPackage) -> Result<(), String> {
@@ -1123,139 +1562,6 @@ fn action_draft_id() -> String {
     )
 }
 
-fn digits_before(text: &str, marker: &str) -> Option<u32> {
-    let marker_index = text.find(marker)?;
-    let digits = text[..marker_index]
-        .chars()
-        .rev()
-        .skip_while(|character| character.is_whitespace())
-        .take_while(|character| character.is_ascii_digit())
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect::<String>();
-    digits.parse().ok()
-}
-
-fn reminder_delay_seconds(prompt: &str) -> Option<u64> {
-    [("分钟后", 60), ("小时后", 60 * 60), ("天后", 24 * 60 * 60)]
-        .into_iter()
-        .find_map(|(marker, seconds)| {
-            digits_before(prompt, marker).map(|amount| u64::from(amount) * seconds)
-        })
-}
-
-fn reminder_clock(prompt: &str) -> Option<(u32, u32)> {
-    let mut hour = digits_before(prompt, "点")?;
-    if (prompt.contains("下午") || prompt.contains("晚上")) && hour < 12 {
-        hour += 12;
-    }
-    if prompt.contains("凌晨") && hour == 12 {
-        hour = 0;
-    }
-    if hour > 23 {
-        return None;
-    }
-    let minute = if prompt.contains("点半") {
-        30
-    } else {
-        prompt
-            .split_once('点')
-            .and_then(|(_, after_hour)| digits_before(after_hour, "分"))
-            .unwrap_or(0)
-    };
-    if minute > 59 {
-        return None;
-    }
-    Some((hour, minute))
-}
-
-fn reminder_title(prompt: &str) -> Option<String> {
-    let title = prompt
-        .split_once("提醒我")
-        .map(|(_, title)| title)
-        .or_else(|| prompt.split_once("提醒").map(|(_, title)| title))?
-        .trim_matches(|character: char| {
-            character.is_whitespace() || matches!(character, '，' | ',' | '。' | '.')
-        });
-    if title.is_empty() {
-        None
-    } else {
-        Some(title.to_string())
-    }
-}
-
-fn reminder_repeat(prompt: &str) -> &'static str {
-    if prompt.contains("工作日") {
-        "weekdays"
-    } else if prompt.contains("每天") || prompt.contains("每日") {
-        "daily"
-    } else if prompt.contains("每周") {
-        "weekly"
-    } else {
-        "none"
-    }
-}
-
-fn reminder_due_at(prompt: &str, now: DateTime<Local>) -> Option<u64> {
-    if let Some(delay) = reminder_delay_seconds(prompt) {
-        return Some(now.timestamp().max(0) as u64 + delay);
-    }
-
-    let (hour, minute) = reminder_clock(prompt)?;
-    let day_offset = if prompt.contains("后天") {
-        2
-    } else if prompt.contains("明天") {
-        1
-    } else {
-        0
-    };
-    let target_date = now.date_naive() + ChronoDuration::days(day_offset);
-    let mut due_at = Local
-        .with_ymd_and_hms(
-            target_date.year(),
-            target_date.month(),
-            target_date.day(),
-            hour,
-            minute,
-            0,
-        )
-        .single()?;
-    if day_offset == 0 && due_at <= now {
-        due_at += ChronoDuration::days(1);
-    }
-    Some(due_at.timestamp().max(0) as u64)
-}
-
-fn build_reminder_action_draft(prompt: &str, now: DateTime<Local>) -> Option<ActionDraft> {
-    if !prompt.contains("提醒") {
-        return None;
-    }
-    let title = reminder_title(prompt)?;
-    let due_at = reminder_due_at(prompt, now)?;
-    let repeat = reminder_repeat(prompt);
-    let formatted_due_at = Local
-        .timestamp_opt(due_at as i64, 0)
-        .single()?
-        .format("%Y-%m-%d %H:%M")
-        .to_string();
-    Some(ActionDraft {
-        id: action_draft_id(),
-        plugin_id: "piko.reminders".to_string(),
-        tool_name: "create_reminder".to_string(),
-        summary: format!(
-            "创建提醒「{title}」\n时间：{formatted_due_at}\n重复：{}",
-            repeat_rule_label(repeat)
-        ),
-        arguments: json!({
-            "title": title,
-            "dueAt": due_at,
-            "repeat": repeat,
-        }),
-        created_at: now.timestamp().max(0) as u64,
-    })
-}
-
 fn repeat_rule_label(repeat: &str) -> &str {
     match repeat {
         "daily" => "每天",
@@ -1263,85 +1569,6 @@ fn repeat_rule_label(repeat: &str) -> &str {
         "weekdays" => "工作日",
         _ => "仅一次",
     }
-}
-
-fn calendar_title(prompt: &str) -> Option<String> {
-    let title = prompt
-        .split_once("安排")
-        .map(|(_, title)| title)
-        .or_else(|| {
-            prompt.rsplit_once("的日程").map(|(before_calendar, _)| {
-                let after_end_time = before_calendar
-                    .split_once('到')
-                    .map(|(_, title)| title)
-                    .unwrap_or(before_calendar);
-                let after_hour = after_end_time
-                    .split_once('点')
-                    .map(|(_, title)| title)
-                    .unwrap_or(after_end_time);
-                let after_minute = after_hour
-                    .trim_start_matches(|character: char| character.is_ascii_digit())
-                    .strip_prefix('分')
-                    .unwrap_or(after_hour);
-                after_minute.strip_prefix('半').unwrap_or(after_minute)
-            })
-        })
-        .or_else(|| prompt.split_once("日程").map(|(_, title)| title))?
-        .trim_matches(|character: char| {
-            character.is_whitespace() || matches!(character, '，' | ',' | '。' | '.' | '的')
-        });
-    if title.is_empty() {
-        None
-    } else {
-        Some(title.to_string())
-    }
-}
-
-fn calendar_end_at(prompt: &str, start_at: u64) -> Option<u64> {
-    let (_, end_text) = prompt.split_once('到')?;
-    let (mut hour, minute) = reminder_clock(end_text)?;
-    let start = Local.timestamp_opt(start_at as i64, 0).single()?;
-    if hour < 12 && start.hour() >= 12 && !end_text.contains("凌晨") {
-        hour += 12;
-    }
-    let mut end = Local
-        .with_ymd_and_hms(start.year(), start.month(), start.day(), hour, minute, 0)
-        .single()?;
-    if end <= start {
-        end += ChronoDuration::days(1);
-    }
-    Some(end.timestamp().max(0) as u64)
-}
-
-fn build_calendar_action_draft(prompt: &str, now: DateTime<Local>) -> Option<ActionDraft> {
-    if !prompt.contains("安排") && !prompt.contains("日程") {
-        return None;
-    }
-    let title = calendar_title(prompt)?;
-    let start_at = reminder_due_at(prompt, now)?;
-    let end_at = calendar_end_at(prompt, start_at).unwrap_or(start_at + 60 * 60);
-    let formatted_start = Local
-        .timestamp_opt(start_at as i64, 0)
-        .single()?
-        .format("%Y-%m-%d %H:%M")
-        .to_string();
-    let formatted_end = Local
-        .timestamp_opt(end_at as i64, 0)
-        .single()?
-        .format("%Y-%m-%d %H:%M")
-        .to_string();
-    Some(ActionDraft {
-        id: action_draft_id(),
-        plugin_id: "piko.calendar".to_string(),
-        tool_name: "create_event".to_string(),
-        summary: format!("创建日程「{title}」\n时间：{formatted_start} - {formatted_end}"),
-        arguments: json!({
-            "title": title,
-            "startAt": start_at,
-            "endAt": end_at,
-        }),
-        created_at: now.timestamp().max(0) as u64,
-    })
 }
 
 fn find_calendar_conflicts(
@@ -1538,6 +1765,35 @@ fn decode_openai_tool_calls(
         .collect()
 }
 
+fn coalesce_calendar_delete_calls(calls: Vec<(String, ToolCall)>) -> Vec<(String, ToolCall)> {
+    let delete_count = calls
+        .iter()
+        .filter(|(_, call)| call.plugin_id == "piko.calendar" && call.tool_name == "delete_event")
+        .count();
+    if delete_count <= 1 {
+        return calls;
+    }
+
+    let events = calls
+        .iter()
+        .filter(|(_, call)| call.plugin_id == "piko.calendar" && call.tool_name == "delete_event")
+        .map(|(_, call)| call.arguments.clone())
+        .collect::<Vec<_>>();
+    let mut batch = Some(events);
+    calls
+        .into_iter()
+        .filter_map(|(id, mut call)| {
+            if call.plugin_id != "piko.calendar" || call.tool_name != "delete_event" {
+                return Some((id, call));
+            }
+            let events = batch.take()?;
+            call.tool_name = "delete_event_batch".to_string();
+            call.arguments = json!({ "events": events });
+            Some((id, call))
+        })
+        .collect()
+}
+
 fn append_provider_tool_results(
     request_body: &mut Value,
     provider: &str,
@@ -1698,150 +1954,6 @@ fn format_tool_timestamp(value: Option<u64>) -> Option<String> {
     })
 }
 
-fn prompt_asks_for_lookup(prompt: &str) -> bool {
-    let prompt = prompt.trim();
-    let query_words = [
-        "查询",
-        "查看",
-        "列出",
-        "列表",
-        "看看",
-        "看看我",
-        "查一下",
-        "查下",
-        "查查",
-        "有哪些",
-        "有什么",
-        "所有",
-        "全部",
-        "我的",
-    ];
-    prompt.contains("提醒")
-        && !prompt.contains("删除")
-        && !prompt.contains("移除")
-        && !prompt.contains("取消")
-        && query_words.iter().any(|word| prompt.contains(word))
-}
-
-fn prompt_asks_for_calendar_lookup(prompt: &str) -> bool {
-    let prompt = prompt.trim();
-    let query_words = [
-        "查询",
-        "查看",
-        "列出",
-        "列表",
-        "看看",
-        "看看我",
-        "查一下",
-        "查下",
-        "查查",
-        "有哪些",
-        "有什么",
-        "所有",
-        "全部",
-        "我的",
-    ];
-    prompt.contains("日程")
-        && !prompt.contains("删除")
-        && !prompt.contains("移除")
-        && !prompt.contains("取消")
-        && query_words.iter().any(|word| prompt.contains(word))
-}
-
-fn format_reminder_lookup(reminders: &[Reminder]) -> String {
-    if reminders.is_empty() {
-        return "你目前没有提醒。".to_string();
-    }
-
-    let mut lines = vec![format!("我查到了 {} 条提醒：", reminders.len())];
-    for reminder in reminders.iter().take(10) {
-        let due_at =
-            format_tool_timestamp(Some(reminder.due_at)).unwrap_or_else(|| "时间无效".to_string());
-        lines.push(format!(
-            "• {} | {} | 重复：{} | ID：{}",
-            reminder.title,
-            due_at,
-            repeat_rule_label(&reminder.repeat),
-            reminder.id
-        ));
-    }
-    if reminders.len() > 10 {
-        lines.push(format!("• 还有 {} 条提醒未显示。", reminders.len() - 10));
-    }
-    lines.join("\n")
-}
-
-fn format_calendar_lookup(events: &[CalendarEvent]) -> String {
-    if events.is_empty() {
-        return "你目前没有日程。".to_string();
-    }
-
-    let mut lines = vec![format!("我查到了 {} 条日程：", events.len())];
-    for event in events.iter().take(10) {
-        let start =
-            format_tool_timestamp(Some(event.start_at)).unwrap_or_else(|| "时间无效".to_string());
-        let end =
-            format_tool_timestamp(Some(event.end_at)).unwrap_or_else(|| "时间无效".to_string());
-        lines.push(format!(
-            "• {} | {} - {} | ID：{}",
-            event.title, start, end, event.id
-        ));
-    }
-    if events.len() > 10 {
-        lines.push(format!("• 还有 {} 条日程未显示。", events.len() - 10));
-    }
-    lines.join("\n")
-}
-
-fn emit_local_lookup_response(
-    app: &AppHandle,
-    context: &ChatContext,
-    request_id: &str,
-    history_prompt: &str,
-    response: String,
-) -> Result<(), String> {
-    emit_chat_event(
-        app,
-        ChatEvent::Started {
-            request_id: request_id.to_string(),
-            working: false,
-        },
-    );
-    emit_chat_event(
-        app,
-        ChatEvent::Delta {
-            request_id: request_id.to_string(),
-            sequence: 1,
-            text: response.clone(),
-        },
-    );
-
-    let history_entry = ChatHistoryEntry {
-        id: request_id.to_string(),
-        prompt: history_prompt.to_string(),
-        response,
-        created_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-    };
-    append_chat_history(app, history_entry.clone())?;
-    let mut session_history = context
-        .0
-        .lock()
-        .map_err(|_| "无法更新当前对话上下文".to_string())?;
-    append_session_chat_history(&mut session_history, history_entry);
-    let _ = app.emit_to("panel", "chat-history-updated", ());
-
-    emit_chat_event(
-        app,
-        ChatEvent::Completed {
-            request_id: request_id.to_string(),
-        },
-    );
-    Ok(())
-}
-
 #[derive(Clone, Debug)]
 struct ReminderDeleteInput {
     id: String,
@@ -1856,6 +1968,11 @@ struct CalendarDeleteInput {
     title: Option<String>,
     start_at: Option<u64>,
     end_at: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+struct CalendarDeleteBatchInput {
+    events: Vec<CalendarDeleteInput>,
 }
 
 fn reminder_delete_input_from_value(value: &Value) -> Result<ReminderDeleteInput, String> {
@@ -1887,6 +2004,23 @@ fn calendar_delete_input_from_value(value: &Value) -> Result<CalendarDeleteInput
         end_at: value["endAt"]
             .as_str()
             .and_then(|text| tool_timestamp_str(text)),
+    })
+}
+
+fn calendar_delete_batch_input_from_value(
+    value: &Value,
+) -> Result<CalendarDeleteBatchInput, String> {
+    let events = value["events"]
+        .as_array()
+        .ok_or_else(|| "批量删除日程必须包含 events 数组".to_string())?;
+    if events.is_empty() || events.len() > 100 {
+        return Err("批量删除日程数量必须在 1 到 100 之间".to_string());
+    }
+    Ok(CalendarDeleteBatchInput {
+        events: events
+            .iter()
+            .map(calendar_delete_input_from_value)
+            .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
@@ -1959,6 +2093,22 @@ fn action_draft_from_tool_call(
                 _ => String::new(),
             };
             format!("删除日程「{title}」{range}")
+        }
+        ("piko.calendar", "delete_event_batch") => {
+            let batch = calendar_delete_batch_input_from_value(&call.arguments)?;
+            let mut lines = vec![format!("批量删除 {} 条日程：", batch.events.len())];
+            for input in batch.events {
+                let title = input.title.unwrap_or_else(|| format!("ID {}", input.id));
+                let range = match (
+                    format_tool_timestamp(input.start_at),
+                    format_tool_timestamp(input.end_at),
+                ) {
+                    (Some(start), Some(end)) => format!("，{start} - {end}"),
+                    _ => String::new(),
+                };
+                lines.push(format!("• {title}{range}"));
+            }
+            lines.join("\n")
         }
         ("piko.calendar", "create_event_batch") => {
             let batch = calendar_event_batch_input_from_value(&call.arguments)?;
@@ -2708,7 +2858,19 @@ fn clear_chat_history(app: AppHandle, context: State<'_, ChatContext>) -> Result
         .lock()
         .map_err(|_| "无法清除当前对话上下文".to_string())?
         .clear();
-    persist_chat_history(&app, &[])
+    persist_chat_history(&app, &[])?;
+    let _ = app.emit_to("panel", "chat-history-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_chat_context(context: State<'_, ChatContext>) -> Result<(), String> {
+    context
+        .0
+        .lock()
+        .map_err(|_| "无法清除当前对话上下文".to_string())?
+        .clear();
+    Ok(())
 }
 
 fn stop_local_tts(tts: &LocalTts) -> Result<(), String> {
@@ -2830,6 +2992,7 @@ fn create_reminder_record(app: &AppHandle, input: ReminderInput) -> Result<Remin
     let mut reminders = read_reminders(app);
     reminders.push(reminder.clone());
     persist_reminders(app, &reminders)?;
+    let _ = app.emit_to("panel", "reminders-updated", ());
     Ok(reminder)
 }
 
@@ -2841,14 +3004,13 @@ fn delete_reminder_record(app: &AppHandle, input: ReminderDeleteInput) -> Result
         .ok_or_else(|| "未找到该提醒".to_string())?;
     let deleted = reminders.remove(index);
     persist_reminders(app, &reminders)?;
+    let _ = app.emit_to("panel", "reminders-updated", ());
     Ok(deleted)
 }
 
 #[tauri::command]
 fn create_reminder(app: AppHandle, input: ReminderInput) -> Result<Reminder, String> {
-    let reminder = create_reminder_record(&app, input)?;
-    let _ = app.emit_to("panel", "reminders-updated", ());
-    Ok(reminder)
+    create_reminder_record(&app, input)
 }
 
 #[tauri::command]
@@ -2863,7 +3025,9 @@ fn create_calendar_event_record(
     input: CalendarEventInput,
 ) -> Result<CalendarEvent, String> {
     let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
-    create_calendar_event_record_at_path(&path, input)
+    let event = create_calendar_event_record_at_path(&path, input)?;
+    let _ = app.emit("calendar-events-updated", ());
+    Ok(event)
 }
 
 fn create_calendar_event_record_at_path(
@@ -2888,6 +3052,45 @@ fn delete_calendar_event_record(
         .ok_or_else(|| "未找到该日程".to_string())?;
     let deleted = events.remove(index);
     persist_calendar_events(app, &events)?;
+    crate::sync::calendar_sync::mark_local_events_deleted(app, &[deleted.id.clone()])?;
+    let _ = app.emit("calendar-events-updated", ());
+    Ok(deleted)
+}
+
+fn delete_calendar_event_batch_record(
+    app: &AppHandle,
+    input: CalendarDeleteBatchInput,
+) -> Result<Vec<CalendarEvent>, String> {
+    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
+    let deleted = delete_calendar_event_batch_record_at_path(&path, input)?;
+    let deleted_ids = deleted.iter().map(|event| event.id.clone()).collect::<Vec<_>>();
+    crate::sync::calendar_sync::mark_local_events_deleted(app, &deleted_ids)?;
+    let _ = app.emit("calendar-events-updated", ());
+    Ok(deleted)
+}
+
+fn delete_calendar_event_batch_record_at_path(
+    path: &Path,
+    input: CalendarDeleteBatchInput,
+) -> Result<Vec<CalendarEvent>, String> {
+    let mut ids = HashSet::new();
+    for event in &input.events {
+        if !ids.insert(event.id.as_str()) {
+            return Err(format!("批量删除日程中包含重复 ID：{}", event.id));
+        }
+    }
+
+    let mut events = read_calendar_events_from_path(path);
+    let deleted = events
+        .iter()
+        .filter(|event| ids.contains(event.id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if deleted.len() != ids.len() {
+        return Err("部分待删除日程已不存在，请重新查询日程后再试".to_string());
+    }
+    events.retain(|event| !ids.contains(event.id.as_str()));
+    persist_calendar_events_to_path(path, &events)?;
     Ok(deleted)
 }
 
@@ -2943,6 +3146,7 @@ fn create_calendar_event_batch_record(
         created.push(event);
     }
     persist_calendar_events(app, &events)?;
+    let _ = app.emit("calendar-events-updated", ());
     Ok(created)
 }
 
@@ -2951,9 +3155,7 @@ fn create_calendar_event(
     app: AppHandle,
     input: CalendarEventInput,
 ) -> Result<CalendarEvent, String> {
-    let event = create_calendar_event_record(&app, input)?;
-    let _ = app.emit_to("panel", "calendar-events-updated", ());
-    Ok(event)
+    create_calendar_event_record(&app, input)
 }
 
 #[tauri::command]
@@ -2965,7 +3167,8 @@ fn delete_calendar_event(app: AppHandle, id: String) -> Result<(), String> {
         return Err("未找到该日程".to_string());
     }
     persist_calendar_events(&app, &events)?;
-    let _ = app.emit_to("panel", "calendar-events-updated", ());
+    crate::sync::calendar_sync::mark_local_events_deleted(&app, &[id])?;
+    let _ = app.emit("calendar-events-updated", ());
     Ok(())
 }
 
@@ -3151,16 +3354,15 @@ fn confirm_chat_action(
             arguments: draft.arguments,
         },
     )?;
-    let (message, event_name) = match plugin_id.as_str() {
-        "piko.calendar" if is_calendar_batch => ("已创建所选日程。", "calendar-events-updated"),
-        "piko.calendar" if tool_name == "delete_event" => {
-            ("日程已删除。", "calendar-events-updated")
+    let message = match plugin_id.as_str() {
+        "piko.calendar" if is_calendar_batch => "已创建所选日程。",
+        "piko.calendar" if matches!(tool_name.as_str(), "delete_event" | "delete_event_batch") => {
+            "日程已删除。"
         }
-        "piko.calendar" => ("日程已创建。", "calendar-events-updated"),
-        "piko.reminders" if tool_name == "delete_reminder" => ("提醒已删除。", "reminders-updated"),
-        _ => ("提醒已创建。", "reminders-updated"),
+        "piko.calendar" => "日程已创建。",
+        "piko.reminders" if tool_name == "delete_reminder" => "提醒已删除。",
+        _ => "提醒已创建。",
     };
-    let _ = app.emit_to("panel", event_name, ());
     Ok(ActionExecution {
         message: conflict_note
             .map(|note| format!("{message}\n{note}"))
@@ -3192,7 +3394,9 @@ fn delete_reminder(app: AppHandle, id: String) -> Result<(), String> {
     if reminders.len() == previous_len {
         return Err("未找到该提醒".to_string());
     }
-    persist_reminders(&app, &reminders)
+    persist_reminders(&app, &reminders)?;
+    let _ = app.emit_to("panel", "reminders-updated", ());
+    Ok(())
 }
 
 fn collect_due_reminders(reminders: &mut [Reminder], now: u64) -> Vec<Reminder> {
@@ -3291,9 +3495,248 @@ fn emit_focus_updated(app: &AppHandle, focus: &FocusTimer) {
     }
 }
 
+fn work_rhythm_snapshot(
+    app: &AppHandle,
+    typing: &typing_activity::TypingActivityState,
+    focus: &FocusTimer,
+) -> Result<WorkRhythmState, String> {
+    let settings = read_settings(app);
+    let now = unix_timestamp();
+    let focus_snapshot = focus_snapshot(app, focus)?;
+    let typing_snapshot = typing.snapshot(now)?;
+    let active_app_state = app.state::<app_awareness::ForegroundAppState>();
+    let active_app_category = active_app_state
+        .current_category
+        .lock()
+        .map_err(|_| "无法读取前台应用状态".to_string())?;
+    let chat_active = app
+        .state::<ChatRequests>()
+        .0
+        .lock()
+        .map(|requests| !requests.is_empty())
+        .unwrap_or(false);
+    let focus_is_active = focus_snapshot.status == "running";
+    let is_busy = chat_active
+        || focus_is_active
+        || matches!(
+            *active_app_category,
+            app_awareness::AppCategory::VideoConference | app_awareness::AppCategory::Game
+        );
+    let idle_seconds = system_idle_seconds().unwrap_or(0);
+    let is_idle = !settings.sensing_paused
+        && !is_busy
+        && idle_seconds >= idle_threshold_seconds(&settings.quiet_mode);
+
+    Ok(WorkRhythmState {
+        date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+        is_idle,
+        idle_seconds,
+        active_app_category: active_app_category.to_string(),
+        typing_characters_today: typing_snapshot.typed_characters,
+        typing_seconds_today: typing_snapshot.typing_seconds,
+        focus_status: focus_snapshot.status,
+        focus_kind: focus_snapshot.kind,
+        focus_remaining_seconds: focus_snapshot.remaining_seconds,
+    })
+}
+
+fn emit_work_rhythm_updated(app: &AppHandle) {
+    let typing = app.state::<typing_activity::TypingActivityState>();
+    let focus = app.state::<FocusTimer>();
+    if let Ok(snapshot) = work_rhythm_snapshot(app, &typing, &focus) {
+        if let Ok(mut last) = app.state::<WorkRhythmCache>().0.lock() {
+            if last.as_ref() != Some(&snapshot) {
+                *last = Some(snapshot.clone());
+                let _ = app.emit_to("panel", "work-rhythm-updated", snapshot.clone());
+                if let Ok(typing_snapshot) = typing.snapshot(unix_timestamp()) {
+                    let _ = app.emit_to("panel", "typing-stats-updated", typing_snapshot);
+                }
+            }
+        }
+    }
+}
+
+fn maybe_emit_break_reminder(app: &AppHandle) {
+    let typing = app.state::<typing_activity::TypingActivityState>();
+    let focus = app.state::<FocusTimer>();
+    let settings = read_settings(app);
+    let Ok(snapshot) = work_rhythm_snapshot(app, &typing, &focus) else {
+        return;
+    };
+
+    if settings.sensing_paused
+        || !settings.break_reminders_enabled
+        || settings.quiet_mode == "minimal"
+    {
+        return;
+    }
+    if snapshot.is_idle || snapshot.focus_status == "running" || snapshot.focus_kind == "break" {
+        return;
+    }
+    if matches!(snapshot.active_app_category.as_str(), "video_conference" | "game") {
+        return;
+    }
+
+    if is_within_quiet_hours(
+        &settings.break_reminder_quiet_hours_start,
+        &settings.break_reminder_quiet_hours_end,
+        settings.break_reminder_quiet_hours_enabled,
+        unix_timestamp(),
+    ) {
+        return;
+    }
+
+    let interval_seconds = settings.break_reminder_interval_minutes.saturating_mul(60);
+    let cooldown_seconds = settings.break_reminder_cooldown_minutes.saturating_mul(60);
+    if interval_seconds == 0 || cooldown_seconds == 0 {
+        return;
+    }
+
+    let bucket = snapshot.typing_seconds_today / interval_seconds;
+    if bucket == 0 {
+        return;
+    }
+
+    let now = unix_timestamp();
+    let reminder_state = app.state::<WorkRhythmReminderCache>();
+    let Ok(mut state) = reminder_state.0.lock() else {
+        return;
+    };
+    if state.date != snapshot.date {
+        *state = WorkRhythmReminderState {
+            date: snapshot.date.clone(),
+            last_sent_bucket: 0,
+            last_notified_at: 0,
+        };
+    }
+    if bucket <= state.last_sent_bucket {
+        return;
+    }
+    if now.saturating_sub(state.last_notified_at) < cooldown_seconds {
+        return;
+    }
+
+    let reminder_minutes = bucket.saturating_mul(settings.break_reminder_interval_minutes);
+    let message = format!("你已经连续工作约 {reminder_minutes} 分钟了，要不要休息 5 分钟？");
+    let _ = app
+        .notification()
+        .builder()
+        .title("Piko 休息提醒")
+        .body(&message)
+        .show();
+    let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::BreakReminder { message });
+    state.last_sent_bucket = bucket;
+    state.last_notified_at = now;
+}
+
+fn parse_clock_minutes(value: &str) -> Option<u64> {
+    let (hour, minute) = value.trim().split_once(':')?;
+    let hour = hour.parse::<u64>().ok()?;
+    let minute = minute.parse::<u64>().ok()?;
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some(hour * 60 + minute)
+}
+
+fn is_within_quiet_hours(start: &str, end: &str, enabled: bool, now: u64) -> bool {
+    if !enabled {
+        return false;
+    }
+    let Some(start_minutes) = parse_clock_minutes(start) else {
+        return false;
+    };
+    let Some(end_minutes) = parse_clock_minutes(end) else {
+        return false;
+    };
+    let Some(now_local) = Local.timestamp_opt(now as i64, 0).single() else {
+        return false;
+    };
+    let current_minutes = (now_local.hour() as u64) * 60 + (now_local.minute() as u64);
+    if start_minutes == end_minutes {
+        return true;
+    }
+    if start_minutes < end_minutes {
+        current_minutes >= start_minutes && current_minutes < end_minutes
+    } else {
+        current_minutes >= start_minutes || current_minutes < end_minutes
+    }
+}
+
 #[tauri::command]
 fn get_focus_state(app: AppHandle, focus: State<'_, FocusTimer>) -> Result<FocusSnapshot, String> {
     focus_snapshot(&app, &focus)
+}
+
+#[tauri::command]
+fn get_typing_stats_today(app: AppHandle) -> Result<typing_activity::TypingStatsToday, String> {
+    typing_activity::get_typing_stats_today(&app)
+}
+
+#[tauri::command]
+fn get_work_rhythm_state(
+    app: AppHandle,
+    typing: State<'_, typing_activity::TypingActivityState>,
+    focus: State<'_, FocusTimer>,
+) -> Result<WorkRhythmState, String> {
+    work_rhythm_snapshot(&app, &typing, &focus)
+}
+
+#[tauri::command]
+fn list_desktop_items(app: AppHandle) -> Result<Vec<DesktopItem>, String> {
+    read_desktop_items(&app)
+}
+
+#[tauri::command]
+fn build_desktop_organize_plan(
+    app: AppHandle,
+    cache: State<'_, DesktopOrganizePlanCache>,
+) -> Result<DesktopOrganizePlan, String> {
+    let plan = build_desktop_organize_plan_inner(&app)?;
+    let mut current = cache
+        .0
+        .lock()
+        .map_err(|_| "无法保存桌面整理计划".to_string())?;
+    *current = Some(plan.clone());
+    let _ = app.emit_to("panel", "desktop-organize-planned", &plan);
+    Ok(plan)
+}
+
+#[tauri::command]
+fn execute_desktop_organize_plan(
+    app: AppHandle,
+    cache: State<'_, DesktopOrganizePlanCache>,
+    input: ExecuteDesktopOrganizePlanInput,
+) -> Result<DesktopOrganizeResult, String> {
+    let plan = {
+        let current = cache
+            .0
+            .lock()
+            .map_err(|_| "无法读取桌面整理计划".to_string())?;
+        current
+            .clone()
+            .ok_or_else(|| "请先生成桌面整理计划".to_string())?
+    };
+    if plan.id != input.plan_id {
+        return Err("整理计划已过期，请重新生成".to_string());
+    }
+
+    let result = execute_desktop_organize_plan_inner(&app, &plan);
+    let mut updated_plan = plan.clone();
+    updated_plan.status = "completed".to_string();
+    if let Ok(mut current) = cache.0.lock() {
+        *current = Some(updated_plan);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path.trim());
+    if path.as_os_str().is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    open_system_path(&path)
 }
 
 #[tauri::command]
@@ -3374,6 +3817,27 @@ fn stop_focus(app: AppHandle, focus: State<'_, FocusTimer>) -> Result<FocusSnaps
     *focus.0.lock().map_err(|_| "无法更新专注状态".to_string())? = None;
     emit_focus_updated(&app, &focus);
     focus_snapshot(&app, &focus)
+}
+
+fn normalize_clock_label(value: &str) -> Result<String, String> {
+    let Some(minutes) = parse_clock_minutes(value) else {
+        return Err("静默时段时间格式应为 HH:MM".to_string());
+    };
+    let hour = minutes / 60;
+    let minute = minutes % 60;
+    Ok(format!("{hour:02}:{minute:02}"))
+}
+
+fn validate_work_rhythm_preferences(input: &WorkRhythmPreferencesInput) -> Result<(), String> {
+    if !(15..=240).contains(&input.break_reminder_interval_minutes) {
+        return Err("休息提醒间隔应在 15 到 240 分钟之间".to_string());
+    }
+    if !(5..=240).contains(&input.break_reminder_cooldown_minutes) {
+        return Err("休息提醒冷却应在 5 到 240 分钟之间".to_string());
+    }
+    let _ = normalize_clock_label(&input.break_reminder_quiet_hours_start)?;
+    let _ = normalize_clock_label(&input.break_reminder_quiet_hours_end)?;
+    Ok(())
 }
 
 fn process_focus_timer(app: &AppHandle, focus: &FocusTimer) -> Result<bool, String> {
@@ -3579,8 +4043,18 @@ fn watch_foreground_app(app: &AppHandle) {
                     "appName": name,
                 }));
             }
+            emit_work_rhythm_updated(&app);
         }
         thread::sleep(Duration::from_secs(5));
+    });
+}
+
+fn watch_work_rhythm(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || loop {
+        emit_work_rhythm_updated(&app);
+        maybe_emit_break_reminder(&app);
+        thread::sleep(Duration::from_secs(2));
     });
 }
 
@@ -3685,12 +4159,19 @@ fn update_quiet_mode(app: AppHandle, quiet_mode: String) -> Result<AppSettings, 
     let mut settings = read_settings(&app);
     settings.quiet_mode = quiet_mode;
     persist_settings(&app, &settings);
+    let _ = app.emit_to("panel", "settings-updated", &settings);
     let _ = app.emit_to("pet", "settings-updated", &settings);
+    let _ = app.emit_to("bubble", "settings-updated", &settings);
+    emit_work_rhythm_updated(&app);
     Ok(settings)
 }
 
 #[tauri::command]
-fn update_preferences(app: AppHandle, input: PreferencesInput) -> Result<AppSettings, String> {
+fn update_preferences(
+    app: AppHandle,
+    awareness: State<'_, app_awareness::ForegroundAppState>,
+    input: PreferencesInput,
+) -> Result<AppSettings, String> {
     let companion_name = input.companion_name.trim();
     if companion_name.is_empty() {
         return Err("精灵名称不能为空".to_string());
@@ -3707,8 +4188,34 @@ fn update_preferences(app: AppHandle, input: PreferencesInput) -> Result<AppSett
     settings.theme = input.theme;
     settings.sensing_paused = input.sensing_paused;
     persist_settings(&app, &settings);
+    if let Ok(mut paused) = awareness.sensing_paused.lock() {
+        *paused = settings.sensing_paused;
+    }
     let _ = app.emit_to("pet", "settings-updated", &settings);
     let _ = app.emit_to("bubble", "settings-updated", &settings);
+    emit_work_rhythm_updated(&app);
+    Ok(settings)
+}
+
+#[tauri::command]
+fn update_work_rhythm_preferences(
+    app: AppHandle,
+    input: WorkRhythmPreferencesInput,
+) -> Result<AppSettings, String> {
+    validate_work_rhythm_preferences(&input)?;
+
+    let mut settings = read_settings(&app);
+    settings.break_reminders_enabled = input.break_reminders_enabled;
+    settings.break_reminder_interval_minutes = input.break_reminder_interval_minutes;
+    settings.break_reminder_cooldown_minutes = input.break_reminder_cooldown_minutes;
+    settings.break_reminder_quiet_hours_enabled = input.break_reminder_quiet_hours_enabled;
+    settings.break_reminder_quiet_hours_start = normalize_clock_label(&input.break_reminder_quiet_hours_start)?;
+    settings.break_reminder_quiet_hours_end = normalize_clock_label(&input.break_reminder_quiet_hours_end)?;
+    persist_settings(&app, &settings);
+    let _ = app.emit_to("panel", "settings-updated", &settings);
+    let _ = app.emit_to("pet", "settings-updated", &settings);
+    let _ = app.emit_to("bubble", "settings-updated", &settings);
+    emit_work_rhythm_updated(&app);
     Ok(settings)
 }
 
@@ -3728,6 +4235,17 @@ fn update_ai_settings(app: AppHandle, input: AiSettingsInput) -> Result<AppSetti
     settings.ai = ai;
     settings.has_api_key = read_api_key().is_some();
     persist_settings(&app, &settings);
+    Ok(settings)
+}
+
+#[tauri::command]
+fn update_html_preview_enabled(app: AppHandle, enabled: bool) -> Result<AppSettings, String> {
+    let mut settings = read_settings(&app);
+    settings.html_preview_enabled = enabled;
+    persist_settings(&app, &settings);
+    let _ = app.emit_to("panel", "settings-updated", &settings);
+    let _ = app.emit_to("pet", "settings-updated", &settings);
+    let _ = app.emit_to("bubble", "settings-updated", &settings);
     Ok(settings)
 }
 
@@ -3775,7 +4293,7 @@ fn extract_model_ids(provider: &str, body: &Value) -> Vec<String> {
 fn system_prompt(companion_name: &str, memory_context: Option<&str>) -> String {
     let now = Local::now();
     let base = format!(
-        "你是桌面 AI 宠物精灵 {companion_name}。回答应清晰、简洁、友好。当前本地时间是 {}。可以使用已提供的工具读取、创建、检查冲突，或提出提醒和日程草稿。查询提醒时优先调用 list_reminders；查询、删除或定位日程时优先调用 list_events。删除提醒或日程前，先用列表工具找到具体目标，再生成待确认草稿并等待用户确认。规划多条日程时优先使用批量创建工具。工具中的时间参数必须使用带时区的 ISO 8601 字符串，例如 2026-06-02T15:00:00+08:00，不要自行计算 Unix 时间戳。写入和删除操作必须等待用户确认；不要声称已经执行未实际执行的电脑操作。遇到时间歧义时先向用户追问。",
+        "你是桌面 AI 宠物精灵 {companion_name}。回答应清晰、简洁、友好。当前本地时间是 {}。可以使用已提供的工具读取、创建、检查冲突，或提出提醒和日程草稿。查询提醒时优先调用 list_reminders；查询、删除或定位日程时优先调用 list_events。删除提醒或日程前，先用列表工具找到具体目标，再生成待确认草稿并等待用户确认。删除多个或全部日程时必须使用 delete_event_batch，一次提交全部目标 ID。规划多条日程时优先使用批量创建工具。工具中的时间参数必须使用带时区的 ISO 8601 字符串，例如 2026-06-02T15:00:00+08:00，不要自行计算 Unix 时间戳。写入和删除操作必须等待用户确认；不要声称已经执行未实际执行的电脑操作。遇到时间歧义时先向用户追问。",
         now.format("%Y-%m-%d %H:%M:%S %:z")
     );
 
@@ -4078,7 +4596,8 @@ async fn stream_chat(
             return Err("模型工具调用次数过多".to_string());
         }
 
-        let calls = decode_openai_tool_calls(registry, openai_tool_calls)?;
+        let calls =
+            coalesce_calendar_delete_calls(decode_openai_tool_calls(registry, openai_tool_calls)?);
         let mut tool_results = Vec::new();
         for (id, call) in calls {
             let manifest = registry.tool_manifest(&call)?;
@@ -4194,45 +4713,6 @@ async fn chat_start(
     input: ChatStartInput,
 ) -> Result<(), String> {
     if input.attachment_action.is_none() && !input.include_screenshot.unwrap_or(false) {
-        let now = Local::now();
-        let wants_reminder_lookup = prompt_asks_for_lookup(&input.prompt);
-        let wants_calendar_lookup = prompt_asks_for_calendar_lookup(&input.prompt);
-        if wants_reminder_lookup || wants_calendar_lookup {
-            let response = match (wants_reminder_lookup, wants_calendar_lookup) {
-                (true, true) => format!(
-                    "{}\n\n{}",
-                    format_reminder_lookup(&list_reminders(app.clone())),
-                    format_calendar_lookup(&list_calendar_events(app.clone()))
-                ),
-                (true, false) => format_reminder_lookup(&list_reminders(app.clone())),
-                (false, true) => format_calendar_lookup(&list_calendar_events(app.clone())),
-                (false, false) => unreachable!(),
-            };
-            return emit_local_lookup_response(
-                &app,
-                &context,
-                &input.request_id,
-                &input.prompt,
-                response,
-            );
-        }
-        if let Some(draft) = build_calendar_action_draft(&input.prompt, now)
-            .or_else(|| build_reminder_action_draft(&input.prompt, now))
-        {
-            drafts
-                .0
-                .lock()
-                .map_err(|_| "无法保存待确认动作".to_string())?
-                .insert(draft.id.clone(), draft.clone());
-            emit_chat_event(
-                &app,
-                ChatEvent::ActionProposed {
-                    request_id: input.request_id,
-                    draft,
-                },
-            );
-            return Ok(());
-        }
     }
     let attachment = attachments
         .0
@@ -4426,6 +4906,7 @@ fn toggle_foreground_sensing(
         .map_err(|_| "无法设置感知状态".to_string())?;
     *sensing_paused = paused;
     let _ = app.emit("foreground-sensing-changed", json!({ "paused": paused }));
+    emit_work_rhythm_updated(&app);
     Ok(())
 }
 
@@ -4453,9 +4934,31 @@ fn preview_import(file_path: String) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-fn import_data(app: AppHandle, file_path: String) -> Result<serde_json::Value, String> {
+fn import_data(
+    app: AppHandle,
+    focus: State<'_, FocusTimer>,
+    file_path: String,
+) -> Result<serde_json::Value, String> {
     let path = std::path::Path::new(&file_path);
     let result = crate::sync::import_export::import_from_file(&app, path)?;
+    if result.chats_imported > 0 {
+        let _ = app.emit_to("panel", "chat-history-updated", ());
+    }
+    if result.reminders_imported > 0 {
+        let _ = app.emit_to("panel", "reminders-updated", ());
+    }
+    if result.calendar_imported > 0 {
+        let _ = app.emit("calendar-events-updated", ());
+    }
+    if result.focus_imported > 0 {
+        emit_focus_updated(&app, &focus);
+    }
+    if result.settings_imported {
+        let settings = read_settings(&app);
+        let _ = app.emit_to("panel", "settings-updated", &settings);
+        let _ = app.emit_to("pet", "settings-updated", &settings);
+        let _ = app.emit_to("bubble", "settings-updated", &settings);
+    }
     serde_json::to_value(result).map_err(|e| e.to_string())
 }
 
@@ -4496,7 +4999,7 @@ fn sync_calendar_from_system(app: AppHandle) -> Result<serde_json::Value, String
         .max()
         .unwrap_or(0);
     let result = crate::sync::calendar_sync::pull_from_system_calendar(&app, since)?;
-    let _ = app.emit_to("panel", "calendar-events-updated", ());
+    let _ = app.emit("calendar-events-updated", ());
     let _ = app.emit_to("panel", "calendar-sync-updated", ());
     Ok(json!({
         "imported": result.imported,
@@ -4714,6 +5217,9 @@ pub fn run() {
         .manage(LocalTts::default())
         .manage(FocusTimer::default())
         .manage(IdleDetection::default())
+        .manage(WorkRhythmCache::default())
+        .manage(WorkRhythmReminderCache::default())
+        .manage(DesktopOrganizePlanCache::default())
         .manage(TextAttachmentStore::default())
         .manage(ScreenCaptureStore::default())
         .manage(app_awareness::ForegroundAppState::default())
@@ -4730,6 +5236,7 @@ pub fn run() {
                 .expect("无法初始化内存数据库");
             app.manage(memory_db);
             app.manage(memory::CandidateCache::default());
+            app.manage(typing_activity::TypingActivityState::new(app.handle()));
 
             configure_tray(app)?;
             configure_global_shortcut(app)?;
@@ -4737,6 +5244,13 @@ pub fn run() {
                 .register_declarative_plugins(app.handle());
             let settings = read_settings(app.handle());
             persist_settings(app.handle(), &settings);
+            if let Ok(mut paused) = app
+                .state::<app_awareness::ForegroundAppState>()
+                .sensing_paused
+                .lock()
+            {
+                *paused = settings.sensing_paused;
+            }
             if !settings.onboarding_completed {
                 show_and_focus(app.handle(), "panel");
             }
@@ -4752,6 +5266,9 @@ pub fn run() {
             watch_ambient_nudges(app.handle());
             watch_idle_detection(app.handle());
             watch_foreground_app(app.handle());
+            typing_activity::start_keyboard_monitor(app.handle());
+            typing_activity::watch_typing_rollover(app.handle());
+            watch_work_rhythm(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -4772,9 +5289,16 @@ pub fn run() {
             check_for_updates_extended,
             list_chat_history,
             clear_chat_history,
+            clear_chat_context,
             speak_local_text,
             stop_local_speech,
             get_focus_state,
+            get_typing_stats_today,
+            get_work_rhythm_state,
+            list_desktop_items,
+            build_desktop_organize_plan,
+            execute_desktop_organize_plan,
+            open_path,
             start_focus,
             start_break,
             pause_focus,
@@ -4798,7 +5322,9 @@ pub fn run() {
             save_generated_text,
             update_quiet_mode,
             update_preferences,
+            update_work_rhythm_preferences,
             update_ai_settings,
+            update_html_preview_enabled,
             list_models,
             chat_start,
             chat_cancel,
@@ -4860,17 +5386,18 @@ mod tests {
     use super::CaptureSelection;
     use super::{
         action_draft_from_tool_call, append_provider_tool_results, append_provider_tools,
-        append_session_chat_history, build_attachment_prompt, build_calendar_action_draft,
-        build_reminder_action_draft, calendar_conflict_note, calendar_event_batch_input_from_value,
-        calendar_event_input_from_value, chat_request_body, chat_url, collect_due_reminders,
-        create_calendar_event_record_at_path, decode_openai_tool_calls, extract_chat_deltas,
-        extract_model_ids, find_calendar_conflicts, format_calendar_lookup, format_reminder_lookup,
-        idle_threshold_seconds, models_url, monitor_contains, next_idle_state, next_repeat_due,
-        normalize_base_url, parse_data_url, prompt_asks_for_calendar_lookup,
-        prompt_asks_for_lookup, provider_tools, read_calendar_events_from_path,
-        read_text_attachment, render_icalendar, should_bypass_system_proxy, system_prompt,
-        text_for_speech, today_focus_minutes, update_anthropic_tool_calls,
-        update_gemini_tool_calls, update_openai_tool_calls, validate_ai_settings,
+        append_session_chat_history, build_attachment_prompt, calendar_conflict_note,
+        calendar_delete_batch_input_from_value, calendar_event_batch_input_from_value,
+        calendar_event_input_from_value, chat_request_body, chat_url,
+        coalesce_calendar_delete_calls, collect_due_reminders, create_calendar_event_record_at_path,
+        decode_openai_tool_calls,
+        delete_calendar_event_batch_record_at_path, extract_chat_deltas, extract_model_ids,
+        find_calendar_conflicts, idle_threshold_seconds, models_url, monitor_contains,
+        next_idle_state, next_repeat_due, normalize_base_url, parse_data_url, provider_tools,
+        read_calendar_events_from_path, read_text_attachment, render_icalendar,
+        should_bypass_system_proxy, system_prompt, text_for_speech, today_focus_minutes,
+        update_anthropic_tool_calls, update_gemini_tool_calls, update_openai_tool_calls,
+        validate_ai_settings,
         validate_declarative_plugin, validate_save_path, version_parts, AiSettings, AppSettings,
         CalendarEvent, ChatEvent, ChatHistoryEntry, DeclarativePluginPackage, FocusRecord,
         OpenAiToolCallAccumulator, PluginManifest, PluginRegistry, PluginToolManifest, Reminder,
@@ -4878,6 +5405,7 @@ mod tests {
     };
     use chrono::{Duration as ChronoDuration, Local, TimeZone};
     use std::{
+        collections::HashSet,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -4963,6 +5491,12 @@ mod tests {
         assert_eq!(settings.companion_name, "Piko");
         assert_eq!(settings.theme, "sage");
         assert!(!settings.sensing_paused);
+        assert!(settings.break_reminders_enabled);
+        assert_eq!(settings.break_reminder_interval_minutes, 45);
+        assert_eq!(settings.break_reminder_cooldown_minutes, 30);
+        assert!(!settings.break_reminder_quiet_hours_enabled);
+        assert_eq!(settings.break_reminder_quiet_hours_start, "22:00");
+        assert_eq!(settings.break_reminder_quiet_hours_end, "08:00");
     }
 
     #[test]
@@ -4970,6 +5504,76 @@ mod tests {
         assert_eq!(idle_threshold_seconds("active"), 60);
         assert_eq!(idle_threshold_seconds("balanced"), 120);
         assert_eq!(idle_threshold_seconds("minimal"), 300);
+    }
+
+    #[test]
+    fn detects_quiet_hours_across_midnight() {
+        let late_night = Local
+            .with_ymd_and_hms(2026, 1, 1, 23, 0, 0)
+            .single()
+            .expect("valid local time")
+            .timestamp() as u64;
+        let early_morning = Local
+            .with_ymd_and_hms(2026, 1, 2, 7, 0, 0)
+            .single()
+            .expect("valid local time")
+            .timestamp() as u64;
+        let noon = Local
+            .with_ymd_and_hms(2026, 1, 2, 12, 0, 0)
+            .single()
+            .expect("valid local time")
+            .timestamp() as u64;
+
+        assert!(super::is_within_quiet_hours("22:00", "08:00", true, late_night));
+        assert!(super::is_within_quiet_hours("22:00", "08:00", true, early_morning));
+        assert!(!super::is_within_quiet_hours("22:00", "08:00", true, noon));
+        assert!(!super::is_within_quiet_hours("22:00", "08:00", false, late_night));
+    }
+
+    #[test]
+    fn classifies_desktop_items_by_extension_and_type() {
+        assert_eq!(
+            super::desktop_item_category(PathBuf::from("photo.png").as_path(), "file"),
+            "images"
+        );
+        assert_eq!(
+            super::desktop_item_category(PathBuf::from("notes.md").as_path(), "file"),
+            "documents"
+        );
+        assert_eq!(
+            super::desktop_item_category(PathBuf::from("archive.zip").as_path(), "file"),
+            "archives"
+        );
+        assert_eq!(
+            super::desktop_item_category(PathBuf::from("main.rs").as_path(), "file"),
+            "code"
+        );
+        assert_eq!(
+            super::desktop_item_category(PathBuf::from("shortcut.url").as_path(), "shortcut"),
+            "shortcuts"
+        );
+        assert_eq!(
+            super::desktop_item_category(PathBuf::from("folder").as_path(), "folder"),
+            "other"
+        );
+    }
+
+    #[test]
+    fn chooses_unique_desktop_targets_when_names_conflict() {
+        let root = std::env::temp_dir().join(format!(
+            "im-robot-desktop-plan-{}",
+            Local::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let folder = root.join("文档");
+        fs::create_dir_all(&folder).expect("create temp folder");
+        let existing = folder.join("notes.md");
+        fs::write(&existing, "already here").expect("write existing file");
+
+        let mut used_targets = HashSet::new();
+        let target = super::desktop_target_path_for_name(&folder, "notes.md", &mut used_targets);
+        assert_eq!(target.file_name().and_then(|value| value.to_str()), Some("notes (1).md"));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -5242,59 +5846,11 @@ mod tests {
 
     #[test]
     fn system_prompt_mentions_reminder_and_calendar_lookup_for_deletion() {
-        let prompt = system_prompt("Piko");
+        let prompt = system_prompt("Piko", None);
         assert!(prompt.contains("查询提醒时优先调用 list_reminders"));
         assert!(prompt.contains("查询、删除或定位日程时优先调用 list_events"));
         assert!(prompt.contains("删除提醒或日程前"));
-    }
-
-    #[test]
-    fn recognizes_reminder_and_calendar_lookup_prompts() {
-        assert!(prompt_asks_for_lookup("帮我查看所有提醒"));
-        assert!(prompt_asks_for_calendar_lookup("帮我看看我的所有日程"));
-        assert!(!prompt_asks_for_lookup("帮我删除这个提醒"));
-        assert!(!prompt_asks_for_calendar_lookup("帮我删除这个日程"));
-    }
-
-    #[test]
-    fn formats_lookup_results_for_reminders_and_calendar_events() {
-        let reminders = vec![Reminder {
-            id: "rem-1".to_string(),
-            title: "提交周报".to_string(),
-            due_at: Local
-                .with_ymd_and_hms(2026, 6, 1, 15, 0, 0)
-                .single()
-                .unwrap()
-                .timestamp() as u64,
-            status: "pending".to_string(),
-            repeat: "daily".to_string(),
-        }];
-        let events = vec![CalendarEvent {
-            id: "evt-1".to_string(),
-            title: "项目评审".to_string(),
-            start_at: Local
-                .with_ymd_and_hms(2026, 6, 1, 16, 0, 0)
-                .single()
-                .unwrap()
-                .timestamp() as u64,
-            end_at: Local
-                .with_ymd_and_hms(2026, 6, 1, 17, 0, 0)
-                .single()
-                .unwrap()
-                .timestamp() as u64,
-            location: None,
-            notes: None,
-        }];
-
-        let reminder_text = format_reminder_lookup(&reminders);
-        assert!(reminder_text.contains("我查到了 1 条提醒"));
-        assert!(reminder_text.contains("提交周报"));
-        assert!(reminder_text.contains("重复：每天"));
-
-        let calendar_text = format_calendar_lookup(&events);
-        assert!(calendar_text.contains("我查到了 1 条日程"));
-        assert!(calendar_text.contains("项目评审"));
-        assert!(calendar_text.contains("2026-06-01 16:00 - 2026-06-01 17:00"));
+        assert!(prompt.contains("删除多个或全部日程时必须使用 delete_event_batch"));
     }
 
     #[test]
@@ -5411,91 +5967,14 @@ mod tests {
         assert_eq!(manifests[1].id, "piko.reminders");
         assert_eq!(manifests[0].tools[0].name, "list_events");
         assert_eq!(manifests[0].tools[4].name, "delete_event");
+        assert_eq!(manifests[0].tools[5].name, "delete_event_batch");
+        assert_eq!(manifests[0].tools[5].risk, "sensitive");
+        assert_eq!(manifests[0].tools[5].confirmation, "always");
         assert_eq!(manifests[1].tools[0].name, "list_reminders");
         assert_eq!(manifests[1].tools[2].name, "delete_reminder");
         assert_eq!(manifests[1].tools[1].risk, "write");
         assert_eq!(manifests[1].tools[2].risk, "sensitive");
         assert_eq!(manifests[1].tools[2].confirmation, "always");
-    }
-
-    #[test]
-    fn builds_a_reminder_action_draft_from_conversation() {
-        let now = Local
-            .with_ymd_and_hms(2026, 6, 1, 10, 0, 0)
-            .single()
-            .unwrap();
-        let draft = build_reminder_action_draft("明天下午 3 点提醒我提交周报", now).unwrap();
-
-        assert_eq!(draft.plugin_id, "piko.reminders");
-        assert_eq!(draft.tool_name, "create_reminder");
-        assert_eq!(draft.arguments["title"], "提交周报");
-        assert_eq!(draft.arguments["repeat"], "none");
-        assert!(draft.summary.contains("2026-06-02 15:00"));
-    }
-
-    #[test]
-    fn builds_a_repeating_relative_reminder_action_draft() {
-        let now = Local
-            .with_ymd_and_hms(2026, 6, 1, 10, 0, 0)
-            .single()
-            .unwrap();
-        let draft = build_reminder_action_draft("30 分钟后提醒我休息", now).unwrap();
-
-        assert_eq!(draft.arguments["title"], "休息");
-        assert_eq!(draft.arguments["dueAt"], now.timestamp() + 30 * 60);
-    }
-
-    #[test]
-    fn builds_a_calendar_action_draft_from_conversation() {
-        let now = Local
-            .with_ymd_and_hms(2026, 6, 1, 10, 0, 0)
-            .single()
-            .unwrap();
-        let draft = build_calendar_action_draft("明天下午 3 点到 4 点安排项目评审", now).unwrap();
-
-        assert_eq!(draft.plugin_id, "piko.calendar");
-        assert_eq!(draft.tool_name, "create_event");
-        assert_eq!(draft.arguments["title"], "项目评审");
-        assert!(draft
-            .summary
-            .contains("2026-06-02 15:00 - 2026-06-02 16:00"));
-    }
-
-    #[test]
-    fn builds_a_calendar_action_draft_from_a_trailing_calendar_phrase() {
-        let now = Local
-            .with_ymd_and_hms(2026, 6, 1, 10, 0, 0)
-            .single()
-            .unwrap();
-        let draft =
-            build_calendar_action_draft("帮我创建一个今天晚上8点30分到9点的抢购手机的日程", now)
-                .unwrap();
-
-        assert_eq!(draft.arguments["title"], "抢购手机");
-        assert!(draft
-            .summary
-            .contains("2026-06-01 20:30 - 2026-06-01 21:00"));
-    }
-
-    #[test]
-    fn creates_and_queries_a_calendar_event_from_conversation() {
-        let path = temp_calendar_events_path();
-        let now = Local::now();
-        let draft =
-            build_calendar_action_draft("帮我创建一个明天晚上8点30分到9点的抢购手机的日程", now)
-                .unwrap();
-        let input = calendar_event_input_from_value(&draft.arguments).unwrap();
-
-        let created = create_calendar_event_record_at_path(&path, input).unwrap();
-        let queried = read_calendar_events_from_path(&path);
-
-        assert_eq!(created.title, "抢购手机");
-        assert_eq!(queried.len(), 1);
-        assert_eq!(queried[0].id, created.id);
-        assert_eq!(queried[0].title, "抢购手机");
-        assert_eq!(queried[0].start_at, created.start_at);
-        assert_eq!(queried[0].end_at, created.end_at);
-        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -5544,6 +6023,73 @@ mod tests {
 
         assert_eq!(find_calendar_conflicts(&events, 150, 250).len(), 1);
         assert!(find_calendar_conflicts(&events, 200, 300).is_empty());
+    }
+
+    #[test]
+    fn deletes_a_batch_of_calendar_events_atomically() {
+        let path = temp_calendar_events_path();
+        let now = Local::now() + ChronoDuration::days(1);
+        let first = create_calendar_event_record_at_path(
+            &path,
+            calendar_event_input_from_value(&serde_json::json!({
+                "title": "日程一",
+                "startAt": (now + ChronoDuration::hours(1)).timestamp() as u64,
+                "endAt": (now + ChronoDuration::hours(2)).timestamp() as u64,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let second = create_calendar_event_record_at_path(
+            &path,
+            calendar_event_input_from_value(&serde_json::json!({
+                "title": "日程二",
+                "startAt": (now + ChronoDuration::hours(3)).timestamp() as u64,
+                "endAt": (now + ChronoDuration::hours(4)).timestamp() as u64,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let deleted = delete_calendar_event_batch_record_at_path(
+            &path,
+            calendar_delete_batch_input_from_value(&serde_json::json!({
+                "events": [{ "id": first.id }, { "id": second.id }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(deleted.len(), 2);
+        assert!(read_calendar_events_from_path(&path).is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn keeps_calendar_events_when_a_batch_delete_target_is_missing() {
+        let path = temp_calendar_events_path();
+        let now = Local::now() + ChronoDuration::days(1);
+        let existing = create_calendar_event_record_at_path(
+            &path,
+            calendar_event_input_from_value(&serde_json::json!({
+                "title": "仍需保留",
+                "startAt": (now + ChronoDuration::hours(1)).timestamp() as u64,
+                "endAt": (now + ChronoDuration::hours(2)).timestamp() as u64,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let result = delete_calendar_event_batch_record_at_path(
+            &path,
+            calendar_delete_batch_input_from_value(&serde_json::json!({
+                "events": [{ "id": existing.id }, { "id": "missing-event" }]
+            }))
+            .unwrap(),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(read_calendar_events_from_path(&path).len(), 1);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -5596,6 +6142,37 @@ mod tests {
         assert_eq!(decoded[0].1.plugin_id, "piko.calendar");
         assert_eq!(decoded[0].1.tool_name, "create_event");
         assert_eq!(decoded[0].1.arguments["title"], "评审");
+    }
+
+    #[test]
+    fn coalesces_multiple_calendar_delete_calls_into_one_batch() {
+        let calls = vec![
+            (
+                "call-1".to_string(),
+                ToolCall {
+                    plugin_id: "piko.calendar".to_string(),
+                    tool_name: "delete_event".to_string(),
+                    arguments: serde_json::json!({ "id": "event-1", "title": "日程一" }),
+                },
+            ),
+            (
+                "call-2".to_string(),
+                ToolCall {
+                    plugin_id: "piko.calendar".to_string(),
+                    tool_name: "delete_event".to_string(),
+                    arguments: serde_json::json!({ "id": "event-2", "title": "日程二" }),
+                },
+            ),
+        ];
+
+        let coalesced = coalesce_calendar_delete_calls(calls);
+
+        assert_eq!(coalesced.len(), 1);
+        assert_eq!(coalesced[0].1.tool_name, "delete_event_batch");
+        assert_eq!(
+            coalesced[0].1.arguments["events"].as_array().unwrap().len(),
+            2
+        );
     }
 
     #[test]
@@ -5769,6 +6346,28 @@ mod tests {
     }
 
     #[test]
+    fn builds_batch_calendar_delete_confirmation_drafts() {
+        let draft = action_draft_from_tool_call(
+            &ToolCall {
+                plugin_id: "piko.calendar".to_string(),
+                tool_name: "delete_event_batch".to_string(),
+                arguments: serde_json::json!({
+                    "events": [
+                        { "id": "event-1", "title": "日程一" },
+                        { "id": "event-2", "title": "日程二" }
+                    ]
+                }),
+            },
+            Local::now(),
+        )
+        .unwrap();
+
+        assert!(draft.summary.contains("批量删除 2 条日程"));
+        assert!(draft.summary.contains("日程一"));
+        assert!(draft.summary.contains("日程二"));
+    }
+
+    #[test]
     fn renders_icalendar_with_escaped_text() {
         let calendar = render_icalendar(&[CalendarEvent {
             id: "one".to_string(),
@@ -5805,6 +6404,8 @@ mod tests {
                     confirmation: "never".to_string(),
                 }],
             },
+            runtime: None,
+            module: None,
             responses,
         };
         assert!(validate_declarative_plugin(&package).is_ok());

@@ -8,6 +8,7 @@ use crate::CalendarEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
+    collections::HashSet,
     fs,
     path::PathBuf,
     process::Command,
@@ -121,6 +122,36 @@ fn sync_mapping_path(app: &tauri::AppHandle) -> Option<PathBuf> {
         .app_config_dir()
         .ok()
         .map(|d| d.join("calendar-sync-mapping.json"))
+}
+
+fn deleted_local_ids_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("calendar-sync-deleted-local-ids.json"))
+}
+
+fn read_deleted_local_ids(app: &tauri::AppHandle) -> HashSet<String> {
+    deleted_local_ids_path(app)
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+pub(crate) fn mark_local_events_deleted(
+    app: &tauri::AppHandle,
+    local_ids: &[String],
+) -> Result<(), String> {
+    let path =
+        deleted_local_ids_path(app).ok_or_else(|| "无法获取日程删除记录路径".to_string())?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| "无法获取日程删除记录目录".to_string())?;
+    let mut deleted_ids = read_deleted_local_ids(app);
+    deleted_ids.extend(local_ids.iter().cloned());
+    let json = serde_json::to_string_pretty(&deleted_ids).map_err(|e| e.to_string())?;
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())
 }
 
 fn system_calendar_name() -> &'static str {
@@ -351,6 +382,7 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
     }
 
     let mut events = read_system_synced_events(since)?;
+    exclude_deleted_local_events(&mut events, &read_deleted_local_ids(app));
     if events.is_empty() {
         return Ok(PullResult {
             imported: 0,
@@ -381,6 +413,10 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
         imported,
         events: local_events,
     })
+}
+
+fn exclude_deleted_local_events(events: &mut Vec<CalendarEvent>, deleted_ids: &HashSet<String>) {
+    events.retain(|event| !deleted_ids.contains(&event.id));
 }
 
 fn read_system_synced_events(_since: u64) -> Result<Vec<CalendarEvent>, String> {
@@ -458,4 +494,38 @@ fn calendar_events_path(app: &AppHandle) -> Option<PathBuf> {
         .app_config_dir()
         .ok()
         .map(|directory| directory.join("calendar-events.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exclude_deleted_local_events;
+    use crate::CalendarEvent;
+    use std::collections::HashSet;
+
+    #[test]
+    fn excludes_locally_deleted_events_when_pulling_from_system_calendar() {
+        let mut events = vec![
+            CalendarEvent {
+                id: "deleted".to_string(),
+                title: "已删除".to_string(),
+                start_at: 100,
+                end_at: 200,
+                location: None,
+                notes: None,
+            },
+            CalendarEvent {
+                id: "active".to_string(),
+                title: "保留".to_string(),
+                start_at: 300,
+                end_at: 400,
+                location: None,
+                notes: None,
+            },
+        ];
+
+        exclude_deleted_local_events(&mut events, &HashSet::from(["deleted".to_string()]));
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, "active");
+    }
 }

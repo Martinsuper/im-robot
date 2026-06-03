@@ -134,13 +134,14 @@ existing.start_at < candidate.end_at
 | `detect_conflicts` | `read` | `never` |
 | `create_event` | `write` | `always` |
 | `create_event_batch` | `write` | `always` |
+| `delete_event` | `sensitive` | `always` |
+| `delete_event_batch` | `sensitive` | `always` |
 
 批量日程使用一张确认卡展示候选项，用户可以取消勾选不希望写入的条目。执行时 Rust 会一次性检查已有日程与批次内部冲突，避免部分写入。
 
-删除事件暂时只提供面板入口。后续开放对话删除时，使用 `sensitive` 风险等级和强确认卡。
+删除事件已支持对话确认与面板入口。对话删除使用 `sensitive` 风险等级和强确认卡，先定位目标再执行。删除多个或全部日程时使用 `delete_event_batch`，后端会先校验整批 ID 再一次性写入，避免只删除部分日程。已删除的本地 ID 会保留删除记录，防止系统日历镜像在后续回拉时重新导入。
 
 ## 6. 后续阶段
 
-1. 对话删除日程与更细粒度的敏感操作授权。
-2. 在系统日历 Host API 之上增加双向同步；当前实现为 iCalendar 导出后交给系统日历导入。
-3. 增加真正的 WASM 沙箱执行器；当前外部插件运行时仅允许声明式只读静态响应。
+1. 在系统日历 Host API 之上增加双向同步；当前实现为 iCalendar 导出后交给系统日历导入。
+2. 增加真正的 WASM 沙箱执行器；当前外部插件运行时仅允许声明式只读静态响应。

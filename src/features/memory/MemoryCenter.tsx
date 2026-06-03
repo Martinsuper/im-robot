@@ -14,6 +14,7 @@ import {
 } from "./memoryTypes";
 import { MemoryCard } from "./MemoryCard";
 import { MemoryDetail } from "./MemoryDetail";
+import { runCommandAndRefresh } from "../app/appRuntime";
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
@@ -89,6 +90,20 @@ export function MemoryCenter() {
     }
   }
 
+  async function reloadVisibleMemories() {
+    if (view === "recent") {
+      await loadRecent();
+      return;
+    }
+
+    if (view === "search" && searchQuery.trim()) {
+      await searchMemories(searchQuery);
+      return;
+    }
+
+    await loadMemories();
+  }
+
   async function searchMemories(query: string) {
     if (!query.trim()) {
       setView("list");
@@ -139,7 +154,7 @@ export function MemoryCenter() {
 
   async function handleDelete(id: string) {
     try {
-      await runCommand("delete_memory", { id });
+      await runCommandAndRefresh("delete_memory", { id }, [reloadVisibleMemories]);
       setError("");
     } catch {
       setError("删除失败");
@@ -181,7 +196,7 @@ export function MemoryCenter() {
     if (!confirm("确定要清除全部记忆吗？此操作不可撤销。")) return;
     setIsClearing(true);
     try {
-      await runCommand("clear_memories", {});
+      await runCommandAndRefresh("clear_memories", {}, [reloadVisibleMemories]);
       setError("");
     } catch {
       setError("清除失败");
@@ -194,8 +209,7 @@ export function MemoryCenter() {
     setIsReflecting(true);
     try {
       await runCommand("reflect_memory_now", {});
-      void loadSummaries();
-      void loadMemories();
+      await Promise.all([loadSummaries(), loadMemories()]);
       setError("");
     } catch {
       setError("反思失败");
@@ -206,11 +220,9 @@ export function MemoryCenter() {
 
   async function handleConfirmCandidate(candidateId: string) {
     try {
-      await runCommand("apply_memory_candidates", {
+      await runCommandAndRefresh("apply_memory_candidates", {
         input: { candidateId, confirmed: true },
-      });
-      void loadPending();
-      void loadMemories();
+      }, [loadPending, loadMemories]);
     } catch {
       setError("确认失败");
     }
@@ -219,7 +231,7 @@ export function MemoryCenter() {
   async function handleRejectCandidate(candidateId: string) {
     try {
       await runCommand("reject_memory_candidate", { candidateId });
-      void loadPending();
+      await loadPending();
     } catch {
       setError("拒绝失败");
     }
@@ -281,12 +293,14 @@ export function MemoryCenter() {
       {/* Sub-view tabs */}
       <nav className="memory-sub-tabs">
         <button
+          type="button"
           className={subView === "memories" ? "is-active" : ""}
           onClick={() => setSubView("memories")}
         >
           记忆列表
         </button>
         <button
+          type="button"
           className={subView === "pending" ? "is-active" : ""}
           onClick={() => {
             setSubView("pending");
@@ -296,6 +310,7 @@ export function MemoryCenter() {
           待确认 ({pendingCandidates.length})
         </button>
         <button
+          type="button"
           className={subView === "reflections" ? "is-active" : ""}
           onClick={() => {
             setSubView("reflections");
@@ -459,7 +474,7 @@ export function MemoryCenter() {
         <MemoryDetail
           memory={selectedMemory}
           onClose={() => setSelectedMemory(null)}
-          onDeleted={() => void loadMemories()}
+          onDeleted={reloadVisibleMemories}
           onUpdated={(updated) => setSelectedMemory(updated)}
         />
       )}
