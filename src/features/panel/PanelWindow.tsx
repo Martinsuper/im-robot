@@ -2,10 +2,16 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { OnboardingWindow } from "../onboarding/OnboardingWindow";
 import { MemoryCenter } from "../memory/MemoryCenter";
+import {
+  loadGrowthSnapshot,
+  loadInteractionStats,
+  type GrowthSnapshot,
+  type InteractionStats,
+} from "../pet/interaction";
 import type {
   AiSettings,
   AppSettings,
@@ -26,6 +32,7 @@ import type {
 } from "../../types/appTypes";
 import {
   PetSprite,
+  clearCustomPetImagePath,
   countCalendarConflicts,
   defaultAiSettings,
   defaultAppSettings,
@@ -39,10 +46,15 @@ import {
   formatFocusRemaining,
   formatReminderTime,
   panelTabOptions,
+  petVisualStyleOptions,
   providerOptions,
   quietModeOptions,
   reminderRepeatLabel,
   reminderRepeatOptions,
+  setCustomPetImagePath,
+  setPetVisualStyle,
+  useCustomPetImagePath,
+  usePetVisualStyle,
 } from "../app/appShared";
 import { isTauriRuntime, runCommand, runCommandAndRefresh } from "../app/appRuntime";
 
@@ -101,6 +113,9 @@ export function PanelWindow() {
   const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
   const [companionName, setCompanionName] = useState("Piko");
   const [theme, setTheme] = useState<Theme>("sage");
+  const petVisualStyle = usePetVisualStyle();
+  const customPetImagePath = useCustomPetImagePath();
+  const petVisualStyleLabel = petVisualStyleOptions.find((option) => option.value === petVisualStyle)?.label ?? "机甲猫";
   const [sensingPaused, setSensingPaused] = useState(false);
   const [breakRemindersEnabled, setBreakRemindersEnabled] = useState(true);
   const [breakReminderIntervalMinutes, setBreakReminderIntervalMinutes] = useState(45);
@@ -146,6 +161,8 @@ export function PanelWindow() {
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusState, setFocusState] = useState<FocusSnapshot>(defaultFocusSnapshot);
   const [workRhythmState, setWorkRhythmState] = useState<WorkRhythmState>(defaultWorkRhythmState);
+  const [interactionStats, setInteractionStats] = useState<InteractionStats>(loadInteractionStats());
+  const [growthSnapshot, setGrowthSnapshot] = useState<GrowthSnapshot>(loadGrowthSnapshot());
   const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus>({
     required: false,
     completed: true,
@@ -313,6 +330,14 @@ export function PanelWindow() {
     const refreshFocus = window.setInterval(() => {
       void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
     }, 1000);
+    const refreshInteraction = () => {
+      setInteractionStats(loadInteractionStats());
+      setGrowthSnapshot(loadGrowthSnapshot());
+    };
+    const unlistenInteraction = listen("piko-interaction-stats-changed", refreshInteraction);
+    const unlistenGrowth = listen("piko-growth-state-changed", refreshInteraction);
+    const refreshFromStorage = () => refreshInteraction();
+    window.addEventListener("storage", refreshFromStorage);
     return () => {
       void unlisten.then((dispose) => dispose());
       void unlistenHistory.then((dispose) => dispose());
@@ -322,6 +347,9 @@ export function PanelWindow() {
       void unlistenTyping.then((dispose) => dispose());
       void unlistenFocus.then((dispose) => dispose());
       void unlistenSettings.then((dispose) => dispose());
+      void unlistenInteraction.then((dispose) => dispose());
+      void unlistenGrowth.then((dispose) => dispose());
+      window.removeEventListener("storage", refreshFromStorage);
       window.clearInterval(refreshFocus);
     };
   }, []);
@@ -485,6 +513,22 @@ export function PanelWindow() {
     } catch (error) {
       setCalendarError(String(error));
     }
+  }
+
+  async function chooseCustomPetImage() {
+    if (!isTauriRuntime) return;
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "图片文件", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+    });
+    if (typeof path !== "string") return;
+    setCustomPetImagePath(path);
+    setPetVisualStyle("custom");
+  }
+
+  function clearCustomPetImage() {
+    clearCustomPetImagePath();
+    if (petVisualStyle === "custom") setPetVisualStyle("lumi");
   }
 
   async function syncCalendarToSystem() {
@@ -684,17 +728,71 @@ export function PanelWindow() {
 
       <section className={panelSectionClass("companion", "companion-card")}>
         <div className="companion-card__portrait">
-          <PetSprite />
+          <PetSprite mode="idle" emotion="happy" reaction="none" />
         </div>
         <div className="companion-card__copy">
           <p className="eyebrow">NO. 001 · DESKTOP SPIRIT</p>
           <h2>{companionName}</h2>
-          <p>像素型桌面精灵。擅长陪伴、对话和处理专注任务。</p>
+          <p>治愈型桌面精灵。擅长陪伴、对话和处理专注任务。</p>
           <div className="trait-list">
-            <span>像素系</span>
+            <span>{petVisualStyleLabel}</span>
             <span>AI 助手</span>
           </div>
         </div>
+      </section>
+
+      <section className={panelSectionClass("companion")}>
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">INTERACTION</p>
+            <h2>互动档案</h2>
+          </div>
+          <strong>{Math.round(interactionStats.intimacy)} 亲密</strong>
+        </div>
+        <div className="status-grid">
+          <div className="status-item">
+            <span>互动总数</span>
+            <strong>{interactionStats.totalInteractions.toLocaleString("zh-CN")}</strong>
+          </div>
+          <div className="status-item">
+            <span>摸摸次数</span>
+            <strong>{interactionStats.petStrokeCount.toLocaleString("zh-CN")}</strong>
+          </div>
+          <div className="status-item">
+            <span>文件协作</span>
+            <strong>{interactionStats.dropCount.toLocaleString("zh-CN")}</strong>
+          </div>
+          <div className="status-item">
+            <span>当前等级</span>
+            <strong>{growthSnapshot.level}</strong>
+          </div>
+        </div>
+        <div className="permission-list" style={{ marginTop: "6px" }}>
+          <div>
+            <span>经验进度</span>
+            <strong>{Math.round(growthSnapshot.percentage)}%</strong>
+          </div>
+          <div>
+            <span>羁绊等级</span>
+            <strong>{growthSnapshot.attributeLevels.bond}</strong>
+          </div>
+          <div>
+            <span>社交等级</span>
+            <strong>{growthSnapshot.attributeLevels.social}</strong>
+          </div>
+          <div>
+            <span>最近互动</span>
+            <strong>{interactionStats.lastInteractionAt ? new Intl.DateTimeFormat("zh-CN", {
+              month: "numeric",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            }).format(interactionStats.lastInteractionAt) : "暂无"}</strong>
+          </div>
+        </div>
+        <p className="empty-state">
+          累计 {growthSnapshot.totalXp.toLocaleString("zh-CN")} 经验 · {growthSnapshot.completedTasks} 个任务进度 · {growthSnapshot.unlockedAchievements} 项成就
+        </p>
       </section>
 
       <section className={panelSectionClass("about")}>
@@ -801,90 +899,78 @@ export function PanelWindow() {
       </section>
 
       <section className={panelSectionClass("settings")}>
-        <p className="eyebrow">MODEL PROVIDER</p>
-        <h2>模型服务</h2>
+        <p className="eyebrow">PREFERENCES</p>
+        <h2>个性化与系统</h2>
         <div className="settings-form">
           <label>
-            <span>服务类型</span>
+            <span>精灵名称</span>
+            <input
+              value={companionName}
+              maxLength={24}
+              onChange={(event) => setCompanionName(event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>主题色</span>
+            <select value={theme} onChange={(event) => setTheme(event.currentTarget.value as Theme)}>
+              <option value="sage">鼠尾草绿</option>
+              <option value="blue">湖水蓝</option>
+              <option value="peach">暖桃色</option>
+            </select>
+          </label>
+          <label>
+            <span>精灵形象</span>
             <select
-              value={aiSettings.provider}
-              onChange={(event) => updateProvider(event.currentTarget.value)}
+              value={petVisualStyle}
+              onChange={(event) => setPetVisualStyle(event.currentTarget.value as typeof petVisualStyle)}
             >
-              {providerOptions.map(({ label, value }) => (
+              {petVisualStyleOptions.map(({ label, value }) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
           </label>
-          <label>
-            <span>Base URL</span>
-            <input
-              value={aiSettings.baseUrl}
-              onChange={(event) => updateAiField("baseUrl", event.currentTarget.value)}
-              placeholder="http://localhost:11434/v1"
-            />
-          </label>
-          <label>
-            <span>Model</span>
-            <input
-              value={aiSettings.model}
-              onChange={(event) => updateAiField("model", event.currentTarget.value)}
-              placeholder={aiSettings.provider === "lmstudio" ? "可留空，LM Studio 自动使用当前加载模型" : "gemma4:e4b"}
-            />
-          </label>
-          <label>
-            <span>API Key</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.currentTarget.value)}
-              placeholder="本地 Ollama 可留空"
-            />
-          </label>
-          <div className="settings-form__row">
-            <label>
-              <span>Temperature</span>
-              <input
-                type="number"
-                min="0"
-                max="2"
-                step="0.1"
-                value={aiSettings.temperature}
-                onChange={(event) => updateAiField("temperature", Number(event.currentTarget.value))}
-              />
-            </label>
-            <label>
-              <span>超时秒数</span>
-              <input
-                type="number"
-                min="5"
-                max="600"
-                value={aiSettings.timeoutSeconds}
-                onChange={(event) =>
-                  updateAiField("timeoutSeconds", Number(event.currentTarget.value))
-                }
-              />
-            </label>
+          <div className="custom-pet-picker">
+            <span>{customPetImagePath ? customPetImagePath.split(/[\\/]/).pop() : "未选择自定义图片"}</span>
+            <div>
+              <button type="button" onClick={() => void chooseCustomPetImage()}>
+                选择图片
+              </button>
+              <button type="button" className="is-secondary" onClick={clearCustomPetImage} disabled={!customPetImagePath}>
+                清除
+              </button>
+            </div>
           </div>
-          <button type="button" disabled={isTesting} onClick={testConnection}>
-            {isTesting ? "正在测试..." : "保存并测试连接"}
-          </button>
-          <p className="connection-status">{connectionStatus}</p>
-        </div>
-      </section>
-
-      <section className={panelSectionClass("settings")}>
-        <p className="eyebrow">OUTPUT PREVIEW</p>
-        <h2>HTML 预览</h2>
-        <div className="feature-toggle-card">
           <label className="setting-toggle">
             <input
               type="checkbox"
-              checked={htmlPreviewEnabled}
-              onChange={(event) => void updateHtmlPreviewEnabled(event.currentTarget.checked)}
+              checked={!sensingPaused}
+              onChange={(event) => setSensingPaused(!event.currentTarget.checked)}
             />
-            <span>HTML 预览插件</span>
+            <span>主动感知</span>
           </label>
-          <p className="empty-state">开启后，气泡窗口会在检测到 HTML 片段时优先使用沙箱 iframe 预览。</p>
+          <label className="setting-toggle">
+            <input
+              type="checkbox"
+              checked={autostartEnabled}
+              onChange={() => void toggleAutostart()}
+            />
+            <span>开机自动启动</span>
+          </label>
+          <button type="button" onClick={() => void savePreferences()}>
+            保存个性化设置
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void runCommand<AppSettings>("reset_onboarding", undefined, {
+                ...defaultAppSettings,
+                companionName,
+              }).then(() => refreshOnboardingStatus());
+            }}
+          >
+            重新运行引导
+          </button>
+          {preferencesStatus && <p className="connection-status">{preferencesStatus}</p>}
         </div>
       </section>
 
@@ -975,56 +1061,90 @@ export function PanelWindow() {
       </section>
 
       <section className={panelSectionClass("settings")}>
-        <p className="eyebrow">PREFERENCES</p>
-        <h2>个性化与系统</h2>
+        <p className="eyebrow">MODEL PROVIDER</p>
+        <h2>模型服务</h2>
         <div className="settings-form">
           <label>
-            <span>精灵名称</span>
+            <span>服务类型</span>
+            <select
+              value={aiSettings.provider}
+              onChange={(event) => updateProvider(event.currentTarget.value)}
+            >
+              {providerOptions.map(({ label, value }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Base URL</span>
             <input
-              value={companionName}
-              maxLength={24}
-              onChange={(event) => setCompanionName(event.currentTarget.value)}
+              value={aiSettings.baseUrl}
+              onChange={(event) => updateAiField("baseUrl", event.currentTarget.value)}
+              placeholder="http://localhost:11434/v1"
             />
           </label>
           <label>
-            <span>主题色</span>
-            <select value={theme} onChange={(event) => setTheme(event.currentTarget.value as Theme)}>
-              <option value="sage">鼠尾草绿</option>
-              <option value="blue">湖水蓝</option>
-              <option value="peach">暖桃色</option>
-            </select>
+            <span>Model</span>
+            <input
+              value={aiSettings.model}
+              onChange={(event) => updateAiField("model", event.currentTarget.value)}
+              placeholder={aiSettings.provider === "lmstudio" ? "可留空，LM Studio 自动使用当前加载模型" : "gemma4:e4b"}
+            />
           </label>
+          <label>
+            <span>API Key</span>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.currentTarget.value)}
+              placeholder="本地 Ollama 可留空"
+            />
+          </label>
+          <div className="settings-form__row">
+            <label>
+              <span>Temperature</span>
+              <input
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                value={aiSettings.temperature}
+                onChange={(event) => updateAiField("temperature", Number(event.currentTarget.value))}
+              />
+            </label>
+            <label>
+              <span>超时秒数</span>
+              <input
+                type="number"
+                min="5"
+                max="600"
+                value={aiSettings.timeoutSeconds}
+                onChange={(event) =>
+                  updateAiField("timeoutSeconds", Number(event.currentTarget.value))
+                }
+              />
+            </label>
+          </div>
+          <button type="button" disabled={isTesting} onClick={testConnection}>
+            {isTesting ? "正在测试..." : "保存并测试连接"}
+          </button>
+          <p className="connection-status">{connectionStatus}</p>
+        </div>
+      </section>
+
+      <section className={panelSectionClass("settings")}>
+        <p className="eyebrow">OUTPUT PREVIEW</p>
+        <h2>HTML 预览</h2>
+        <div className="feature-toggle-card">
           <label className="setting-toggle">
             <input
               type="checkbox"
-              checked={!sensingPaused}
-              onChange={(event) => setSensingPaused(!event.currentTarget.checked)}
+              checked={htmlPreviewEnabled}
+              onChange={(event) => void updateHtmlPreviewEnabled(event.currentTarget.checked)}
             />
-            <span>主动感知</span>
+            <span>HTML 预览插件</span>
           </label>
-          <label className="setting-toggle">
-            <input
-              type="checkbox"
-              checked={autostartEnabled}
-              onChange={() => void toggleAutostart()}
-            />
-            <span>开机自动启动</span>
-          </label>
-          <button type="button" onClick={() => void savePreferences()}>
-            保存个性化设置
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void runCommand<AppSettings>("reset_onboarding", undefined, {
-                ...defaultAppSettings,
-                companionName,
-              }).then(() => refreshOnboardingStatus());
-            }}
-          >
-            重新运行引导
-          </button>
-          {preferencesStatus && <p className="connection-status">{preferencesStatus}</p>}
+          <p className="empty-state">开启后，气泡窗口会在检测到 HTML 片段时优先使用沙箱 iframe 预览。</p>
         </div>
       </section>
 

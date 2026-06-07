@@ -1,15 +1,9 @@
+use chrono::TimeZone;
 #[cfg(not(target_os = "macos"))]
 use rdev::{listen, Event, EventType, Key};
 use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    path::PathBuf,
-    sync::Mutex,
-    thread,
-    time::Duration,
-};
+use std::{fs, path::PathBuf, sync::Mutex, thread, time::Duration};
 use tauri::{AppHandle, Manager};
-use chrono::TimeZone;
 
 const TYPING_SESSION_IDLE_SECONDS: u64 = 5;
 
@@ -47,8 +41,14 @@ impl TypingActivityState {
     }
 
     pub fn snapshot(&self, now: u64) -> Result<TypingStatsToday, String> {
-        let stats = self.stats.lock().map_err(|_| "无法读取输入统计".to_string())?;
-        let session = self.session.lock().map_err(|_| "无法读取输入统计会话".to_string())?;
+        let stats = self
+            .stats
+            .lock()
+            .map_err(|_| "无法读取输入统计".to_string())?;
+        let session = self
+            .session
+            .lock()
+            .map_err(|_| "无法读取输入统计会话".to_string())?;
         let mut snapshot = stats.clone();
         if let Some(started_at) = session.started_at {
             let active_seconds = now.saturating_sub(started_at).saturating_add(1);
@@ -57,7 +57,11 @@ impl TypingActivityState {
         Ok(snapshot)
     }
 
-    pub fn record_keypress(&self, app: &AppHandle, delta: i64) -> Result<Option<TypingStatsToday>, String> {
+    pub fn record_keypress(
+        &self,
+        app: &AppHandle,
+        delta: i64,
+    ) -> Result<Option<TypingStatsToday>, String> {
         if delta == 0 {
             return Ok(None);
         }
@@ -69,7 +73,10 @@ impl TypingActivityState {
         self.roll_day_if_needed(app, now)?;
 
         {
-            let mut stats = self.stats.lock().map_err(|_| "无法更新输入统计".to_string())?;
+            let mut stats = self
+                .stats
+                .lock()
+                .map_err(|_| "无法更新输入统计".to_string())?;
             if delta > 0 {
                 stats.typed_characters = stats.typed_characters.saturating_add(delta as u64);
             } else {
@@ -90,7 +97,10 @@ impl TypingActivityState {
         }
 
         {
-            let mut dirty = self.dirty.lock().map_err(|_| "无法更新输入统计状态".to_string())?;
+            let mut dirty = self
+                .dirty
+                .lock()
+                .map_err(|_| "无法更新输入统计状态".to_string())?;
             *dirty = true;
         }
 
@@ -99,7 +109,10 @@ impl TypingActivityState {
 
     pub fn finalize_stale_session(&self, app: &AppHandle, now: u64) -> Result<bool, String> {
         self.roll_day_if_needed(app, now)?;
-        let mut stats = self.stats.lock().map_err(|_| "无法更新输入统计".to_string())?;
+        let mut stats = self
+            .stats
+            .lock()
+            .map_err(|_| "无法更新输入统计".to_string())?;
         let mut session = self
             .session
             .lock()
@@ -160,7 +173,10 @@ impl TypingActivityState {
 
     fn roll_day_if_needed(&self, app: &AppHandle, now: u64) -> Result<(), String> {
         let today = current_day_key(now);
-        let mut stats = self.stats.lock().map_err(|_| "无法读取输入统计".to_string())?;
+        let mut stats = self
+            .stats
+            .lock()
+            .map_err(|_| "无法读取输入统计".to_string())?;
         if stats.date == today {
             return Ok(());
         }
@@ -426,7 +442,11 @@ mod macos_keyboard_monitor {
                 return Err("event tap run loop source unavailable");
             }
 
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), run_loop_source, kCFRunLoopCommonModes);
+            CFRunLoopAddSource(
+                CFRunLoopGetCurrent(),
+                run_loop_source,
+                kCFRunLoopCommonModes,
+            );
             CGEventTapEnable(tap, true);
             CFRunLoopRun();
         }

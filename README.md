@@ -33,7 +33,7 @@ P0 基线与 P1 体验打磨已完成，P2 能力扩展已完成专注模式和�
 - 批量日程规划：候选项逐项勾选确认，支持 iCalendar 导出并交给系统日历导入
 - 外部业务插件：支持受限声明式只读插件，动态 WASM 沙箱可在受控运行时中执行
 
-当前规划中的主功能已经全部落地，后续主要是继续打磨同步兼容、插件生态和跨平台体验。详见[后续功能演进路线图](docs/roadmap.md)。
+当前规划中的主功能已经全部落地，后续主要是继续打磨同步兼容、插件生态和跨平台体验。详见[桌面助手产品基线与路线图](doc/prd/02-desktop-assistant-baseline-roadmap.md)。
 
 ## 本地运行
 
@@ -48,21 +48,16 @@ npm run tauri dev
 
 ## 文档
 
-- [产品实施基线](docs/desktop-ai-pet-assistant-spec.md)
-- [P0 功能设计与实施路线](docs/p0-implementation-plan.md)
-- [后续功能演进路线图](docs/roadmap.md)
-- [产品迭代路线图](docs/product-roadmap.md)
-- [桌面操作层设计](docs/desktop-operation-layer-design.md)
-- [受控执行与工作节律提醒设计](docs/controlled-execution-and-work-rhythm-design.md)
-- [今日输入字符数统计设计](docs/keyboard-activity-stats-design.md)
-- [桌面代理实施设计](docs/desktop-agent-implementation-design.md)
-- [桌面代理任务拆解](docs/desktop-agent-task-plan.md)
-- [桌面代理接口设计](docs/desktop-agent-api-spec.md)
-- [桌面代理状态结构设计](docs/desktop-agent-state-design.md)
-- [桌面代理开发里程碑](docs/desktop-agent-milestones.md)
-- [当前功能自动化验证报告](docs/current-validation-report.md)
-- [业务插件架构](docs/plugin-architecture.md)
-- [Tool Use 与日程插件设计](docs/tool-use-calendar-design.md)
+- [人宠交互详细实现方案](doc/prd/00-pet-human-interaction-detailed-design.md)
+- [宠物身份与养成产品方案](doc/prd/01-pet-identity-nurturing-product.md)
+- [桌面助手产品基线与路线图](doc/prd/02-desktop-assistant-baseline-roadmap.md)
+- [桌面代理交付计划](doc/prd/03-desktop-agent-delivery-plan.md)
+- [宠物核心系统设计](doc/design/01-pet-core-systems.md)
+- [角色驱动化视觉系统设计](doc/design/05-piko-character-driven-visual-system.md)
+- [角色驱动化视觉技术方案](doc/design/06-piko-character-driven-visual-implementation.md)
+- [应用壳层与桌面代理设计](doc/design/02-app-shell-agent-operations.md)
+- [记忆、存储与数据设计](doc/design/03-memory-storage-and-data.md)
+- [插件、素材与质量设计](doc/design/04-plugins-tooling-quality.md)
 
 ## 素材来源
 

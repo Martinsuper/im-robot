@@ -57,8 +57,7 @@ macro_rules! impl_sql_for_enum {
         impl FromSql for $ty {
             fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
                 let s = value.as_str()?;
-                serde_json::from_str(s)
-                    .map_err(|e| FromSqlError::Other(Box::new(e)))
+                serde_json::from_str(s).map_err(|e| FromSqlError::Other(Box::new(e)))
             }
         }
     };

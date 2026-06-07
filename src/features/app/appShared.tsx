@@ -1,4 +1,5 @@
 import { CSSProperties, useEffect, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type {
   AiSettings,
   AppSettings,
@@ -23,6 +24,111 @@ const petSpriteStates = {
   resting: { row: 0, frames: 1, duration: 5500 },
   error: { row: 5, frames: 8, duration: 1220 },
 };
+
+const robotCatFrameByMode = {
+  idle: 1,
+  listening: 4,
+  thinking: 2,
+  speaking: 6,
+  working: 2,
+  success: 7,
+  confirming: 2,
+  resting: 3,
+  error: 0,
+} satisfies Record<keyof typeof petSpriteStates, number>;
+
+export type PetVisualStyle = "lumi" | "custom" | "classic" | "character";
+
+export const petVisualStyleStorageKey = "piko-pet-visual-style";
+export const customPetImageStorageKey = "piko-custom-pet-image-path";
+export const defaultPetVisualStyle: PetVisualStyle = "lumi";
+
+export const petVisualStyleOptions: Array<{ label: string; value: PetVisualStyle }> = [
+  { label: "机甲猫", value: "lumi" },
+  { label: "角色模式", value: "character" },
+  { label: "自定义图片", value: "custom" },
+  { label: "Piko 经典兜底", value: "classic" },
+];
+
+export function getPetVisualStyle(): PetVisualStyle {
+  if (typeof window === "undefined") return defaultPetVisualStyle;
+  const stored = window.localStorage.getItem(petVisualStyleStorageKey);
+  if (petVisualStyleOptions.some((option) => option.value === stored)) return stored as PetVisualStyle;
+  if (stored) {
+    window.localStorage.setItem(petVisualStyleStorageKey, defaultPetVisualStyle);
+  }
+  return defaultPetVisualStyle;
+}
+
+export function setPetVisualStyle(style: PetVisualStyle) {
+  window.localStorage.setItem(petVisualStyleStorageKey, style);
+  window.dispatchEvent(new CustomEvent<PetVisualStyle>("piko-pet-visual-style-changed", { detail: style }));
+}
+
+export function getCustomPetImagePath() {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(customPetImageStorageKey) ?? "";
+}
+
+export function setCustomPetImagePath(path: string) {
+  window.localStorage.setItem(customPetImageStorageKey, path);
+  window.dispatchEvent(new CustomEvent<string>("piko-custom-pet-image-changed", { detail: path }));
+}
+
+export function clearCustomPetImagePath() {
+  window.localStorage.removeItem(customPetImageStorageKey);
+  window.dispatchEvent(new CustomEvent<string>("piko-custom-pet-image-changed", { detail: "" }));
+}
+
+export function getNextPetVisualStyle(style = getPetVisualStyle()): PetVisualStyle {
+  const index = petVisualStyleOptions.findIndex((option) => option.value === style);
+  return petVisualStyleOptions[(index + 1) % petVisualStyleOptions.length].value;
+}
+
+export function usePetVisualStyle() {
+  const [style, setStyle] = useState<PetVisualStyle>(getPetVisualStyle);
+
+  useEffect(() => {
+    const update = () => setStyle(getPetVisualStyle());
+    const updateFromEvent = (event: Event) => {
+      setStyle((event as CustomEvent<PetVisualStyle>).detail ?? getPetVisualStyle());
+    };
+
+    window.addEventListener("storage", update);
+    window.addEventListener("piko-pet-visual-style-changed", updateFromEvent);
+    return () => {
+      window.removeEventListener("storage", update);
+      window.removeEventListener("piko-pet-visual-style-changed", updateFromEvent);
+    };
+  }, []);
+
+  return style;
+}
+
+export function useCustomPetImagePath() {
+  const [path, setPath] = useState(getCustomPetImagePath);
+
+  useEffect(() => {
+    const update = () => setPath(getCustomPetImagePath());
+    const updateFromEvent = (event: Event) => {
+      setPath((event as CustomEvent<string>).detail ?? getCustomPetImagePath());
+    };
+
+    window.addEventListener("storage", update);
+    window.addEventListener("piko-custom-pet-image-changed", updateFromEvent);
+    return () => {
+      window.removeEventListener("storage", update);
+      window.removeEventListener("piko-custom-pet-image-changed", updateFromEvent);
+    };
+  }, []);
+
+  return path;
+}
+
+export function useCustomPetImageUrl() {
+  const path = useCustomPetImagePath();
+  return path ? convertFileSrc(path) : "";
+}
 
 function formatCurrentTime() {
   return new Intl.DateTimeFormat(undefined, {
@@ -53,22 +159,138 @@ export function useCurrentTime() {
   return currentTime;
 }
 
+function getRobotCatFrame(mode: keyof typeof petSpriteStates, emotion: string, reaction: string) {
+  if (reaction === "celebrate" || mode === "success") return 7;
+  if (reaction === "greet") return 6;
+  if (mode === "resting" || emotion === "sleepy") return 3;
+  if (mode === "error" || emotion === "worried") return 0;
+  if (mode === "listening" || emotion === "surprised") return 4;
+  if (mode === "thinking" || mode === "working" || mode === "confirming") return 2;
+  if (emotion === "excited" || emotion === "playful") return 5;
+  if (emotion === "happy") return 7;
+  if (emotion === "curious" || emotion === "thoughtful") return 1;
+  return robotCatFrameByMode[mode];
+}
+
+function getCharacterPose(mode: keyof typeof petSpriteStates, emotion: string, reaction: string) {
+  if (reaction === "celebrate" || mode === "success") return "celebrate";
+  if (reaction === "greet") return "greet";
+  if (mode === "resting" || emotion === "sleepy") return "sleepy";
+  if (mode === "error" || emotion === "worried") return "worried";
+  if (mode === "listening" || emotion === "surprised") return "curious";
+  if (mode === "thinking" || mode === "working" || mode === "confirming") return "focused";
+  if (emotion === "excited" || emotion === "playful" || reaction === "idle_fidget") return "playful";
+  if (emotion === "curious" || emotion === "thoughtful") return "curious";
+  return "idle";
+}
+
 export function PetSprite({
   mode = "idle",
+  emotion = "neutral",
+  reaction = "none",
   compact = false,
+  mouseDelta,
 }: {
   mode?: keyof typeof petSpriteStates;
+  emotion?: string;
+  reaction?: string;
   compact?: boolean;
+  mouseDelta?: { x: number; y: number };
 }) {
   const sprite = petSpriteStates[mode];
+  const visualStyle = usePetVisualStyle();
+  const customPetImageUrl = useCustomPetImageUrl();
+  const robotCatFrame = getRobotCatFrame(mode, emotion, reaction);
+  const characterPose = getCharacterPose(mode, emotion, reaction);
   const style = {
     "--sprite-row": sprite.row,
     "--sprite-frames": sprite.frames,
     "--sprite-duration": `${sprite.duration}ms`,
+    "--robot-cat-col": robotCatFrame % 4,
+    "--robot-cat-row": Math.floor(robotCatFrame / 4),
+    "--look-x": mouseDelta ? `${mouseDelta.x * 6}px` : "0px",
+    "--look-y": mouseDelta ? `${mouseDelta.y * 4}px` : "0px",
+    "--eye-x": mouseDelta ? `${mouseDelta.x * 5}px` : "0px",
+    "--eye-y": mouseDelta ? `${mouseDelta.y * 4}px` : "0px",
+    "--pet-tilt": mouseDelta ? `${mouseDelta.x * 3}deg` : "0deg",
+    "--character-tilt": mouseDelta ? `${mouseDelta.x * 2}deg` : "0deg",
+    "--character-bob": reaction === "celebrate" || mode === "success" ? "-3px" : reaction === "yawn" ? "1px" : "0px",
+    "--character-eye-open": emotion === "sleepy" || mode === "resting" ? ".5" : emotion === "surprised" ? "1.1" : "1",
+    "--character-mouth-open": emotion === "excited" || reaction === "celebrate" ? "1" : emotion === "thoughtful" ? ".3" : "0",
+    "--character-glow-strength": mode === "error" || emotion === "worried" ? ".22" : emotion === "happy" ? ".55" : ".35",
+    "--custom-pet-image": customPetImageUrl ? `url("${customPetImageUrl}")` : "none",
   } as CSSProperties;
 
+  if (visualStyle === "classic" || (visualStyle === "custom" && !customPetImageUrl)) {
+    return (
+      <span className={`pet-sprite-frame pet-sprite-frame--classic${compact ? " pet-sprite-frame--compact" : ""}`}>
+        <span className="pet-sprite" style={style} />
+      </span>
+    );
+  }
+
+  if (visualStyle === "lumi") {
+    return (
+      <span
+        className={`pet-sprite-frame pet-sprite-frame--robot-cat${compact ? " pet-sprite-frame--compact" : ""}`}
+        style={style}
+      >
+        <span
+          className={`robot-cat-sprite robot-cat-sprite--${mode} robot-cat-sprite--emotion-${emotion} robot-cat-sprite--reaction-${reaction}`}
+          aria-hidden="true"
+        >
+          <span className="robot-cat-glow" />
+          <span className="robot-cat-image" />
+          <span className="robot-cat-shadow" />
+        </span>
+      </span>
+    );
+  }
+
+  if (visualStyle === "character") {
+    return (
+      <span
+        className={`pet-sprite-frame pet-sprite-frame--character${compact ? " pet-sprite-frame--compact" : ""}`}
+        style={style}
+      >
+        <span
+          className={`character-piko character-piko--${mode} character-piko--emotion-${emotion} character-piko--reaction-${reaction} character-piko--pose-${characterPose}`}
+          aria-hidden="true"
+        >
+          <span className="character-piko-glow" />
+          <span className="character-piko-body" />
+          <span className="character-piko-head" />
+          <span className="character-piko-face">
+            <span className="character-piko-eye character-piko-eye--left" />
+            <span className="character-piko-eye character-piko-eye--right" />
+            <span className="character-piko-mouth" />
+          </span>
+          <span className="character-piko-shadow" />
+        </span>
+      </span>
+    );
+  }
+
+  if (visualStyle === "custom" && customPetImageUrl) {
+    return (
+      <span
+        className={`pet-sprite-frame pet-sprite-frame--custom${compact ? " pet-sprite-frame--compact" : ""}`}
+        style={style}
+      >
+        <span
+          className={`custom-pet-sprite custom-pet-sprite--${mode} custom-pet-sprite--emotion-${emotion} custom-pet-sprite--reaction-${reaction}`}
+          aria-hidden="true"
+        >
+          <span className="custom-pet-glow" />
+          <span className="custom-pet-image" />
+          <span className="custom-pet-shadow" />
+        </span>
+      </span>
+    );
+  }
+
   return (
-    <span className={`pet-sprite-frame${compact ? " pet-sprite-frame--compact" : ""}`}>
+    <span className={`pet-sprite-frame pet-sprite-frame--classic${compact ? " pet-sprite-frame--compact" : ""}`}>
       <span className="pet-sprite" style={style} />
     </span>
   );
@@ -146,7 +368,7 @@ export const quietModeOptions: Array<{ label: string; value: QuietMode }> = [
 export const panelTabOptions: Array<{ label: string; value: PanelTab }> = [
   { label: "精灵", value: "companion" },
   { label: "设置", value: "settings" },
-  { label: "提醒", value: "reminders" },
+  { label: "时间", value: "reminders" },
   { label: "日程", value: "calendar" },
   { label: "历史", value: "history" },
   { label: "记忆", value: "memory" },

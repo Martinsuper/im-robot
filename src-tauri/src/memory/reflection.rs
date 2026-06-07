@@ -1,8 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::model::{
-    MemoryItem, MemorySource, MemoryStatus, MemoryType, ReflectionSummary,
-};
+use super::model::{MemoryItem, MemorySource, MemoryStatus, MemoryType, ReflectionSummary};
 use super::store::MemoryDb;
 
 fn now_unix() -> u64 {
@@ -34,9 +32,18 @@ pub fn run_daily_reflection(db: &MemoryDb) -> Result<ReflectionSummary, String> 
     let today_memories = db.get_in_range(day_start, day_end)?;
 
     // Group by type
-    let profile_count = today_memories.iter().filter(|m| matches!(m.memory_type, MemoryType::Profile)).count();
-    let event_count = today_memories.iter().filter(|m| matches!(m.memory_type, MemoryType::Event)).count();
-    let operational_count = today_memories.iter().filter(|m| matches!(m.memory_type, MemoryType::Operational)).count();
+    let profile_count = today_memories
+        .iter()
+        .filter(|m| matches!(m.memory_type, MemoryType::Profile))
+        .count();
+    let event_count = today_memories
+        .iter()
+        .filter(|m| matches!(m.memory_type, MemoryType::Event))
+        .count();
+    let operational_count = today_memories
+        .iter()
+        .filter(|m| matches!(m.memory_type, MemoryType::Operational))
+        .count();
 
     // Find most-used memory type today
     let dominant_type = if event_count >= profile_count && event_count >= operational_count {
@@ -93,10 +100,7 @@ pub fn run_weekly_reflection(db: &MemoryDb) -> Result<ReflectionSummary, String>
     let patterns = detect_patterns(&week_memories);
 
     // Generate summary
-    let mut content = format!(
-        "本周反思：共分析 {} 条活跃记忆。\n",
-        week_memories.len()
-    );
+    let mut content = format!("本周反思：共分析 {} 条活跃记忆。\n", week_memories.len());
 
     if !merge_suggestions.is_empty() {
         content.push_str(&format!(
@@ -104,7 +108,12 @@ pub fn run_weekly_reflection(db: &MemoryDb) -> Result<ReflectionSummary, String>
             merge_suggestions.len()
         ));
         for (i, (a, b)) in merge_suggestions.iter().take(5).enumerate() {
-            content.push_str(&format!("  {}. [{}] 和 [{}] 可能重复\n", i + 1, a.title, b.title));
+            content.push_str(&format!(
+                "  {}. [{}] 和 [{}] 可能重复\n",
+                i + 1,
+                a.title,
+                b.title
+            ));
         }
     }
 
@@ -135,7 +144,9 @@ pub fn run_weekly_reflection(db: &MemoryDb) -> Result<ReflectionSummary, String>
 // === Memory Deduplication ===
 
 /// Find pairs of memories that are similar enough to be merged.
-fn detect_merge_candidates<'a>(memories: &[&'a MemoryItem]) -> Vec<(&'a MemoryItem, &'a MemoryItem)> {
+fn detect_merge_candidates<'a>(
+    memories: &[&'a MemoryItem],
+) -> Vec<(&'a MemoryItem, &'a MemoryItem)> {
     let mut candidates = Vec::new();
 
     for i in 0..memories.len() {
@@ -232,7 +243,10 @@ fn detect_patterns(memories: &[&MemoryItem]) -> Vec<String> {
     let tag_freq = count_tags(memories);
     for (tag, count) in tag_freq {
         if count >= 3 {
-            patterns.push(format!("标签「{}」频繁出现（{} 次），可能是重要主题。", tag, count));
+            patterns.push(format!(
+                "标签「{}」频繁出现（{} 次），可能是重要主题。",
+                tag, count
+            ));
         }
     }
 
@@ -257,18 +271,14 @@ fn count_tags(memories: &[&MemoryItem]) -> Vec<(String, usize)> {
         }
     }
     let mut result: Vec<_> = counts.into_iter().collect();
-    result.sort_by(|a, b| b.1.cmp(&a.1));
+    result.sort_by_key(|b| std::cmp::Reverse(b.1));
     result
 }
 
 // === Merge Memories ===
 
 /// Merge two similar memories, keeping the more important one.
-pub fn merge_memories(
-    db: &MemoryDb,
-    keep_id: &str,
-    remove_id: &str,
-) -> Result<MemoryItem, String> {
+pub fn merge_memories(db: &MemoryDb, keep_id: &str, remove_id: &str) -> Result<MemoryItem, String> {
     let keep = db
         .get(keep_id)?
         .ok_or_else(|| "找不到要保留的记忆".to_string())?;
@@ -277,10 +287,7 @@ pub fn merge_memories(
         .ok_or_else(|| "找不到要合并的记忆".to_string())?;
 
     // Merge content: append removed content as a note
-    let new_content = format!(
-        "{}\n\n（合并自：{}）",
-        keep.content, remove.content
-    );
+    let new_content = format!("{}\n\n（合并自：{}）", keep.content, remove.content);
 
     // Merge tags
     let mut merged_tags = keep.tags.clone();
@@ -294,12 +301,7 @@ pub fn merge_memories(
     let new_importance = keep.importance.max(remove.importance);
 
     // Update keep memory
-    let updated = db.update_with_full(
-        keep_id,
-        &new_content,
-        new_importance,
-        &merged_tags,
-    )?;
+    let updated = db.update_with_full(keep_id, &new_content, new_importance, &merged_tags)?;
 
     // Delete removed memory
     db.delete(remove_id)?;
@@ -317,7 +319,10 @@ pub fn merge_memories(
 // === Auto-generate Semantic Memories ===
 
 /// From repeated event patterns, generate a semantic memory.
-pub fn abstract_to_semantic(db: &MemoryDb, events: &[&MemoryItem]) -> Result<Option<MemoryItem>, String> {
+pub fn abstract_to_semantic(
+    db: &MemoryDb,
+    events: &[&MemoryItem],
+) -> Result<Option<MemoryItem>, String> {
     if events.len() < 3 {
         return Ok(None);
     }
@@ -385,7 +390,7 @@ fn find_common_tags(events: &[&MemoryItem]) -> Vec<String> {
             *counts.entry(tag.clone()).or_default() += 1;
         }
     }
-    let min_count = (events.len() + 1) / 2; // appear in at least half
+    let min_count = events.len().div_ceil(2); // appear in at least half
     let mut common: Vec<_> = counts
         .into_iter()
         .filter(|(_, c)| *c >= min_count)

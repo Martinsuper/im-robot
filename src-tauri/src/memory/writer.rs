@@ -46,7 +46,7 @@ pub fn extract_candidates(input: &CaptureCandidateInput) -> Vec<MemoryCandidate>
     let confidence = input.confidence.unwrap_or(0.5);
 
     // Determine memory type
-    let memory_type = input.memory_type.clone().unwrap_or_else(|| {
+    let memory_type = input.memory_type.clone().unwrap_or({
         match input.source {
             MemorySource::UserExplicit => MemoryType::Profile,
             MemorySource::Conversation => MemoryType::Event,
@@ -57,8 +57,8 @@ pub fn extract_candidates(input: &CaptureCandidateInput) -> Vec<MemoryCandidate>
     });
 
     // Determine if confirmation is needed
-    let requires_confirmation = matches!(input.source, MemorySource::Conversation)
-        || confidence < 0.6;
+    let requires_confirmation =
+        matches!(input.source, MemorySource::Conversation) || confidence < 0.6;
 
     // Calculate importance
     let importance = match (&memory_type, &input.source) {
@@ -90,9 +90,7 @@ pub fn apply_candidate(
     input: &ApplyCandidateInput,
     candidates: &mut Vec<MemoryCandidate>,
 ) -> Result<Option<MemoryItem>, String> {
-    let idx = candidates
-        .iter()
-        .position(|c| c.id == input.candidate_id);
+    let idx = candidates.iter().position(|c| c.id == input.candidate_id);
 
     let candidate = match idx {
         Some(i) => candidates.remove(i),
@@ -130,4 +128,165 @@ pub fn apply_candidate(
 
     db.create(&item)?;
     Ok(Some(item))
+}
+
+/// Auto-capture memory candidates from a completed chat exchange.
+/// Returns (confirmed_count, pending_count) - confirmed are written directly, pending need user review.
+pub fn auto_capture_from_chat(
+    db: &MemoryDb,
+    cache: &CandidateCache,
+    prompt: &str,
+    response: &str,
+) -> Result<(usize, usize), String> {
+    let candidates = extract_chat_candidates(prompt, response);
+    let mut confirmed_count = 0;
+    let mut pending_count = 0;
+
+    for candidate in candidates {
+        if candidate.requires_confirmation {
+            // Add to pending cache for user review in MemoryCenter
+            let mut locked = cache.lock()?;
+            locked.push(candidate);
+            pending_count += 1;
+        } else {
+            // High-confidence task results: write directly
+            let now = now_unix();
+            let item = MemoryItem {
+                id: format!("memory-{}", candidate.id),
+                memory_type: candidate.memory_type.clone(),
+                title: candidate.title,
+                content: candidate.content,
+                source: candidate.source,
+                importance: candidate.importance,
+                confidence: candidate.confidence,
+                recency_score: 1.0,
+                privacy_level: PrivacyLevel::PublicToUser,
+                status: MemoryStatus::Active,
+                created_at: now,
+                updated_at: now,
+                last_used_at: None,
+                expires_at: match candidate.memory_type {
+                    MemoryType::Event => Some(now + 90 * 86400),
+                    MemoryType::Operational => Some(now + 60 * 86400),
+                    _ => None,
+                },
+                tags: candidate.tags,
+                embedding_id: None,
+                is_pinned: false,
+            };
+            db.create(&item)?;
+            confirmed_count += 1;
+        }
+    }
+    Ok((confirmed_count, pending_count))
+}
+
+/// Extract memory candidates from a chat exchange using simple heuristics.
+fn extract_chat_candidates(prompt: &str, response: &str) -> Vec<MemoryCandidate> {
+    let mut candidates = Vec::new();
+
+    // Heuristic 1: Detect user preferences/facts - requires confirmation
+    let preference_markers = [
+        "我喜欢",
+        "我讨厌",
+        "我习惯",
+        "我偏好",
+        "我每天",
+        "我经常",
+        "我总是",
+        "我从不",
+        "我一般",
+        "我希望",
+        "我需要",
+        "我认为",
+        "我家住在",
+        "我住在",
+        "我是",
+        "我叫",
+    ];
+    for marker in &preference_markers {
+        if let Some(pos) = prompt.find(marker) {
+            let start = pos.saturating_sub(10);
+            let end = (pos + marker.len() + 80).min(prompt.len());
+            let snippet = prompt[start..end].trim();
+            if snippet.len() > 5 {
+                candidates.push(MemoryCandidate {
+                    id: format!("chat-cand-{}-pref", now_unix()),
+                    title: format!("用户偏好：{}", &snippet[..snippet.len().min(20)]),
+                    content: snippet.to_string(),
+                    memory_type: MemoryType::Profile,
+                    source: MemorySource::Conversation,
+                    confidence: 0.6,
+                    importance: 5,
+                    tags: vec!["用户偏好".to_string()],
+                    requires_confirmation: true,
+                });
+                break; // Only one preference candidate per chat
+            }
+        }
+    }
+
+    // Heuristic 2: Detect task outcomes from AI response - high confidence, no confirmation needed
+    let outcome_markers = [
+        "已创建",
+        "已完成",
+        "已设置",
+        "已删除",
+        "已安排",
+        "创建成功",
+        "设置成功",
+        "已为你",
+        "已经",
+    ];
+    for marker in &outcome_markers {
+        if response.contains(marker) {
+            let context = extract_outcome_context(response, marker);
+            if !context.is_empty() {
+                candidates.push(MemoryCandidate {
+                    id: format!("chat-cand-{}-outcome", now_unix()),
+                    title: format!("任务结果：{}", &context[..context.len().min(20)]),
+                    content: context,
+                    memory_type: MemoryType::Event,
+                    source: MemorySource::TaskOutcome,
+                    confidence: 0.85,
+                    importance: 6,
+                    tags: vec!["任务结果".to_string()],
+                    requires_confirmation: false, // High confidence, write directly
+                });
+                break;
+            }
+        }
+    }
+
+    // Heuristic 3: Detect operational knowledge Q&A - requires confirmation
+    if prompt.contains("怎么") || prompt.contains("如何") || prompt.contains("怎样") {
+        let snippet = &prompt[..prompt.len().min(50)];
+        candidates.push(MemoryCandidate {
+            id: format!("chat-cand-{}-op", now_unix()),
+            title: format!("操作知识：{}", snippet),
+            content: format!(
+                "问：{}\n答：{}",
+                prompt,
+                &response[..response.len().min(200)]
+            ),
+            memory_type: MemoryType::Operational,
+            source: MemorySource::Conversation,
+            confidence: 0.5,
+            importance: 4,
+            tags: vec!["操作知识".to_string()],
+            requires_confirmation: true,
+        });
+    }
+
+    candidates
+}
+
+fn extract_outcome_context(response: &str, marker: &str) -> String {
+    if let Some(pos) = response.find(marker) {
+        let start = pos.saturating_sub(20);
+        let end = (pos + marker.len() + 60).min(response.len());
+        response[start..end].trim().to_string()
+    } else {
+        String::new()
+    }
 }

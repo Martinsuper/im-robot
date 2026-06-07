@@ -5,10 +5,7 @@
 ///
 /// Security: API keys are NEVER exported (they live in keyring).
 /// Temporary attachments and screenshots are NOT included.
-
-use crate::{
-    AppSettings, CalendarEvent, ChatHistoryEntry, FocusRecord, Reminder,
-};
+use crate::{AppSettings, CalendarEvent, ChatHistoryEntry, FocusRecord, Reminder};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -152,10 +149,7 @@ pub fn import_from_file(app: &AppHandle, path: &Path) -> Result<ImportResult, St
     let data: ExportData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
 
     if data.schema_version != 1 {
-        return Err(format!(
-            "不支持的导出格式版本 {}",
-            data.schema_version
-        ));
+        return Err(format!("不支持的导出格式版本 {}", data.schema_version));
     }
 
     let mut imported = ImportResult::default();
@@ -239,23 +233,38 @@ fn read_settings_for_export(app: &AppHandle) -> Option<SanitizedSettings> {
 // --- Path helpers ---
 
 fn chat_history_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("chat-history.json"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("chat-history.json"))
 }
 
 fn reminders_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("reminders.json"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("reminders.json"))
 }
 
 fn calendar_events_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("calendar-events.json"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("calendar-events.json"))
 }
 
 fn focus_records_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("focus-records.json"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("focus-records.json"))
 }
 
 fn app_settings_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("app-settings.json"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("app-settings.json"))
 }
 
 // --- Merge functions ---
@@ -374,7 +383,9 @@ fn merge_settings(app: &AppHandle, incoming: &SanitizedSettings) {
 
 fn persist_chat_history(app: &AppHandle, history: &[ChatHistoryEntry]) -> Result<(), String> {
     let path = chat_history_path(app).ok_or_else(|| "无法获取历史记录路径".to_string())?;
-    let dir = path.parent().ok_or_else(|| "无法获取历史记录目录".to_string())?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| "无法获取历史记录目录".to_string())?;
     let json = serde_json::to_string(history).map_err(|e| e.to_string())?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())
@@ -382,7 +393,9 @@ fn persist_chat_history(app: &AppHandle, history: &[ChatHistoryEntry]) -> Result
 
 fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), String> {
     let path = reminders_path(app).ok_or_else(|| "无法获取提醒记录路径".to_string())?;
-    let dir = path.parent().ok_or_else(|| "无法获取提醒记录目录".to_string())?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| "无法获取提醒记录目录".to_string())?;
     let json = serde_json::to_string(reminders).map_err(|e| e.to_string())?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())
@@ -390,7 +403,9 @@ fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), Stri
 
 fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<(), String> {
     let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
-    let dir = path.parent().ok_or_else(|| "无法获取日程记录目录".to_string())?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| "无法获取日程记录目录".to_string())?;
     let json = serde_json::to_string(events).map_err(|e| e.to_string())?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())
@@ -398,7 +413,9 @@ fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<
 
 fn persist_focus_records(app: &AppHandle, records: &[FocusRecord]) -> Result<(), String> {
     let path = focus_records_path(app).ok_or_else(|| "无法获取专注记录路径".to_string())?;
-    let dir = path.parent().ok_or_else(|| "无法获取专注记录目录".to_string())?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| "无法获取专注记录目录".to_string())?;
     let json = serde_json::to_string(records).map_err(|e| e.to_string())?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())

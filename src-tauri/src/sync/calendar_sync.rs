@@ -198,6 +198,9 @@ fn build_jxa_script(payload: &serde_json::Value) -> String {
     format!(
         r#"
 const payload = {};
+function hasText(value) {{
+  return value !== null && value !== undefined && String(value).trim().length > 0;
+}}
 function toMillis(dateValue) {{
   const date = new Date(dateValue);
   return Math.floor(date.getTime() / 1000);
@@ -223,15 +226,27 @@ function main() {{
       summary: item.title,
       startDate: new Date(item.startAt * 1000),
       endDate: new Date(item.endAt * 1000),
-      location: item.location || "",
-      description: item.description || "",
     }};
+    if (hasText(item.location)) {{
+      eventSpec.location = String(item.location);
+    }}
+    if (hasText(item.description)) {{
+      eventSpec.description = String(item.description);
+    }}
     if (event) {{
       event.summary = eventSpec.summary;
       event.startDate = eventSpec.startDate;
       event.endDate = eventSpec.endDate;
-      event.location = eventSpec.location;
-      event.description = eventSpec.description;
+      if (hasText(item.location)) {{
+        event.location = String(item.location);
+      }} else {{
+        event.location = null;
+      }}
+      if (hasText(item.description)) {{
+        event.description = String(item.description);
+      }} else {{
+        event.description = null;
+      }}
     }} else {{
       event = Calendar.Event(eventSpec);
       defaultCalendar.events.push(event);
@@ -435,7 +450,7 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
 
     update_mappings_from_system_events(app, &system_events)?;
 
-    local_events.sort_by(|a, b| a.start_at.cmp(&b.start_at));
+    local_events.sort_by_key(|a| a.start_at);
     persist_local_calendar_events(app, &local_events)?;
 
     Ok(PullResult {

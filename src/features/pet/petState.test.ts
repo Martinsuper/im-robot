@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { initialPetState, reducePetState } from "./petState";
 
 describe("reducePetState", () => {
@@ -57,5 +57,26 @@ describe("reducePetState", () => {
       emotion: "curious",
       reaction: "notice",
     });
+  });
+
+  it("supports hover and pet stroke interactions", () => {
+    expect(reducePetState(initialPetState, { type: "HOVER" })).toMatchObject({
+      mode: "idle",
+      emotion: "curious",
+      reaction: "notice",
+    });
+    expect(reducePetState(initialPetState, { type: "PET_STROKED" })).toMatchObject({
+      mode: "idle",
+      emotion: "happy",
+      reaction: "greet",
+    });
+  });
+
+  it("biases soft idle fidgets toward calmer reactions", () => {
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    const result = reducePetState(initialPetState, { type: "FIDGET", intensity: "soft" });
+
+    expect(result.reaction).toBe("stretch");
+    randomSpy.mockRestore();
   });
 });

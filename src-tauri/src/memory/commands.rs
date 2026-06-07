@@ -5,11 +5,11 @@ use super::model::{
     SearchMemoriesInput, SearchRelatedInput, UpdateMemoryInput,
 };
 use super::policy;
-use super::store::MemoryDb;
-use super::writer::{apply_candidate, extract_candidates, CandidateCache};
 use super::reflection::{
     abstract_to_semantic, merge_memories, run_daily_reflection, run_weekly_reflection,
 };
+use super::store::MemoryDb;
+use super::writer::{apply_candidate, extract_candidates, CandidateCache};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
@@ -42,10 +42,7 @@ pub fn list_memories(
 }
 
 #[tauri::command]
-pub fn get_memory_detail(
-    db: State<'_, MemoryDb>,
-    id: String,
-) -> Result<MemoryItem, String> {
+pub fn get_memory_detail(db: State<'_, MemoryDb>, id: String) -> Result<MemoryItem, String> {
     db.get(&id)?.ok_or_else(|| "未找到该记忆".to_string())
 }
 
@@ -181,10 +178,7 @@ pub fn feedback_memory(
 }
 
 #[tauri::command]
-pub fn add_memory_relation(
-    db: State<'_, MemoryDb>,
-    input: AddRelationInput,
-) -> Result<(), String> {
+pub fn add_memory_relation(db: State<'_, MemoryDb>, input: AddRelationInput) -> Result<(), String> {
     db.add_relation(&input)
 }
 
@@ -395,10 +389,7 @@ pub fn abstract_semantic_from_events(
 // === Phase 3+: Expiration & Maintenance ===
 
 #[tauri::command]
-pub fn expire_old_memories(
-    app: AppHandle,
-    db: State<'_, MemoryDb>,
-) -> Result<usize, String> {
+pub fn expire_old_memories(app: AppHandle, db: State<'_, MemoryDb>) -> Result<usize, String> {
     let count = db.expire_old_memories()?;
     if count > 0 {
         let _ = app.emit_to("panel", "memories-updated", ());
@@ -407,9 +398,7 @@ pub fn expire_old_memories(
 }
 
 #[tauri::command]
-pub fn recalculate_confidence(
-    db: State<'_, MemoryDb>,
-) -> Result<usize, String> {
+pub fn recalculate_confidence(db: State<'_, MemoryDb>) -> Result<usize, String> {
     db.recalculate_confidence()
 }
 

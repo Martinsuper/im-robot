@@ -5,6 +5,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { ActionConfirmationCard, getConfirmationChoices } from "./ActionConfirmationCard";
+import { getBubbleCompanionMessage } from "./bubbleMessage";
 import type { ActionDraft, ActionExecution, ChatEvent } from "./chatTypes";
 import type { AttachmentAction, AttachmentPreview, AppSettings, ScreenshotPreview, Theme } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
@@ -70,7 +71,7 @@ function MarkdownContent({ children }: { children: string }) {
 
 export function BubbleWindow() {
   const [prompt, setPrompt] = useState("");
-  const [message, setMessage] = useState("你好，我是 Piko。今天想一起完成什么？");
+  const [message, setMessage] = useState(() => getBubbleCompanionMessage() || "你好，我是 Piko。今天想一起完成什么？");
   const [companionName, setCompanionName] = useState("Piko");
   const [theme, setTheme] = useState<Theme>("sage");
   const [htmlPreviewEnabled, setHtmlPreviewEnabled] = useState(false);
@@ -89,7 +90,9 @@ export function BubbleWindow() {
   const [selectedChoiceIndexes, setSelectedChoiceIndexes] = useState<number[]>([]);
   const [pendingPromptSummary, setPendingPromptSummary] = useState({ length: 0, hasAttachment: false, hasScreenshot: false });
   const [showReplySkeleton, setShowReplySkeleton] = useState(false);
+  const [memoryActivity, setMemoryActivity] = useState<string>("");
   const [isReplyEntering, setIsReplyEntering] = useState(false);
+  const hasInputContext = Boolean(attachment || screenshot || attachmentError || isDraggingFile);
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
   const previewReplyTimer = useRef<number | undefined>(undefined);
@@ -138,7 +141,7 @@ export function BubbleWindow() {
       setCompanionName(settings.companionName);
       setTheme(settings.theme);
       setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
-      setMessage(`你好，我是 ${settings.companionName}。今天想一起完成什么？`);
+      setMessage((current) => current || `你好，我是 ${settings.companionName}。今天想一起完成什么？`);
     });
   }, []);
 
@@ -161,6 +164,24 @@ export function BubbleWindow() {
       void unlisten.then((dispose) => dispose());
     };
   }, []);
+
+  useEffect(() => {
+    const syncCompanionMessage = () => {
+      if (prompt.trim() || isThinking) return;
+      const bubbleMessage = getBubbleCompanionMessage();
+      if (bubbleMessage) {
+        setMessage(bubbleMessage);
+      }
+    };
+
+    window.addEventListener("storage", syncCompanionMessage);
+    window.addEventListener("piko-bubble-companion-message-changed", syncCompanionMessage);
+    syncCompanionMessage();
+    return () => {
+      window.removeEventListener("storage", syncCompanionMessage);
+      window.removeEventListener("piko-bubble-companion-message-changed", syncCompanionMessage);
+    };
+  }, [isThinking, prompt]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -237,6 +258,24 @@ export function BubbleWindow() {
       }
     });
 
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
+  // Listen for memory capture events from chat rounds
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    const unlisten = listen<{ confirmed: number; pending: number }>("memory-captured", (event) => {
+      const { confirmed, pending } = event.payload;
+      if (pending > 0) {
+        setMemoryActivity(`💡 有 ${pending} 条记忆待确认，请在记忆中心查看`);
+      } else if (confirmed > 0) {
+        setMemoryActivity(`💡 已记住 ${confirmed} 条信息`);
+      }
+      const timer = window.setTimeout(() => setMemoryActivity(""), 4000);
+      return () => window.clearTimeout(timer);
+    });
     return () => {
       void unlisten.then((dispose) => dispose());
     };
@@ -509,15 +548,6 @@ export function BubbleWindow() {
           </div>
         </div>
         <div className="bubble-header__actions">
-          <button
-            type="button"
-            className={htmlPreviewEnabled ? "is-active" : ""}
-            title="HTML 预览插件"
-            aria-label="HTML 预览插件"
-            onClick={() => void updateHtmlPreviewEnabled(!htmlPreviewEnabled)}
-          >
-            HTML
-          </button>
           <button className="close-button" type="button" onClick={() => runCommand("hide_bubble")} aria-label="关闭">
             ×
           </button>
@@ -563,59 +593,66 @@ export function BubbleWindow() {
           onReject={() => void rejectAction()}
         />
       )}
-      <section className={`attachment-dropzone${isDraggingFile ? " is-dragging" : ""}`}>
-        {attachment ? (
-          <>
-            <div className="attachment-heading">
+      {hasInputContext && (
+        <section className="bubble-context-tray" aria-label="待发送内容">
+          {(attachment || attachmentError || isDraggingFile) && (
+            <div className={`attachment-dropzone${isDraggingFile ? " is-dragging" : ""}`}>
+              {attachment ? (
+                <>
+                  <div className="attachment-heading">
+                    <div>
+                      <strong>{attachment.displayName}</strong>
+                      <span>
+                        {formatBytes(attachment.byteSize)} · {attachment.charCount} 字符
+                      </span>
+                    </div>
+                    <button type="button" onClick={() => void clearAttachment()}>
+                      移除
+                    </button>
+                  </div>
+                  <div className="attachment-actions" aria-label="附件处理方式">
+                    {attachmentActionOptions.map(({ label, value }) => (
+                      <button
+                        className={attachmentAction === value ? "is-active" : ""}
+                        key={value}
+                        type="button"
+                        onClick={() => setAttachmentAction(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="attachment-empty">
+                  <p>{isDraggingFile ? "松开即可读取文本文件" : "可处理 .txt、.md、.json、.csv 或 .log"}</p>
+                  <button type="button" onClick={() => void chooseAttachment()}>选择</button>
+                </div>
+              )}
+              {attachmentError && <span className="attachment-error">{attachmentError}</span>}
+            </div>
+          )}
+          {screenshot && (
+            <div className="screenshot-card">
+              <img src={screenshot.dataUrl} alt="待发送的截图预览" />
               <div>
-                <strong>{attachment.displayName}</strong>
-                <span>
-                  {formatBytes(attachment.byteSize)} · {attachment.charCount} 字符
-                </span>
+                <strong>截图</strong>
+                <span>{screenshot.width} × {screenshot.height}</span>
+                <button type="button" onClick={() => void clearScreenshot()}>移除</button>
               </div>
-              <button type="button" onClick={() => void clearAttachment()}>
-                移除
-              </button>
             </div>
-            <p>{attachment.preview || "空文件"}</p>
-            <div className="attachment-actions" aria-label="附件处理方式">
-              {attachmentActionOptions.map(({ label, value }) => (
-                <button
-                  className={attachmentAction === value ? "is-active" : ""}
-                  key={value}
-                  type="button"
-                  onClick={() => setAttachmentAction(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </>
-        ) : (
-          <div className="attachment-empty">
-            <p>{isDraggingFile ? "松开即可读取文本文件" : "拖入 .txt、.md、.json、.csv 或 .log 文件"}</p>
-            <button type="button" onClick={() => void chooseAttachment()}>选择文件</button>
-          </div>
-        )}
-        {attachmentError && <span className="attachment-error">{attachmentError}</span>}
-      </section>
-      <section className="screenshot-card">
-        {screenshot ? (
-          <>
-            <img src={screenshot.dataUrl} alt="待发送的截图预览" />
-            <div>
-              <strong>截图已确认</strong>
-              <span>{screenshot.width} × {screenshot.height}</span>
-              <button type="button" onClick={() => void clearScreenshot()}>移除截图</button>
-            </div>
-          </>
-        ) : (
-          <button type="button" onClick={() => runCommand("begin_screen_capture")}>
-            截图提问
-          </button>
-        )}
-      </section>
+          )}
+        </section>
+      )}
       <form className="prompt-form" onSubmit={submit}>
+        <div className="prompt-tools" aria-label="输入工具">
+          <button type="button" onClick={() => void chooseAttachment()} aria-label="添加附件" title="添加附件">
+            +
+          </button>
+          <button type="button" onClick={() => runCommand("begin_screen_capture")} aria-label="截图提问" title="截图提问">
+            □
+          </button>
+        </div>
         <input
           autoFocus
           value={prompt}
@@ -635,24 +672,37 @@ export function BubbleWindow() {
               停止生成
             </button>
           )}
-          <button type="button" disabled={!message} onClick={() => void copyResult()}>
-            复制结果
-          </button>
-          <button type="button" disabled={!message} onClick={() => void toggleSpeech()}>
-            {isSpeaking ? "停止朗读" : "朗读回复"}
-          </button>
-          <button type="button" disabled={!message} onClick={() => void saveResult()}>
-            保存回复
-          </button>
-          <button type="button" onClick={() => void clearContext()}>
-            清空上下文
-          </button>
-          <button type="button" onClick={() => runCommand("open_panel")}>
-            打开面板
-          </button>
+          <details className="bubble-more-menu" data-no-drag>
+            <summary>更多</summary>
+            <div>
+              <button
+                type="button"
+                className={htmlPreviewEnabled ? "is-active" : ""}
+                onClick={() => void updateHtmlPreviewEnabled(!htmlPreviewEnabled)}
+              >
+                HTML 预览
+              </button>
+              <button type="button" disabled={!message} onClick={() => void copyResult()}>
+                复制结果
+              </button>
+              <button type="button" disabled={!message} onClick={() => void toggleSpeech()}>
+                {isSpeaking ? "停止朗读" : "朗读回复"}
+              </button>
+              <button type="button" disabled={!message} onClick={() => void saveResult()}>
+                保存回复
+              </button>
+              <button type="button" onClick={() => void clearContext()}>
+                清空上下文
+              </button>
+              <button type="button" onClick={() => runCommand("open_panel")}>
+                打开面板
+              </button>
+            </div>
+          </details>
         </div>
       </footer>
       {contextNotice && <p className="bubble-context-note" role="status">{contextNotice}</p>}
+      {memoryActivity && <p className="bubble-memory-note" role="status">💡 {memoryActivity}</p>}
       {speechError && <p className="speech-error" role="alert">{speechError}</p>}
       {saveError && <p className="speech-error" role="alert">{saveError}</p>}
     </main>

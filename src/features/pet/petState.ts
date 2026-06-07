@@ -15,9 +15,12 @@ export type PetEmotion =
   | "curious"
   | "sleepy"
   | "surprised"
-  | "worried";
+  | "worried"
+  | "excited"
+  | "thoughtful"
+  | "playful";
 
-export type PetReaction = "none" | "greet" | "notice" | "celebrate";
+export type PetReaction = "none" | "greet" | "notice" | "celebrate" | "idle_fidget" | "stretch" | "yawn";
 
 export interface PetState {
   mode: PetMode;
@@ -30,7 +33,11 @@ export type PetEvent =
   | { type: "WAKE" }
   | { type: "REST" }
   | { type: "LISTEN" }
+  | { type: "HOVER" }
   | { type: "INTERACT" }
+  | { type: "PET_STROKED" }
+  | { type: "DRAG_STARTED" }
+  | { type: "DRAG_RELEASED" }
   | { type: "AMBIENT_NUDGE" }
   | { type: "BREAK_REMINDER"; message: string }
   | { type: "ATTACHMENT_READY" }
@@ -40,7 +47,9 @@ export type PetEvent =
   | { type: "CHAT_STREAM_STARTED" }
   | { type: "CHAT_COMPLETED" }
   | { type: "RESET" }
-  | { type: "FAILED"; message: string };
+  | { type: "FAILED"; message: string }
+  | { type: "FIDGET"; intensity?: "soft" | "normal" }
+  | { type: "HOVER_DROP" };
 
 export const initialPetState: PetState = {
   mode: "idle",
@@ -57,8 +66,16 @@ export function reducePetState(state: PetState, event: PetEvent): PetState {
       return { mode: "resting", message: "Piko 正在安静休息。", emotion: "sleepy", reaction: "none" };
     case "LISTEN":
       return { mode: "listening", message: "Piko 正在等你说话。", emotion: "curious", reaction: "notice" };
+    case "HOVER":
+      return { mode: "idle", message: "Piko 好奇地看着你。", emotion: "curious", reaction: "notice" };
     case "INTERACT":
       return { mode: "idle", message: "Piko 注意到你了。", emotion: "happy", reaction: "greet" };
+    case "PET_STROKED":
+      return { mode: "idle", message: "Piko 很喜欢这样。", emotion: "happy", reaction: "greet" };
+    case "DRAG_STARTED":
+      return { mode: "idle", message: "Piko 被轻轻带动了。", emotion: "surprised", reaction: "notice" };
+    case "DRAG_RELEASED":
+      return { mode: "idle", message: "Piko 落稳了。", emotion: "playful", reaction: "idle_fidget" };
     case "AMBIENT_NUDGE":
       return { mode: "idle", message: "Piko 安静地陪着你。", emotion: "curious", reaction: "notice" };
     case "BREAK_REMINDER":
@@ -77,8 +94,18 @@ export function reducePetState(state: PetState, event: PetEvent): PetState {
       return { mode: "success", message: "Piko 完成啦。", emotion: "happy", reaction: "celebrate" };
     case "RESET":
       return initialPetState;
+    case "FIDGET": {
+      const reactions: PetReaction[] =
+        event.intensity === "soft"
+          ? ["stretch", "yawn", "idle_fidget"]
+          : ["idle_fidget", "stretch", "yawn"];
+      const reaction = reactions[Math.floor(Math.random() * reactions.length)];
+      return { ...state, reaction };
+    }
     case "FAILED":
       return { mode: "error", message: event.message, emotion: "worried", reaction: "notice" };
+    case "HOVER_DROP":
+      return { mode: "confirming", message: "松手放下文件", emotion: "curious", reaction: "notice" };
     default:
       return state;
   }

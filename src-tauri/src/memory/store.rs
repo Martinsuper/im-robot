@@ -19,12 +19,10 @@ pub fn memory_db_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 pub fn init_memory_db(app: &tauri::AppHandle) -> Result<MemoryDb, String> {
-    let path =
-        memory_db_path(app).ok_or_else(|| "无法获取应用配置目录".to_string())?;
+    let path = memory_db_path(app).ok_or_else(|| "无法获取应用配置目录".to_string())?;
 
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("无法创建配置目录: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("无法创建配置目录: {}", e))?;
     }
 
     let conn = Connection::open_with_flags(
@@ -185,10 +183,7 @@ impl MemoryDb {
     // === Phase 1 CRUD ===
 
     pub fn list(&self, input: ListMemoriesInput) -> Result<Vec<MemoryItem>, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let limit = input.limit.unwrap_or(100);
         let results = match (input.memory_type, input.status) {
@@ -257,10 +252,7 @@ impl MemoryDb {
     }
 
     pub fn get(&self, id: &str) -> Result<Option<MemoryItem>, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let mut stmt = db
             .prepare(&format!("{SELECT_COLS} FROM memory_items WHERE id = ?1"))
@@ -275,10 +267,7 @@ impl MemoryDb {
     }
 
     pub fn create(&self, item: &MemoryItem) -> Result<(), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let tags_json = serde_json::to_string(&item.tags).map_err(|e| e.to_string())?;
         let memory_type_str =
@@ -319,14 +308,9 @@ impl MemoryDb {
     }
 
     pub fn update(&self, id: &str, input: UpdateMemoryInput) -> Result<MemoryItem, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
-        let existing = self
-            .get(id)?
-            .ok_or_else(|| "未找到该记忆".to_string())?;
+        let existing = self.get(id)?.ok_or_else(|| "未找到该记忆".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -359,16 +343,14 @@ impl MemoryDb {
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let deleted_str = serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
+        let deleted_str =
+            serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
 
         db.execute(
             "UPDATE memory_items SET status = ?1, updated_at = ?2 WHERE id = ?3",
@@ -380,16 +362,14 @@ impl MemoryDb {
     }
 
     pub fn clear_type(&self, memory_type: MemoryType) -> Result<usize, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let deleted_str = serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
+        let deleted_str =
+            serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
         let type_str = serde_json::to_string(&memory_type).map_err(|e| e.to_string())?;
 
         db.execute(
@@ -400,16 +380,14 @@ impl MemoryDb {
     }
 
     pub fn clear_all(&self) -> Result<usize, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let deleted_str = serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
+        let deleted_str =
+            serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
 
         db.execute(
             "UPDATE memory_items SET status = ?1, updated_at = ?2 WHERE status != 'Deleted'",
@@ -421,10 +399,7 @@ impl MemoryDb {
     // === Phase 2: Search ===
 
     pub fn search(&self, input: SearchMemoriesInput) -> Result<Vec<MemoryItem>, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let limit = input.limit.unwrap_or(20);
         let query = input.query.trim();
@@ -440,16 +415,26 @@ impl MemoryDb {
             let (sql, _param_count) = match &input.memory_type {
                 Some(mtype) => {
                     let _type_str = serde_json::to_string(mtype).map_err(|e| e.to_string())?;
-                    (format!("{} AND memory_type = ?2 ORDER BY rank, updated_at DESC LIMIT ?3", base_query), 3)
+                    (
+                        format!(
+                            "{} AND memory_type = ?2 ORDER BY rank, updated_at DESC LIMIT ?3",
+                            base_query
+                        ),
+                        3,
+                    )
                 }
-                None => (format!("{} ORDER BY rank, updated_at DESC LIMIT ?2", base_query), 2),
+                None => (
+                    format!("{} ORDER BY rank, updated_at DESC LIMIT ?2", base_query),
+                    2,
+                ),
             };
 
             let fts_results = (|| -> Result<Vec<MemoryItem>, String> {
                 let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
                 let rows = match &input.memory_type {
                     Some(_) => {
-                        let type_str = serde_json::to_string(&input.memory_type).map_err(|e| e.to_string())?;
+                        let type_str =
+                            serde_json::to_string(&input.memory_type).map_err(|e| e.to_string())?;
                         stmt.query_map(params![query, type_str, limit], row_to_memory_item)
                     }
                     None => stmt.query_map(params![query, limit], row_to_memory_item),
@@ -481,31 +466,29 @@ impl MemoryDb {
                 } else {
                     ""
                 },
-                if input.memory_type.is_some() { "3" } else { "2" }
+                if input.memory_type.is_some() {
+                    "3"
+                } else {
+                    "2"
+                }
             ))
             .map_err(|e| e.to_string())?;
 
         let rows = match &input.memory_type {
             Some(mtype) => {
                 let type_str = serde_json::to_string(mtype).map_err(|e| e.to_string())?;
-                stmt.query_map(
-                    params![like_pattern, type_str, limit],
-                    row_to_memory_item,
-                )
+                stmt.query_map(params![like_pattern, type_str, limit], row_to_memory_item)
             }
             None => stmt.query_map(params![like_pattern, limit], row_to_memory_item),
         }
         .map_err(|e| e.to_string())?;
 
-        Ok(rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn search_related(&self, input: SearchRelatedInput) -> Result<Vec<MemoryItem>, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let limit = input.limit.unwrap_or(10);
         let query = input.query.trim();
@@ -527,10 +510,7 @@ impl MemoryDb {
 
         let fts_results = (|| -> Result<Vec<MemoryItem>, String> {
             let rows = stmt
-                .query_map(
-                    params![query, limit],
-                    row_to_memory_item,
-                )
+                .query_map(params![query, limit], row_to_memory_item)
                 .map_err(|e| e.to_string())?;
 
             rows.collect::<Result<Vec<_>, _>>()
@@ -558,15 +538,12 @@ impl MemoryDb {
             .query_map(params![like_pattern, limit], row_to_memory_item)
             .map_err(|e| e.to_string())?;
 
-        Ok(rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn get_recent(&self, limit: usize) -> Result<Vec<MemoryItem>, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let mut stmt = db
             .prepare(&format!(
@@ -580,15 +557,12 @@ impl MemoryDb {
             .query_map(params![limit], row_to_memory_item)
             .map_err(|e| e.to_string())?;
 
-        Ok(rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn build_context(&self, input: BuildContextInput) -> Result<Vec<MemoryItem>, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let limit = input.limit.unwrap_or(15);
         let now = std::time::SystemTime::now()
@@ -661,7 +635,8 @@ impl MemoryDb {
             .query_map(params![limit], row_to_memory_item)
             .map_err(|e| e.to_string())?;
 
-        let mut results = rows.collect::<Result<Vec<_>, _>>()
+        let mut results = rows
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
 
         // Update recency scores
@@ -680,10 +655,7 @@ impl MemoryDb {
     // === Phase 2: Pin / Unpin ===
 
     pub fn pin(&self, id: &str) -> Result<(), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         db.execute(
             "UPDATE memory_items SET is_pinned = 1, updated_at = ?1 WHERE id = ?2",
@@ -701,10 +673,7 @@ impl MemoryDb {
     }
 
     pub fn unpin(&self, id: &str) -> Result<(), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         db.execute(
             "UPDATE memory_items SET is_pinned = 0, updated_at = ?1 WHERE id = ?2",
@@ -724,10 +693,7 @@ impl MemoryDb {
     // === Phase 2: Feedback ===
 
     pub fn add_feedback(&self, input: &FeedbackInput) -> Result<(), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -763,11 +729,7 @@ impl MemoryDb {
             db.execute(
                 "UPDATE memory_items SET confidence = MIN(1.0, MAX(0.0, confidence + ?1)), \
                  updated_at = ?2 WHERE id = ?3",
-                params![
-                    confidence_delta,
-                    now,
-                    input.memory_id,
-                ],
+                params![confidence_delta, now, input.memory_id,],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -778,10 +740,7 @@ impl MemoryDb {
     // === Phase 2: Memory Relations ===
 
     pub fn add_relation(&self, input: &AddRelationInput) -> Result<(), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         db.execute(
             "INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation_type) \
@@ -793,11 +752,13 @@ impl MemoryDb {
         Ok(())
     }
 
-    pub fn remove_relation(&self, from_id: &str, to_id: &str, relation_type: &str) -> Result<(), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+    pub fn remove_relation(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        relation_type: &str,
+    ) -> Result<(), String> {
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         db.execute(
             "DELETE FROM memory_relations WHERE from_id = ?1 AND to_id = ?2 AND relation_type = ?3",
@@ -809,10 +770,7 @@ impl MemoryDb {
     }
 
     pub fn get_relations(&self, memory_id: &str) -> Result<Vec<MemoryRelation>, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let mut stmt = db
             .prepare(
@@ -831,18 +789,14 @@ impl MemoryDb {
             })
             .map_err(|e| e.to_string())?;
 
-        Ok(rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
-
 
     // === Phase 3+: Reflection helpers ===
 
     pub fn get_in_range(&self, start: u64, end: u64) -> Result<Vec<MemoryItem>, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let mut stmt = db
             .prepare(&format!(
@@ -856,15 +810,12 @@ impl MemoryDb {
             .query_map(params![start, end], row_to_memory_item)
             .map_err(|e| e.to_string())?;
 
-        Ok(rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn save_summary(&self, summary: &ReflectionSummary) -> Result<(), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         db.execute(
             "INSERT INTO memory_summaries (id, summary_type, content, created_at, period_start, period_end) \
@@ -883,11 +834,12 @@ impl MemoryDb {
         Ok(())
     }
 
-    pub fn get_summaries(&self, summary_type: Option<&str>, limit: usize) -> Result<Vec<ReflectionSummary>, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+    pub fn get_summaries(
+        &self,
+        summary_type: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ReflectionSummary>, String> {
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let (sql, _params_count) = match summary_type {
             Some(_st) => (
@@ -917,8 +869,8 @@ impl MemoryDb {
         }
         .map_err(|e| e.to_string())?;
 
-        Ok(rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn update_with_full(
@@ -928,10 +880,7 @@ impl MemoryDb {
         importance: u8,
         tags: &[String],
     ) -> Result<MemoryItem, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -948,24 +897,21 @@ impl MemoryDb {
         .map_err(|e| e.to_string())?;
 
         drop(db);
-        self.get(id)?
-            .ok_or_else(|| "更新后找不到记忆".to_string())
+        self.get(id)?.ok_or_else(|| "更新后找不到记忆".to_string())
     }
 
     // === Phase 3+: Expiration & Auto-archival ===
 
     pub fn expire_old_memories(&self) -> Result<usize, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        let archived_str = serde_json::to_string(&MemoryStatus::Archived).map_err(|e| e.to_string())?;
+        let archived_str =
+            serde_json::to_string(&MemoryStatus::Archived).map_err(|e| e.to_string())?;
 
         db.execute(
             "UPDATE memory_items SET status = ?1, updated_at = ?2 \
@@ -976,10 +922,7 @@ impl MemoryDb {
     }
 
     pub fn recalculate_confidence(&self) -> Result<usize, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -987,14 +930,15 @@ impl MemoryDb {
             .as_secs();
 
         // Recalculate recency score based on decay
-        let affected = db.execute(
-            "UPDATE memory_items SET \
+        let affected = db
+            .execute(
+                "UPDATE memory_items SET \
              recency_score = MAX(0.1, 1.0 / (1.0 + 0.02 * ((?1 - updated_at) / 86400.0))), \
              updated_at = ?1 \
              WHERE status = 'Active'",
-            params![now],
-        )
-        .map_err(|e| e.to_string())?;
+                params![now],
+            )
+            .map_err(|e| e.to_string())?;
 
         Ok(affected)
     }
@@ -1002,10 +946,7 @@ impl MemoryDb {
     // === Import/Export ===
 
     pub fn export_all(&self) -> Result<(Vec<MemoryItem>, Vec<MemoryRelation>), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let mut stmt = db
             .prepare(&format!(
@@ -1015,7 +956,8 @@ impl MemoryDb {
         let rows = stmt
             .query_map(params![], row_to_memory_item)
             .map_err(|e| e.to_string())?;
-        let memories = rows.collect::<Result<Vec<_>, _>>()
+        let memories = rows
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
 
         let mut rel_stmt = db
@@ -1030,7 +972,8 @@ impl MemoryDb {
                 })
             })
             .map_err(|e| e.to_string())?;
-        let relations = rel_rows.collect::<Result<Vec<_>, _>>()
+        let relations = rel_rows
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
 
         Ok((memories, relations))
@@ -1042,10 +985,7 @@ impl MemoryDb {
         relations: &[MemoryRelation],
         mode: &str,
     ) -> Result<usize, String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let mut count = 0;
 
@@ -1054,9 +994,11 @@ impl MemoryDb {
                 // Delete existing and insert new
                 let _ = db.execute("DELETE FROM memory_items WHERE id = ?1", params![item.id]);
                 let tags_json = serde_json::to_string(&item.tags).map_err(|e| e.to_string())?;
-                let memory_type_str = serde_json::to_string(&item.memory_type).map_err(|e| e.to_string())?;
+                let memory_type_str =
+                    serde_json::to_string(&item.memory_type).map_err(|e| e.to_string())?;
                 let source_str = serde_json::to_string(&item.source).map_err(|e| e.to_string())?;
-                let privacy_str = serde_json::to_string(&item.privacy_level).map_err(|e| e.to_string())?;
+                let privacy_str =
+                    serde_json::to_string(&item.privacy_level).map_err(|e| e.to_string())?;
                 let status_str = serde_json::to_string(&item.status).map_err(|e| e.to_string())?;
 
                 db.execute(
@@ -1076,19 +1018,25 @@ impl MemoryDb {
             } else {
                 // merge: only insert if not exists
                 let exists: bool = db
-                    .query_row("SELECT 1 FROM memory_items WHERE id = ?1", params![item.id], |row| {
-                        row.get::<_, i32>(0)
-                    })
+                    .query_row(
+                        "SELECT 1 FROM memory_items WHERE id = ?1",
+                        params![item.id],
+                        |row| row.get::<_, i32>(0),
+                    )
                     .optional()
                     .map_err(|e| e.to_string())?
                     .is_some();
 
                 if !exists {
                     let tags_json = serde_json::to_string(&item.tags).map_err(|e| e.to_string())?;
-                    let memory_type_str = serde_json::to_string(&item.memory_type).map_err(|e| e.to_string())?;
-                    let source_str = serde_json::to_string(&item.source).map_err(|e| e.to_string())?;
-                    let privacy_str = serde_json::to_string(&item.privacy_level).map_err(|e| e.to_string())?;
-                    let status_str = serde_json::to_string(&item.status).map_err(|e| e.to_string())?;
+                    let memory_type_str =
+                        serde_json::to_string(&item.memory_type).map_err(|e| e.to_string())?;
+                    let source_str =
+                        serde_json::to_string(&item.source).map_err(|e| e.to_string())?;
+                    let privacy_str =
+                        serde_json::to_string(&item.privacy_level).map_err(|e| e.to_string())?;
+                    let status_str =
+                        serde_json::to_string(&item.status).map_err(|e| e.to_string())?;
 
                     db.execute(
                         "INSERT OR IGNORE INTO memory_items \
@@ -1119,11 +1067,13 @@ impl MemoryDb {
         Ok(count)
     }
 
-    pub fn add_relation_direct(&self, from_id: &str, to_id: &str, relation_type: &str) -> Result<(), String> {
-        let db = self
-            .0
-            .lock()
-            .map_err(|_| "数据库锁获取失败".to_string())?;
+    pub fn add_relation_direct(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        relation_type: &str,
+    ) -> Result<(), String> {
+        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         db.execute(
             "INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation_type) VALUES (?1, ?2, ?3)",

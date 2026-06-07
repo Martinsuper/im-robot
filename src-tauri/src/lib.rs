@@ -19,8 +19,8 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, PhysicalSize, State,
-    WindowEvent,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
+    State, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -35,6 +35,8 @@ pub mod sync;
 pub mod typing_activity;
 
 const PET_MARGIN: i32 = 16;
+/// How many pixels of the pet window stay visible when tucked at screen edge.
+const PET_PEEK: i32 = 40;
 const PET_MOVE_DEBOUNCE_MS: u64 = 220;
 const KEYRING_SERVICE: &str = "com.duanluyao.imrobot";
 const KEYRING_ACCOUNT: &str = "provider-api-key";
@@ -119,6 +121,35 @@ struct ChatStartInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PetPersonalityInput {
+    energy: f32,
+    humor: f32,
+    curiosity: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PetCompanionGenerationInput {
+    mode: String,
+    scene: String,
+    bond_tier: String,
+    interaction_type: Option<String>,
+    personality: PetPersonalityInput,
+    personality_summary: Option<String>,
+    context: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PetCompanionGenerationOutput {
+    message: Option<String>,
+    motion_style: Option<String>,
+    behavior_profile: Option<String>,
+    behavior_priority: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PreferencesInput {
     companion_name: String,
     theme: String,
@@ -190,6 +221,14 @@ enum ChatEvent {
         request_id: String,
         message: String,
     },
+}
+
+/// Emitted when memory candidates are auto-captured from a chat round.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryCapturedEvent {
+    confirmed: usize,
+    pending: usize,
 }
 
 #[derive(Default)]
@@ -1659,9 +1698,7 @@ fn reminder_delete_input_from_value(value: &Value) -> Result<ReminderDeleteInput
     Ok(ReminderDeleteInput {
         id,
         title: value["title"].as_str().map(str::to_string),
-        due_at: value["dueAt"]
-            .as_str()
-            .and_then(|text| tool_timestamp_str(text)),
+        due_at: value["dueAt"].as_str().and_then(tool_timestamp_str),
         repeat: value["repeat"].as_str().map(str::to_string),
     })
 }
@@ -1674,12 +1711,8 @@ fn calendar_delete_input_from_value(value: &Value) -> Result<CalendarDeleteInput
     Ok(CalendarDeleteInput {
         id,
         title: value["title"].as_str().map(str::to_string),
-        start_at: value["startAt"]
-            .as_str()
-            .and_then(|text| tool_timestamp_str(text)),
-        end_at: value["endAt"]
-            .as_str()
-            .and_then(|text| tool_timestamp_str(text)),
+        start_at: value["startAt"].as_str().and_then(tool_timestamp_str),
+        end_at: value["endAt"].as_str().and_then(tool_timestamp_str),
     })
 }
 
@@ -2112,11 +2145,80 @@ fn save_current_bubble_size(app: &AppHandle) {
     persist_bubble_size(app, size);
 }
 
+fn clamp_pet_position(
+    requested: LogicalPosition<f64>,
+    window_size: LogicalSize<f64>,
+    work_area_position: LogicalPosition<f64>,
+    work_area_size: LogicalSize<f64>,
+) -> LogicalPosition<f64> {
+    let peek = PET_PEEK as f64;
+    let x = requested
+        .x
+        .max(work_area_position.x - window_size.width + peek)
+        .min(work_area_position.x + work_area_size.width - peek);
+    let y = requested
+        .y
+        .max(work_area_position.y - window_size.height + peek)
+        .min(work_area_position.y + work_area_size.height - peek);
+    LogicalPosition::new(x, y)
+}
+
 #[tauri::command]
-fn move_pet(app: AppHandle, x: f64, y: f64) {
-    if let Some(window) = app.get_webview_window("pet") {
-        let _ = window.set_position(LogicalPosition::new(x, y));
-    }
+fn move_pet(app: AppHandle, x: f64, y: f64) -> Result<(f64, f64), String> {
+    let window = app
+        .get_webview_window("pet")
+        .ok_or_else(|| "pet window not found".to_string())?;
+    let requested = LogicalPosition::new(x.round(), y.round());
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    let Some(monitor) = monitors
+        .iter()
+        .find(|monitor| {
+            let area = monitor.work_area();
+            let position = area.position.to_logical::<f64>(scale_factor);
+            let size = area.size.to_logical::<f64>(scale_factor);
+            requested.x >= position.x
+                && requested.y >= position.y
+                && requested.x < position.x + size.width
+                && requested.y < position.y + size.height
+        })
+        .or_else(|| monitors.first())
+    else {
+        window.set_position(requested).map_err(|e| e.to_string())?;
+        return Ok((requested.x, requested.y));
+    };
+    let area = monitor.work_area();
+    let position = clamp_pet_position(
+        requested,
+        size.to_logical::<f64>(scale_factor),
+        area.position.to_logical::<f64>(scale_factor),
+        area.size.to_logical::<f64>(scale_factor),
+    );
+    window.set_position(position).map_err(|e| e.to_string())?;
+    Ok((position.x, position.y))
+}
+
+#[tauri::command]
+fn move_pet_relative(app: AppHandle, dx: f64, dy: f64) -> Result<(f64, f64), String> {
+    let window = app
+        .get_webview_window("pet")
+        .ok_or_else(|| "pet window not found".to_string())?;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
+    let logical_pos: LogicalPosition<f64> = pos.to_logical::<f64>(scale_factor);
+    move_pet(app, logical_pos.x + dx, logical_pos.y + dy)
+}
+
+#[tauri::command]
+fn get_pet_position(app: AppHandle) -> Result<(f64, f64), String> {
+    let window = app
+        .get_webview_window("pet")
+        .ok_or("pet window not found")?;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
+    let logical_pos: LogicalPosition<f64> = pos.to_logical::<f64>(scale_factor);
+    Ok((logical_pos.x, logical_pos.y))
 }
 
 fn place_bubble_near_pet(app: &AppHandle) {
@@ -2235,7 +2337,7 @@ fn enable_pet_background_drag(app: &AppHandle) {
 
     let _ = window.with_webview(|webview| unsafe {
         let ns_window: &objc2_app_kit::NSWindow = &*webview.ns_window().cast();
-        ns_window.setMovableByWindowBackground(true);
+        ns_window.setMovableByWindowBackground(false);
     });
 }
 
@@ -2719,7 +2821,7 @@ fn delete_calendar_event_record(
         .ok_or_else(|| "未找到该日程".to_string())?;
     let deleted = events.remove(index);
     persist_calendar_events(app, &events)?;
-    crate::sync::calendar_sync::mark_local_events_deleted(app, &[deleted.id.clone()])?;
+    crate::sync::calendar_sync::mark_local_events_deleted(app, std::slice::from_ref(&deleted.id))?;
     let _ = app.emit("calendar-events-updated", ());
     Ok(deleted)
 }
@@ -3932,6 +4034,66 @@ fn update_ai_settings(app: AppHandle, input: AiSettingsInput) -> Result<AppSetti
 }
 
 #[tauri::command]
+async fn generate_pet_companion_response(
+    app: AppHandle,
+    input: PetCompanionGenerationInput,
+) -> Result<PetCompanionGenerationOutput, String> {
+    let settings = read_settings(&app);
+    validate_ai_settings(&settings.ai)?;
+
+    let client = http_client(&settings.ai)?;
+    let prompt = pet_companion_generation_user_prompt(&input);
+    let request_body = match provider_kind(&settings.ai.provider) {
+        Some(ProviderKind::OpenAiCompatible) => json!({
+            "model": settings.ai.model,
+            "messages": [
+                { "role": "system", "content": pet_companion_generation_system_prompt(&settings.companion_name) },
+                { "role": "user", "content": prompt },
+            ],
+            "temperature": settings.ai.temperature,
+            "stream": false,
+            "max_tokens": 256
+        }),
+        Some(ProviderKind::Anthropic) => json!({
+            "model": settings.ai.model,
+            "system": pet_companion_generation_system_prompt(&settings.companion_name),
+            "messages": [
+                { "role": "user", "content": prompt },
+            ],
+            "temperature": settings.ai.temperature,
+            "max_tokens": 256
+        }),
+        Some(ProviderKind::Gemini) => json!({
+            "systemInstruction": { "parts": [{ "text": pet_companion_generation_system_prompt(&settings.companion_name) }] },
+            "contents": [
+                { "role": "user", "parts": [{ "text": prompt }] }
+            ],
+            "generationConfig": { "temperature": settings.ai.temperature, "maxOutputTokens": 256 }
+        }),
+        None => return Err("不支持的模型服务类型".to_string()),
+    };
+
+    let response = request_builder(
+        &client,
+        &settings.ai,
+        reqwest::Method::POST,
+        pet_companion_generation_url(&settings.ai)?,
+    )
+    .json(&request_body)
+    .send()
+    .await
+    .map_err(|error| error.to_string())?
+    .error_for_status()
+    .map_err(|error| error.to_string())?;
+
+    let body = response
+        .json::<Value>()
+        .await
+        .map_err(|error| error.to_string())?;
+    parse_pet_companion_generation_output(&settings.ai.provider, &body)
+}
+
+#[tauri::command]
 fn update_html_preview_enabled(app: AppHandle, enabled: bool) -> Result<AppSettings, String> {
     let mut settings = read_settings(&app);
     settings.html_preview_enabled = enabled;
@@ -4141,6 +4303,182 @@ fn chat_request_body(
     }
 }
 
+fn pet_companion_generation_url(settings: &AiSettings) -> Result<String, String> {
+    let base_url = normalize_base_url(&settings.base_url);
+    match provider_kind(&settings.provider) {
+        Some(ProviderKind::OpenAiCompatible) => Ok(format!("{base_url}/chat/completions")),
+        Some(ProviderKind::Anthropic) => Ok(format!("{base_url}/messages")),
+        Some(ProviderKind::Gemini) => Ok(format!(
+            "{base_url}/models/{}:generateContent",
+            settings.model.trim_start_matches("models/")
+        )),
+        None => Err("不支持的模型服务类型".to_string()),
+    }
+}
+
+fn pet_companion_generation_system_prompt(companion_name: &str) -> String {
+    format!(
+        "你是桌面宠物 {companion_name} 的语言与动作节奏助手。你必须只输出严格 JSON，不要 Markdown，不要解释，不要代码块。\
+返回对象字段如下：message(string，可选但在 dialogue 模式下必须提供)、motionStyle(string，必须是 soft/balanced/lively 之一，可选但在 idleProfile 模式下必须提供)、behaviorProfile(string，必须是 calm/balanced/playful/curious/focused 之一，可选但在 behaviorProfile 模式下必须提供)、behaviorPriority(array[string]，元素必须是 calm/balanced/playful/curious/focused/neutral 之一，可选但在 behaviorPriority 模式下必须提供)。\
+message 必须是自然、简短、中文、像宠物对用户说的话，避免模板味。motionStyle 的含义是：soft=更安静更轻缓，balanced=均衡，lively=更活跃更靠近。"
+    )
+}
+
+fn pet_companion_generation_user_prompt(input: &PetCompanionGenerationInput) -> String {
+    let context = input.context.as_deref().unwrap_or("无额外上下文");
+    let interaction_type = input.interaction_type.as_deref().unwrap_or("none");
+    let personality_summary = input
+        .personality_summary
+        .as_deref()
+        .unwrap_or("无额外人格描述");
+    format!(
+        "请为桌面宠物生成响应。\
+mode: {}\
+scene: {}\
+bondTier: {}\
+interactionType: {}\
+personality: {{\"energy\": {}, \"humor\": {}, \"curiosity\": {}}}\
+personalitySummary: {}\
+context: {}\
+\
+规则：\
+1. 只返回 JSON 对象。\
+2. dialogue 模式下优先给出 message。\
+3. idleProfile 模式下优先给出 motionStyle。\
+4. behaviorProfile 模式下优先给出 behaviorProfile。\
+5. behaviorPriority 模式下优先给出 behaviorPriority。\
+6. 内容要自然，不要像说明书。\
+7. 不要输出多余字段。",
+        input.mode,
+        input.scene,
+        input.bond_tier,
+        interaction_type,
+        input.personality.energy,
+        input.personality.humor,
+        input.personality.curiosity,
+        personality_summary,
+        context
+    )
+}
+
+fn extract_completion_text(provider: &str, body: &Value) -> Option<String> {
+    match provider_kind(provider) {
+        Some(ProviderKind::Anthropic) => {
+            let joined = body["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("");
+            let trimmed = joined.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Some(ProviderKind::Gemini) => {
+            let joined = body["candidates"][0]["content"]["parts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("");
+            let trimmed = joined.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        _ => body["choices"][0]["message"]["content"]
+            .as_str()
+            .map(str::trim)
+            .map(str::to_string)
+            .or_else(|| {
+                body["choices"][0]["message"]["content"]
+                    .as_array()
+                    .and_then(|parts| {
+                        let mut joined = String::new();
+                        for part in parts {
+                            if let Some(text) = part["text"].as_str() {
+                                joined.push_str(text);
+                            }
+                        }
+                        let trimmed = joined.trim().to_string();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed)
+                        }
+                    })
+            }),
+    }
+}
+
+fn extract_json_fragment(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    Some(&text[start..=end])
+}
+
+fn parse_pet_companion_generation_output(
+    provider: &str,
+    body: &Value,
+) -> Result<PetCompanionGenerationOutput, String> {
+    let raw_text = extract_completion_text(provider, body)
+        .ok_or_else(|| "模型没有返回有效内容".to_string())?;
+    let trimmed = raw_text.trim();
+    let fragment = extract_json_fragment(trimmed).unwrap_or(trimmed);
+    let parsed: Value = serde_json::from_str(fragment)
+        .map_err(|error| format!("模型返回的 JSON 无法解析：{error}"))?;
+
+    let message = parsed["message"].as_str().map(|value| value.trim().to_string());
+    let motion_style = parsed["motionStyle"].as_str().and_then(|value| {
+        match value.trim() {
+            "soft" | "balanced" | "lively" => Some(value.trim().to_string()),
+            _ => None,
+        }
+    });
+    let behavior_profile = parsed["behaviorProfile"].as_str().and_then(|value| {
+        match value.trim() {
+            "calm" | "balanced" | "playful" | "curious" | "focused" => {
+                Some(value.trim().to_string())
+            }
+            _ => None,
+        }
+    });
+    let behavior_priority = parsed["behaviorPriority"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::trim)
+                .filter(|value| {
+                    matches!(
+                        *value,
+                        "calm" | "balanced" | "playful" | "curious" | "focused" | "neutral"
+                    )
+                })
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|items| !items.is_empty());
+
+    Ok(PetCompanionGenerationOutput {
+        message,
+        motion_style,
+        behavior_profile,
+        behavior_priority,
+    })
+}
+
 fn extract_chat_deltas(provider: &str, line: &str) -> Vec<String> {
     let Some(data) = line.strip_prefix("data:") else {
         return Vec::new();
@@ -4208,6 +4546,7 @@ async fn stream_chat(
     registry: &PluginRegistry,
     drafts: &ActionDrafts,
     memory_db: &memory::MemoryDb,
+    cache: &memory::CandidateCache,
     input: StreamChatInput<'_>,
 ) -> Result<StreamChatOutcome, String> {
     let StreamChatInput {
@@ -4385,7 +4724,7 @@ async fn stream_chat(
         .0
         .lock()
         .map_err(|_| "无法更新当前对话上下文".to_string())?;
-    append_session_chat_history(&mut session_history, history_entry);
+    append_session_chat_history(&mut session_history, history_entry.clone());
     let _ = app.emit_to("panel", "chat-history-updated", ());
 
     if cancelled.load(Ordering::Relaxed) {
@@ -4398,6 +4737,24 @@ async fn stream_chat(
             request_id: request_id.to_string(),
         },
     );
+    let (confirmed_count, pending_count) = memory::auto_capture_from_chat(
+        memory_db,
+        cache,
+        &history_entry.prompt,
+        &history_entry.response,
+    )
+    .unwrap_or((0, 0));
+
+    if confirmed_count > 0 || pending_count > 0 {
+        let _ = app.emit(
+            "memory-captured",
+            &MemoryCapturedEvent {
+                confirmed: confirmed_count,
+                pending: pending_count,
+            },
+        );
+    }
+
     Ok(StreamChatOutcome::Completed)
 }
 
@@ -4448,6 +4805,7 @@ fn attachment_action_label(action: &str) -> &str {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn chat_start(
     app: AppHandle,
     requests: State<'_, ChatRequests>,
@@ -4456,9 +4814,9 @@ async fn chat_start(
     attachments: State<'_, TextAttachmentStore>,
     captures: State<'_, ScreenCaptureStore>,
     memory_db: State<'_, memory::MemoryDb>,
+    cache: State<'_, memory::CandidateCache>,
     input: ChatStartInput,
 ) -> Result<(), String> {
-    if input.attachment_action.is_none() && !input.include_screenshot.unwrap_or(false) {}
     let attachment = attachments
         .0
         .lock()
@@ -4505,6 +4863,7 @@ async fn chat_start(
         &registry,
         &drafts,
         &memory_db,
+        &cache,
         StreamChatInput {
             request_id: &input.request_id,
             prompt: &model_prompt,
@@ -5034,6 +5393,8 @@ pub fn run() {
             get_screen_capture_preview,
             clear_screen_capture,
             move_pet,
+            move_pet_relative,
+            get_pet_position,
             get_settings,
             screen_capture_permission_status,
             check_for_updates,
@@ -5072,6 +5433,7 @@ pub fn run() {
             update_work_rhythm_preferences,
             update_ai_settings,
             update_html_preview_enabled,
+            generate_pet_companion_response,
             list_models,
             chat_start,
             chat_cancel,
@@ -5135,7 +5497,7 @@ mod tests {
         action_draft_from_tool_call, append_provider_tool_results, append_provider_tools,
         append_session_chat_history, build_attachment_prompt, calendar_conflict_note,
         calendar_delete_batch_input_from_value, calendar_event_batch_input_from_value,
-        calendar_event_input_from_value, chat_request_body, chat_url,
+        calendar_event_input_from_value, chat_request_body, chat_url, clamp_pet_position,
         coalesce_calendar_delete_calls, collect_due_reminders,
         create_calendar_event_record_at_path, decode_openai_tool_calls,
         delete_calendar_event_batch_record_at_path, extract_chat_deltas, extract_model_ids,
@@ -5158,7 +5520,7 @@ mod tests {
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use tauri::{PhysicalPosition, PhysicalSize};
+    use tauri::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 
     #[test]
     fn detects_a_position_inside_monitor_bounds() {
@@ -5176,6 +5538,18 @@ mod tests {
             PhysicalSize::new(1920, 1080),
             PhysicalPosition::new(99, 210),
         ));
+    }
+
+    #[test]
+    fn clamps_pet_position_to_keep_a_visible_edge() {
+        let clamped = clamp_pet_position(
+            LogicalPosition::new(-300.0, 1200.0),
+            LogicalSize::new(156.0, 156.0),
+            LogicalPosition::new(0.0, 0.0),
+            LogicalSize::new(1440.0, 900.0),
+        );
+
+        assert_eq!(clamped, LogicalPosition::new(-116.0, 860.0));
     }
 
     #[test]

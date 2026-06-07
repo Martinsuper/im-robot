@@ -20,3 +20,8 @@ export type ChatEvent =
   | { type: "action-proposed"; requestId: string; draft: ActionDraft }
   | { type: "cancelled"; requestId: string }
   | { type: "failed"; requestId: string; message: string };
+
+export interface MemoryCapturedEvent {
+  confirmed: number;
+  pending: number;
+}

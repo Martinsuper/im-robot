@@ -2,7 +2,6 @@
 ///
 /// Periodically polls the active window to determine what app category the user
 /// is currently in, so the pet can adjust its behavior accordingly.
-
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 
@@ -152,9 +151,7 @@ pub fn get_foreground_app_name() -> Option<String> {
 #[cfg(target_os = "windows")]
 pub fn get_foreground_app_name() -> Option<String> {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowModuleFileNameW,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowModuleFileNameW};
 
     unsafe {
         let hwnd = GetForegroundWindow();
