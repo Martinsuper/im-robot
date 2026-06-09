@@ -74,6 +74,21 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   transition: transform 180ms ease, filter 180ms ease;
 }
 
+.pet--character {
+  width: 178px;
+  height: 212px;
+}
+
+.pet-stage:has(.pet--character) {
+  align-content: center;
+  padding-block: 38px 10px;
+}
+
+.pet-stage:has(.pet--character) .pet-notice-bubble {
+  top: 2px;
+  width: min(160px, calc(100vw - 12px));
+}
+
 .pet--bond-warm .robot-cat-glow,
 .pet--bond-warm .custom-pet-glow {
   opacity: .72;
@@ -176,6 +191,16 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   transform: translateX(-50%);
   pointer-events: none;
   white-space: nowrap;
+}
+
+.pet--character .pet-clock {
+  top: 4px;
+  transform: translate(-50%, -100%);
+}
+
+.pet--character .pet-bond-badge,
+.pet--character .pet-rapport {
+  display: none;
 }
 
 .pet-rapport {
@@ -449,192 +474,39 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .pet-sprite-frame--character {
   position: relative;
   display: block;
-  overflow: visible;
+  width: 178px;
+  height: 212px;
+  overflow: hidden;
+}
+
+.live-character-pet {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.live2d-character-pet,
+.live2d-character-host,
+.live2d-character-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.live2d-character-pet {
+  position: relative;
+}
+
+.live2d-character-host,
+.live2d-character-canvas,
+.live2d-character-pet .live-character-pet {
+  position: absolute;
+  inset: 0;
 }
 
 .pet-sprite-frame--compact.pet-sprite-frame--character {
-  width: 48px;
-  height: 52px;
-}
-
-.character-piko {
-  --character-scale: .35;
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  display: block;
-  width: 336px;
-  height: 336px;
-  transform: translate(calc(-50% + var(--look-x, 0px)), calc(var(--look-y, 0px) + var(--character-bob, 0px))) rotate(var(--character-tilt, 0deg)) scale(var(--character-scale));
-  transform-origin: center bottom;
-  transition: transform 120ms ease-out, filter 160ms ease;
-}
-
-.pet-sprite-frame--compact .character-piko {
-  --character-scale: .15;
-}
-
-.character-piko-glow {
-  position: absolute;
-  left: 84px;
-  top: 58px;
-  width: 168px;
-  height: 168px;
-  border-radius: 50%;
-  box-shadow: 0 0 0 1px rgba(88, 121, 109, .18), 0 0 18px rgba(88, 121, 109, .22);
-  opacity: calc(.22 + (var(--character-glow-strength) * .28));
-  animation: character-piko-glow 2200ms ease-in-out infinite;
-}
-
-.character-piko-body {
-  position: absolute;
-  left: 112px;
-  bottom: 34px;
-  width: 116px;
-  height: 132px;
-  border-radius: 46px 46px 30px 30px;
-  background: linear-gradient(180deg, #e6f0ea 0%, #d8e5dd 100%);
-  box-shadow: inset 0 0 0 1px rgba(66, 90, 86, .08), 0 10px 16px rgba(31, 41, 55, .12);
-  animation: character-piko-breathe var(--sprite-duration) ease-in-out infinite;
-}
-
-.character-piko-body::before {
-  content: "";
-  position: absolute;
-  left: 15px;
-  right: 15px;
-  top: 18px;
-  height: 74px;
-  border-radius: 32px;
-  background: rgba(255, 255, 255, .32);
-}
-
-.character-piko-head {
-  position: absolute;
-  left: 108px;
-  top: 58px;
-  width: 124px;
-  height: 118px;
-  border-radius: 48px 48px 44px 44px;
-  background: linear-gradient(180deg, #f4f7f3 0%, #e2ebe4 100%);
-  box-shadow: inset 0 0 0 1px rgba(66, 90, 86, .08), 0 8px 16px rgba(31, 41, 55, .12);
-  transform: translateY(0);
-  animation: character-piko-head var(--sprite-duration) ease-in-out infinite;
-}
-
-.character-piko-head::before,
-.character-piko-head::after {
-  content: "";
-  position: absolute;
-  top: -14px;
-  width: 28px;
-  height: 32px;
-  border-radius: 14px 14px 4px 4px;
-  background: linear-gradient(180deg, #dce7df 0%, #cbd8d2 100%);
-  box-shadow: inset 0 0 0 1px rgba(66, 90, 86, .08);
-}
-
-.character-piko-head::before {
-  left: 12px;
-  transform: rotate(-18deg);
-}
-
-.character-piko-head::after {
-  right: 12px;
-  transform: rotate(18deg);
-}
-
-.character-piko-face {
-  position: absolute;
-  inset: 24px 18px 20px;
-}
-
-.character-piko-eye {
-  position: absolute;
-  top: 34px;
-  width: 12px;
-  height: 16px;
-  border-radius: 999px;
-  background: #2f4150;
-  transform: scaleY(var(--character-eye-open, 1));
-  transform-origin: center center;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .15);
-}
-
-.character-piko-eye--left {
-  left: 24px;
-}
-
-.character-piko-eye--right {
-  right: 24px;
-}
-
-.character-piko-mouth {
-  position: absolute;
-  left: 50%;
-  bottom: 30px;
-  width: 22px;
-  height: 8px;
-  border-bottom: 3px solid #526476;
-  border-radius: 0 0 18px 18px;
-  opacity: calc(.45 + (var(--character-mouth-open, 0) * .55));
-  transform: translateX(-50%) scaleY(calc(.72 + (var(--character-mouth-open, 0) * .48)));
-  transform-origin: center center;
-}
-
-.character-piko-shadow {
-  position: absolute;
-  left: 82px;
-  right: 82px;
-  bottom: 10px;
-  height: 18px;
-  border-radius: 999px;
-  background: rgba(26, 45, 58, .14);
-  filter: blur(4px);
-  animation: character-piko-shadow var(--sprite-duration) ease-in-out infinite;
-}
-
-.character-piko--pose-greet {
-  animation: pet-greet 760ms ease-out;
-}
-
-.character-piko--pose-celebrate {
-  animation: pet-celebrate 900ms ease-out;
-}
-
-.character-piko--pose-playful {
-  animation: pet-fidget 860ms ease-in-out;
-}
-
-.character-piko--pose-sleepy {
-  filter: saturate(.9);
-}
-
-.character-piko--pose-worried {
-  filter: saturate(.92) brightness(.98);
-}
-
-.character-piko--pose-focused {
-  animation: character-piko-focus 1650ms ease-in-out infinite;
-}
-
-.character-piko--emotion-sleepy .character-piko-mouth,
-.character-piko--pose-sleepy .character-piko-mouth {
-  border-bottom-width: 2px;
-  opacity: .35;
-}
-
-.character-piko--emotion-worried .character-piko-eye {
-  height: 14px;
-}
-
-.character-piko--emotion-happy .character-piko-mouth {
-  border-bottom-color: #3f6d5f;
-}
-
-.pet.is-dragging .character-piko {
-  animation-duration: 520ms;
-  transform: translate(calc(-50% + var(--look-x, 0px)), calc(var(--look-y, 0px) + var(--character-bob, 0px))) rotate(var(--character-tilt, 0deg)) scale(var(--character-scale)) scale(1.04, .97);
+  width: 72px;
+  height: 80px;
 }
 
 .pixi-pet {

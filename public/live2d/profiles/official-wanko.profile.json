@@ -1,0 +1,112 @@
+{
+  "id": "official-wanko",
+  "name": "Live2D Official Wanko",
+  "source": "Live2D CubismWebSamples official resources",
+  "licenseUrl": "https://www.live2d.com/en/learn/sample/",
+  "repositoryUrl": "https://github.com/Live2D/CubismWebSamples",
+  "modelUrl": "/live2d/models/wanko/Wanko.model3.json",
+  "fit": {
+    "y": 0.58,
+    "targetWidth": 0.9,
+    "targetHeight": 0.98,
+    "compactTargetWidth": 0.86,
+    "compactTargetHeight": 0.9
+  },
+  "motions": {
+    "idle": {
+      "group": "Idle",
+      "index": 0,
+      "priority": 1
+    },
+    "idle_alt": {
+      "group": "Idle",
+      "index": 1,
+      "priority": 1
+    },
+    "success": {
+      "group": "TapBody",
+      "index": 1,
+      "priority": 3
+    },
+    "celebrate": {
+      "group": "TapBody",
+      "index": 1,
+      "priority": 3
+    },
+    "greet": {
+      "group": "TapBody",
+      "index": 0,
+      "priority": 2
+    },
+    "happy": {
+      "group": "TapBody",
+      "index": 0,
+      "priority": 2
+    },
+    "playful": {
+      "group": "TapBody",
+      "index": 1,
+      "priority": 2
+    },
+    "idle_fidget": {
+      "group": "TapBody",
+      "index": 1,
+      "priority": 2
+    },
+    "thinking": {
+      "group": "TapBody",
+      "index": 0,
+      "priority": 2
+    },
+    "working": {
+      "group": "TapBody",
+      "index": 0,
+      "priority": 2
+    },
+    "confirming": {
+      "group": "TapBody",
+      "index": 0,
+      "priority": 2
+    },
+    "error": {
+      "group": "TapBody",
+      "index": 1,
+      "priority": 2
+    },
+    "worried": {
+      "group": "TapBody",
+      "index": 1,
+      "priority": 2
+    }
+  },
+  "idleMotions": [
+    {
+      "group": "Idle",
+      "index": 0,
+      "priority": 1
+    },
+    {
+      "group": "Idle",
+      "index": 1,
+      "priority": 1
+    },
+    {
+      "group": "Idle",
+      "index": 2,
+      "priority": 1
+    }
+  ],
+  "tapMotions": [
+    {
+      "group": "TapBody",
+      "index": 0,
+      "priority": 3
+    },
+    {
+      "group": "TapBody",
+      "index": 1,
+      "priority": 3
+    }
+  ],
+  "expressions": {}
+}

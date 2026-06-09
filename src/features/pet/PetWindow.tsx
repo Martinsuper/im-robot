@@ -4,9 +4,14 @@ import type { AppSettings, PetVisualEvent, QuietMode, Theme } from "../../types/
 import {
   PetSprite,
   defaultAppSettings,
+  defaultLive2DModelId,
+  getNextLive2DModelId,
   getNextPetVisualStyle,
+  live2dModelOptions,
+  setLive2DModelId,
   setPetVisualStyle,
   useCurrentTime,
+  useLive2DModelId,
   usePetVisualStyle,
 } from "../app/appShared";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
@@ -195,7 +200,9 @@ export function PetWindow() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const mountedRef = useRef(true);
   const fidgetTimer = useRef<number>(0);
+  const fidgetResetTimer = useRef<number>(0);
   const [dragOrigin, setDragOrigin] = useState<{ x: number; y: number } | null>(null);
   const dragOffset = useRef({ x: 0, y: 0 });
   const didDrag = useRef(false);
@@ -218,6 +225,7 @@ export function PetWindow() {
   const [personalitySnapshot, setPersonalitySnapshot] = useState<PersonalityDimensions>(() =>
     loadPersonalityState(derivePersonalityFromSignals(loadInteractionStats(), loadGrowthSnapshot()))
   );
+  const live2dModelId = useLive2DModelId();
   const suppressClickRef = useRef(false);
   const noticeTimer = useRef<number>(0);
   const noticeRequestSeq = useRef(0);
@@ -371,6 +379,13 @@ export function PetWindow() {
       void runCommand("open_panel");
     }
   }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -535,7 +550,7 @@ export function PetWindow() {
           type: "FIDGET",
           intensity: motionStyle === "soft" ? "soft" : "normal",
         });
-        setTimeout(() => {
+        fidgetResetTimer.current = window.setTimeout(() => {
           if (petState.mode === "idle") dispatch({ type: "RESET" });
         }, idleRhythm.fidgetResetDelay);
       }
@@ -642,7 +657,9 @@ export function PetWindow() {
     });
 
     return () => {
-      void unlisten.then((dispose) => dispose());
+      void unlisten.then((dispose) => {
+        if (mountedRef.current) dispose();
+      });
     };
   }, []);
 
@@ -720,7 +737,9 @@ export function PetWindow() {
     });
 
     return () => {
-      void unlisten.then((dispose) => dispose());
+      void unlisten.then((dispose) => {
+        if (mountedRef.current) dispose();
+      });
     };
   }, []);
 
@@ -734,7 +753,9 @@ export function PetWindow() {
       setAiRevision((current) => current + 1);
     });
     return () => {
-      void unlisten.then((dispose) => dispose());
+      void unlisten.then((dispose) => {
+        if (mountedRef.current) dispose();
+      });
     };
   }, []);
 
@@ -782,9 +803,11 @@ export function PetWindow() {
       scheduleFidget();
     } else {
       if (fidgetTimer.current) window.clearTimeout(fidgetTimer.current);
+      if (fidgetResetTimer.current) window.clearTimeout(fidgetResetTimer.current);
     }
     return () => {
       if (fidgetTimer.current) window.clearTimeout(fidgetTimer.current);
+      if (fidgetResetTimer.current) window.clearTimeout(fidgetResetTimer.current);
     };
   }, [petState.mode, quietMode, idleRhythm]);
 
@@ -932,7 +955,7 @@ export function PetWindow() {
       )}
       <div
         ref={petRef}
-        className={`pet pet--${petState.mode} pet--bond-${bondTier} pet-reaction--${petState.reaction}${isDragOver ? " is-drag-over" : ""}${isDragging ? " is-dragging" : ""}${attentionPulse ? " is-attention-pulse" : ""}`}
+        className={`pet pet--${petVisualStyle} pet--${petState.mode} pet--bond-${bondTier} pet-reaction--${petState.reaction}${isDragOver ? " is-drag-over" : ""}${isDragging ? " is-dragging" : ""}${attentionPulse ? " is-attention-pulse" : ""}`}
         aria-label="拖动 Piko"
         onMouseEnter={() => {
           handleHumanInteraction({
@@ -1060,6 +1083,25 @@ export function PetWindow() {
           })}
         >
           {isResting ? "唤醒" : "休息"}
+        </button>
+        <button
+          className="icon-button"
+          type="button"
+          onClick={() => {
+            if (petVisualStyle === "character") {
+              const nextModelId = getNextLive2DModelId(live2dModelId);
+              const nextModelLabel = live2dModelOptions.find((option) => option.value === nextModelId)?.label ?? "官方模型";
+              setLive2DModelId(nextModelId);
+              setPetNotice(`已切换到 ${nextModelLabel}`);
+            } else {
+              setLive2DModelId(defaultLive2DModelId);
+              setPetVisualStyle("character");
+              const modelLabel = live2dModelOptions.find((option) => option.value === defaultLive2DModelId)?.label ?? "官方模型";
+              setPetNotice(`已切换到 ${modelLabel}`);
+            }
+          }}
+        >
+          {petVisualStyle === "character" ? "换模型" : "官方"}
         </button>
       </div>
       {contextMenu && (

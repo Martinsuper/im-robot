@@ -73,7 +73,8 @@ export async function generatePetCompanionResponse(
       behaviorProfile: normalizeBehaviorProfile(result.behaviorProfile),
       behaviorPriority: normalizeBehaviorPriority(result.behaviorPriority),
     };
-  } catch {
+  } catch (error) {
+    console.warn("[PetAI] generatePetCompanionResponse failed:", error);
     return null;
   }
 }
@@ -105,7 +106,8 @@ export function resolvePetIdleMotionStyle(
       }
       return result?.motionStyle ?? null;
     })
-    .catch(() => {
+    .catch((error) => {
+      console.warn("[PetAI] resolvePetIdleMotionStyle failed:", error);
       idleStyleCache.delete(cacheKey);
       return null;
     });
@@ -137,7 +139,8 @@ export function resolvePetBehaviorProfile(
       }
       return result?.behaviorProfile ?? null;
     })
-    .catch(() => {
+    .catch((error) => {
+      console.warn("[PetAI] resolvePetBehaviorProfile failed:", error);
       behaviorProfileCache.delete(cacheKey);
       return null;
     });
@@ -169,7 +172,8 @@ export function resolvePetBehaviorPriority(
       }
       return result?.behaviorPriority ?? null;
     })
-    .catch(() => {
+    .catch((error) => {
+      console.warn("[PetAI] resolvePetBehaviorPriority failed:", error);
       behaviorPriorityCache.delete(cacheKey);
       return null;
     });

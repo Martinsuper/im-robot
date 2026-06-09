@@ -1,0 +1,45 @@
+{
+  "id": "official-miara",
+  "name": "Live2D Official Miara",
+  "source": "Live2D official sample model",
+  "licenseUrl": "https://www.live2d.com/en/learn/sample/",
+  "modelUrl": "/live2d/models/miara/miara.model3.json",
+  "fit": {
+    "y": 0.5,
+    "targetWidth": 0.98,
+    "targetHeight": 0.98,
+    "compactTargetWidth": 0.9,
+    "compactTargetHeight": 0.9
+  },
+  "motions": {
+    "idle": { "group": "Idle", "index": 0, "priority": 1 },
+    "success": { "group": "TapBody", "index": 0, "priority": 3 },
+    "celebrate": { "group": "TapBody", "index": 0, "priority": 3 },
+    "greet": { "group": "TapBody", "index": 0, "priority": 2 },
+    "happy": { "group": "TapBody", "index": 0, "priority": 2 },
+    "playful": { "group": "TapBody", "index": 0, "priority": 2 },
+    "thinking": { "group": "TapBody", "index": 0, "priority": 2 },
+    "working": { "group": "TapBody", "index": 0, "priority": 2 },
+    "confirming": { "group": "TapBody", "index": 0, "priority": 2 },
+    "error": { "group": "TapBody", "index": 0, "priority": 2 },
+    "worried": { "group": "TapBody", "index": 0, "priority": 2 }
+  },
+  "idleMotions": [
+    { "group": "Idle", "index": 0, "priority": 1 }
+  ],
+  "tapMotions": [
+    { "group": "TapBody", "index": 0, "priority": 3 }
+  ],
+  "expressions": {
+    "idle": "exp_01",
+    "happy": "exp_02",
+    "playful": "exp_03",
+    "curious": "exp_04",
+    "thoughtful": "exp_04",
+    "sleepy": "exp_05",
+    "surprised": "exp_06",
+    "excited": "exp_06",
+    "worried": "exp_07",
+    "celebrate": "exp_08"
+  }
+}

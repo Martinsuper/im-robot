@@ -95,6 +95,7 @@ export function BubbleWindow() {
   const hasInputContext = Boolean(attachment || screenshot || attachmentError || isDraggingFile);
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
+  const mountedRef = useRef(true);
   const previewReplyTimer = useRef<number | undefined>(undefined);
   const skeletonHideTimer = useRef<number | undefined>(undefined);
   const receivedFirstDelta = useRef(false);
@@ -137,6 +138,13 @@ export function BubbleWindow() {
   }
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
       setCompanionName(settings.companionName);
       setTheme(settings.theme);
@@ -161,7 +169,9 @@ export function BubbleWindow() {
       setHtmlPreviewEnabled(event.payload.htmlPreviewEnabled);
     });
     return () => {
-      void unlisten.then((dispose) => dispose());
+      void unlisten.then((dispose) => {
+        if (mountedRef.current) dispose();
+      });
     };
   }, []);
 
@@ -197,7 +207,9 @@ export function BubbleWindow() {
       if (focused) refreshScreenshot();
     });
     return () => {
-      void unlisten.then((dispose) => dispose());
+      void unlisten.then((dispose) => {
+        if (mountedRef.current) dispose();
+      });
       void unlistenFocus.then((dispose) => dispose());
     };
   }, []);
@@ -259,7 +271,9 @@ export function BubbleWindow() {
     });
 
     return () => {
-      void unlisten.then((dispose) => dispose());
+      void unlisten.then((dispose) => {
+        if (mountedRef.current) dispose();
+      });
     };
   }, []);
 
@@ -277,7 +291,9 @@ export function BubbleWindow() {
       return () => window.clearTimeout(timer);
     });
     return () => {
-      void unlisten.then((dispose) => dispose());
+      void unlisten.then((dispose) => {
+        if (mountedRef.current) dispose();
+      });
     };
   }, []);
 
@@ -305,7 +321,9 @@ export function BubbleWindow() {
     });
 
     return () => {
-      void unlisten.then((dispose) => dispose());
+      void unlisten.then((dispose) => {
+        if (mountedRef.current) dispose();
+      });
     };
   }, []);
 

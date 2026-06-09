@@ -1,0 +1,137 @@
+{
+  "id": "official-mark",
+  "name": "Live2D Official Mark",
+  "source": "Live2D CubismWebSamples official resources",
+  "licenseUrl": "https://www.live2d.com/en/learn/sample/",
+  "repositoryUrl": "https://github.com/Live2D/CubismWebSamples",
+  "modelUrl": "/live2d/models/mark/Mark.model3.json",
+  "fit": {
+    "y": 0.56,
+    "targetWidth": 0.9,
+    "targetHeight": 0.98,
+    "compactTargetWidth": 0.86,
+    "compactTargetHeight": 0.9
+  },
+  "motions": {
+    "idle": {
+      "group": "Idle",
+      "index": 0,
+      "priority": 1
+    },
+    "idle_alt": {
+      "group": "Idle",
+      "index": 1,
+      "priority": 1
+    },
+    "success": {
+      "group": "Idle",
+      "index": 2,
+      "priority": 3
+    },
+    "celebrate": {
+      "group": "Idle",
+      "index": 2,
+      "priority": 3
+    },
+    "greet": {
+      "group": "Idle",
+      "index": 0,
+      "priority": 2
+    },
+    "happy": {
+      "group": "Idle",
+      "index": 0,
+      "priority": 2
+    },
+    "playful": {
+      "group": "Idle",
+      "index": 1,
+      "priority": 2
+    },
+    "idle_fidget": {
+      "group": "Idle",
+      "index": 1,
+      "priority": 2
+    },
+    "thinking": {
+      "group": "Idle",
+      "index": 0,
+      "priority": 2
+    },
+    "working": {
+      "group": "Idle",
+      "index": 0,
+      "priority": 2
+    },
+    "confirming": {
+      "group": "Idle",
+      "index": 0,
+      "priority": 2
+    },
+    "error": {
+      "group": "Idle",
+      "index": 3,
+      "priority": 2
+    },
+    "worried": {
+      "group": "Idle",
+      "index": 3,
+      "priority": 2
+    }
+  },
+  "idleMotions": [
+    {
+      "group": "Idle",
+      "index": 0,
+      "priority": 1
+    },
+    {
+      "group": "Idle",
+      "index": 1,
+      "priority": 1
+    },
+    {
+      "group": "Idle",
+      "index": 2,
+      "priority": 1
+    },
+    {
+      "group": "Idle",
+      "index": 3,
+      "priority": 1
+    }
+  ],
+  "tapMotions": [
+    {
+      "group": "Idle",
+      "index": 0,
+      "priority": 3
+    },
+    {
+      "group": "Idle",
+      "index": 1,
+      "priority": 3
+    },
+    {
+      "group": "Idle",
+      "index": 2,
+      "priority": 3
+    },
+    {
+      "group": "Idle",
+      "index": 3,
+      "priority": 3
+    },
+    {
+      "group": "Idle",
+      "index": 4,
+      "priority": 3
+    },
+    {
+      "group": "Idle",
+      "index": 5,
+      "priority": 3
+    }
+  ],
+  "expressions": {}
+}

@@ -15,8 +15,8 @@
       {
         "label": "pet",
         "title": "Piko",
-        "width": 156,
-        "height": 156,
+        "width": 260,
+        "height": 300,
         "resizable": false,
         "decorations": false,
         "transparent": true,

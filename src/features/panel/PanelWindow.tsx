@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -45,6 +45,8 @@ import {
   formatCalendarRange,
   formatFocusRemaining,
   formatReminderTime,
+  getAvailablePetVisualStyleOptions,
+  live2dModelOptions,
   panelTabOptions,
   petVisualStyleOptions,
   providerOptions,
@@ -52,8 +54,10 @@ import {
   reminderRepeatLabel,
   reminderRepeatOptions,
   setCustomPetImagePath,
+  setLive2DModelId,
   setPetVisualStyle,
   useCustomPetImagePath,
+  useLive2DModelId,
   usePetVisualStyle,
 } from "../app/appShared";
 import { isTauriRuntime, runCommand, runCommandAndRefresh } from "../app/appRuntime";
@@ -108,14 +112,21 @@ function chatHistoryMatchesSearch(entry: ChatHistoryEntry, search: string) {
 }
 
 export function PanelWindow() {
+  const mountedRef = useRef(true);
   const [panelTab, setPanelTab] = useState<PanelTab>("companion");
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
   const [companionName, setCompanionName] = useState("Piko");
   const [theme, setTheme] = useState<Theme>("sage");
   const petVisualStyle = usePetVisualStyle();
+  const live2dModelId = useLive2DModelId();
   const customPetImagePath = useCustomPetImagePath();
+  const availablePetVisualStyleOptions = getAvailablePetVisualStyleOptions(Boolean(customPetImagePath));
   const petVisualStyleLabel = petVisualStyleOptions.find((option) => option.value === petVisualStyle)?.label ?? "机甲猫";
+  const enabledLive2DModelOptions = live2dModelOptions.filter((option) => option.enabled);
+  const disabledLive2DModelOptions = live2dModelOptions.filter((option) => !option.enabled);
+  const live2dModelLabel =
+    live2dModelOptions.find((option) => option.value === live2dModelId)?.label ?? enabledLive2DModelOptions[0]?.label;
   const [sensingPaused, setSensingPaused] = useState(false);
   const [breakRemindersEnabled, setBreakRemindersEnabled] = useState(true);
   const [breakReminderIntervalMinutes, setBreakReminderIntervalMinutes] = useState(45);
@@ -254,6 +265,13 @@ export function PanelWindow() {
   }
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
       setQuietMode(settings.quietMode);
       setAiSettings(settings.ai);
@@ -339,7 +357,9 @@ export function PanelWindow() {
     const refreshFromStorage = () => refreshInteraction();
     window.addEventListener("storage", refreshFromStorage);
     return () => {
-      void unlisten.then((dispose) => dispose());
+      void unlisten.then((dispose) => {
+        if (mountedRef.current) dispose();
+      });
       void unlistenHistory.then((dispose) => dispose());
       void unlistenCalendar.then((dispose) => dispose());
       void unlistenCalendarSync.then((dispose) => dispose());
@@ -736,6 +756,7 @@ export function PanelWindow() {
           <p>治愈型桌面精灵。擅长陪伴、对话和处理专注任务。</p>
           <div className="trait-list">
             <span>{petVisualStyleLabel}</span>
+            {petVisualStyle === "character" ? <span>{live2dModelLabel}</span> : null}
             <span>AI 助手</span>
           </div>
         </div>
@@ -924,11 +945,29 @@ export function PanelWindow() {
               value={petVisualStyle}
               onChange={(event) => setPetVisualStyle(event.currentTarget.value as typeof petVisualStyle)}
             >
-              {petVisualStyleOptions.map(({ label, value }) => (
+              {availablePetVisualStyleOptions.map(({ label, value }) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
           </label>
+          {petVisualStyle === "character" ? (
+            <label>
+              <span>Live2D 模型</span>
+              <select
+                value={live2dModelId}
+                onChange={(event) => setLive2DModelId(event.currentTarget.value as typeof live2dModelId)}
+              >
+                {enabledLive2DModelOptions.map(({ label, value, note }) => (
+                  <option key={value} value={value}>{label} · {note}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {petVisualStyle === "character" && disabledLive2DModelOptions.length ? (
+            <p className="empty-state">
+              {disabledLive2DModelOptions.map((option) => `${option.label}：${option.note}`).join("；")}
+            </p>
+          ) : null}
           <div className="custom-pet-picker">
             <span>{customPetImagePath ? customPetImagePath.split(/[\\/]/).pop() : "未选择自定义图片"}</span>
             <div>

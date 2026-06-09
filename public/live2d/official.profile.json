@@ -1,0 +1,49 @@
+{
+  "id": "official-mao",
+  "name": "Live2D Official Mao",
+  "source": "Live2D official sample model",
+  "modelUrl": "/live2d/sample/Mao.model3.json",
+  "fit": {
+    "y": 0.52,
+    "targetWidth": 0.94,
+    "targetHeight": 0.98,
+    "compactTargetWidth": 0.86,
+    "compactTargetHeight": 0.9
+  },
+  "motions": {
+    "idle": { "group": "Idle", "index": 0, "priority": 1 },
+    "idle_alt": { "group": "Idle", "index": 1, "priority": 1 },
+    "success": { "group": "TapBody", "index": 5, "priority": 3 },
+    "celebrate": { "group": "TapBody", "index": 5, "priority": 3 },
+    "greet": { "group": "TapBody", "index": 0, "priority": 2 },
+    "happy": { "group": "TapBody", "index": 0, "priority": 2 },
+    "playful": { "group": "TapBody", "index": 3, "priority": 2 },
+    "idle_fidget": { "group": "TapBody", "index": 3, "priority": 2 },
+    "thinking": { "group": "TapBody", "index": 1, "priority": 2 },
+    "working": { "group": "TapBody", "index": 1, "priority": 2 },
+    "confirming": { "group": "TapBody", "index": 1, "priority": 2 },
+    "error": { "group": "TapBody", "index": 2, "priority": 2 },
+    "worried": { "group": "TapBody", "index": 2, "priority": 2 }
+  },
+  "idleMotions": [
+    { "group": "Idle", "index": 0, "priority": 1 },
+    { "group": "Idle", "index": 1, "priority": 1 }
+  ],
+  "tapMotions": [
+    { "group": "TapBody", "index": 0, "priority": 3 },
+    { "group": "TapBody", "index": 3, "priority": 3 },
+    { "group": "TapBody", "index": 5, "priority": 3 }
+  ],
+  "expressions": {
+    "idle": "exp_01",
+    "happy": "exp_02",
+    "playful": "exp_03",
+    "curious": "exp_04",
+    "thoughtful": "exp_04",
+    "sleepy": "exp_05",
+    "surprised": "exp_06",
+    "excited": "exp_06",
+    "worried": "exp_07",
+    "celebrate": "exp_08"
+  }
+}
