@@ -13,7 +13,7 @@ export type BehaviorTriggerCallback = (event: BehaviorTriggerEvent) => void;
 
 export class BehaviorSystem {
   private behaviors: Map<string, BehaviorPattern> = new Map();
-  private activeTimers: Map<string, number> = new Map();
+  private activeTimers: Map<string, ReturnType<typeof setTimeout> | number> = new Map();
   private personalityManager: PersonalityManager;
   private onTrigger: BehaviorTriggerCallback | null;
   private behaviorProfile: PetBehaviorProfile = 'balanced';
@@ -178,7 +178,7 @@ export class BehaviorSystem {
 
   private executeBehaviorWithFrequency(behavior: BehaviorPattern): boolean {
     const lastExecutionKey = `last_${behavior.id}`;
-    const lastExecution = this.activeTimers.get(lastExecutionKey) || 0;
+    const lastExecution = (this.activeTimers.get(lastExecutionKey) as number | undefined) || 0;
     const now = Date.now();
     const minInterval = ((60 * 60 * 1000) / behavior.frequency) * this.getBehaviorFrequencyMultiplier(behavior); // 毫秒
 

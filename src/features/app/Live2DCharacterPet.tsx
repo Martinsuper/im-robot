@@ -250,11 +250,15 @@ export function Live2DCharacterPet({
       const host = hostRef.current;
       if (!host) return;
 
+      let activeProfile: Live2DCharacterProfile = {};
+
       try {
         (window as unknown as { __pikoLive2DStatus?: string }).__pikoLive2DStatus = "init-start";
-        const activeProfile = await loadProfile(profileUrl);
+        activeProfile = await loadProfile(profileUrl);
         if (disposed) return;
         const activeModelUrl = modelUrl ?? activeProfile.modelUrl ?? DEFAULT_MODEL_URL;
+        (window as unknown as { __pikoLive2DModelUrl?: string }).__pikoLive2DModelUrl = activeModelUrl;
+        console.log(`[Live2D] profileUrl=${profileUrl} modelUrl=${activeModelUrl} profileHasModelUrl=${Boolean(activeProfile.modelUrl)}`);
         setProfile(activeProfile);
         await ensureCubismCore();
         if (disposed) return;
@@ -298,6 +302,8 @@ export function Live2DCharacterPet({
         host.appendChild(app.canvas);
         appRef.current = app;
 
+        (window as unknown as { __pikoLive2DStatus?: string }).__pikoLive2DStatus = "loading-model";
+        console.log(`[Live2D] loading model from ${activeModelUrl}`);
         const model = await Live2DModel.from(activeModelUrl, {
           autoFocus: false,
           autoHitTest: false,
@@ -305,6 +311,7 @@ export function Live2DCharacterPet({
           ticker: app.ticker,
           textureOptions: { lod: "single-auto" },
         }) as Live2DModelLike;
+        console.log(`[Live2D] model loaded successfully: ${activeModelUrl}`);
         (window as unknown as { __pikoLive2DStatus?: string }).__pikoLive2DStatus = "model-loaded";
 
         if (disposed) {
@@ -378,9 +385,21 @@ export function Live2DCharacterPet({
         (window as unknown as { __pikoLive2DStatus?: string }).__pikoLive2DStatus = "ready";
       } catch (error) {
         const message = getErrorMessage(error);
-        (window as unknown as { __pikoLive2DStatus?: string; __pikoLive2DError?: string }).__pikoLive2DStatus = "fallback";
-        (window as unknown as { __pikoLive2DStatus?: string; __pikoLive2DError?: string }).__pikoLive2DError = message;
-        console.warn("[Live2D] Initialization failed, falling back to atlas renderer.", error);
+        (window as unknown as {
+          __pikoLive2DStatus?: string;
+          __pikoLive2DError?: string;
+          __pikoLive2DModelUrl?: string;
+        }).__pikoLive2DStatus = "fallback";
+        (window as unknown as {
+          __pikoLive2DStatus?: string;
+          __pikoLive2DError?: string;
+          __pikoLive2DModelUrl?: string;
+        }).__pikoLive2DError = `[modelUrl=${modelUrl ?? activeProfile?.modelUrl ?? DEFAULT_MODEL_URL}] ${message}`;
+        console.warn("[Live2D] Initialization failed, falling back to atlas renderer.", {
+          profileUrl,
+          modelUrl: modelUrl ?? activeProfile?.modelUrl ?? DEFAULT_MODEL_URL,
+          error,
+        });
         if (!disposed) {
           setErrorMessage(message);
           setStatus("fallback");

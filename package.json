@@ -1,7 +1,7 @@
 {
   "name": "im-robot",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.1.13",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -32,6 +32,7 @@
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@tauri-apps/cli": "^2",
+    "@types/node": "^25.9.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@typescript-eslint/eslint-plugin": "^8.60.1",
