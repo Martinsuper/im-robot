@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import type { Application as PixiApplication } from "pixi.js";
 import { LiveCharacterPet } from "./LiveCharacterPet";
 
 const CUBISM_CORE_URL = "/live2d/core/live2dcubismcore.min.js";
@@ -210,6 +211,10 @@ function fitModel(
   model.scale.set(scale, scale);
 }
 
+function clearHost(host: HTMLDivElement | null) {
+  while (host?.firstChild) host.removeChild(host.firstChild);
+}
+
 export function Live2DCharacterPet({
   mode,
   emotion,
@@ -224,7 +229,7 @@ export function Live2DCharacterPet({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const modelRef = useRef<Live2DModelLike | null>(null);
   const mouseDeltaRef = useRef({ x: 0, y: 0 });
-  const appRef = useRef<any>(null);
+  const appRef = useRef<PixiApplication | null>(null);
   const tickerCallbackRef = useRef<((ticker: { deltaMS?: number }) => void) | null>(null);
   const idleTimerRef = useRef<number>(0);
   const lastMotionRef = useRef("");
@@ -245,6 +250,23 @@ export function Live2DCharacterPet({
   useEffect(() => {
     let disposed = false;
     let resizeObserver: ResizeObserver | undefined;
+    const cleanupLive2D = () => {
+      resizeObserver?.disconnect();
+      resizeObserver = undefined;
+      if (tickerCallbackRef.current) {
+        appRef.current?.ticker?.remove?.(tickerCallbackRef.current);
+        tickerCallbackRef.current = null;
+      }
+      if (idleTimerRef.current) {
+        window.clearInterval(idleTimerRef.current);
+        idleTimerRef.current = 0;
+      }
+      modelRef.current?.destroy?.({ children: true });
+      modelRef.current = null;
+      appRef.current?.destroy?.({ removeView: true }, { children: true });
+      appRef.current = null;
+      clearHost(hostRef.current);
+    };
 
     async function initLive2D() {
       const host = hostRef.current;
@@ -253,6 +275,7 @@ export function Live2DCharacterPet({
       let activeProfile: Live2DCharacterProfile = {};
 
       try {
+        cleanupLive2D();
         (window as unknown as { __pikoLive2DStatus?: string }).__pikoLive2DStatus = "init-start";
         activeProfile = await loadProfile(profileUrl);
         if (disposed) return;
@@ -291,11 +314,11 @@ export function Live2DCharacterPet({
         });
 
         if (disposed) {
-          app.destroy(true, { children: true, texture: true });
+          app.destroy({ removeView: true }, { children: true });
           return;
         }
 
-        while (host.firstChild) host.removeChild(host.firstChild);
+        clearHost(host);
         app.canvas.className = "live2d-character-canvas";
         app.canvas.style.width = "100%";
         app.canvas.style.height = "100%";
@@ -315,8 +338,8 @@ export function Live2DCharacterPet({
         (window as unknown as { __pikoLive2DStatus?: string }).__pikoLive2DStatus = "model-loaded";
 
         if (disposed) {
-          model.destroy?.({ children: true, texture: true });
-          app.destroy(true, { children: true, texture: true });
+          model.destroy?.({ children: true });
+          app.destroy({ removeView: true }, { children: true });
           return;
         }
 
@@ -401,6 +424,7 @@ export function Live2DCharacterPet({
           error,
         });
         if (!disposed) {
+          cleanupLive2D();
           setErrorMessage(message);
           setStatus("fallback");
         }
@@ -413,19 +437,7 @@ export function Live2DCharacterPet({
 
     return () => {
       disposed = true;
-      resizeObserver?.disconnect();
-      if (tickerCallbackRef.current) {
-        appRef.current?.ticker?.remove?.(tickerCallbackRef.current);
-        tickerCallbackRef.current = null;
-      }
-      if (idleTimerRef.current) {
-        window.clearInterval(idleTimerRef.current);
-        idleTimerRef.current = 0;
-      }
-      modelRef.current?.destroy?.({ children: true, texture: true });
-      modelRef.current = null;
-      appRef.current?.destroy(true, { children: true, texture: true });
-      appRef.current = null;
+      cleanupLive2D();
     };
   }, [compact, modelUrl, profileUrl]);
 
