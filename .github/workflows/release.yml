@@ -47,10 +47,10 @@ jobs:
             sleep 2
           fi
 
-          # Create a fresh draft release
-          echo "Creating draft release for $TAG..."
+          # Create a published release
+          echo "Creating release for $TAG..."
           RELEASE_BODY="See the assets to download this version and install."
-          RELEASE_ID=$(echo "{\"tag_name\":\"$TAG\",\"name\":\"Piko ${{ steps.version.outputs.version }}\",\"body\":\"$RELEASE_BODY\",\"draft\":true,\"prerelease\":false}" | gh api "repos/$REPO/releases" --input - --jq '.id')
+          RELEASE_ID=$(echo "{\"tag_name\":\"$TAG\",\"name\":\"Piko ${{ steps.version.outputs.version }}\",\"body\":\"$RELEASE_BODY\",\"draft\":false,\"prerelease\":false}" | gh api "repos/$REPO/releases" --input - --jq '.id')
 
           echo "Created release ID: $RELEASE_ID"
           echo "releaseId=$RELEASE_ID" >> "$GITHUB_OUTPUT"
