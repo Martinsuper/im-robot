@@ -8,10 +8,43 @@ on:
 
 permissions:
   contents: write
-  actions: read
 
 jobs:
-  release:
+  # Clean up any auto-created release for this tag before building
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      - name: Delete existing release for this tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          echo "Looking for existing release: $TAG"
+          RELEASE_ID=$(gh release view "$TAG" --json id --jq '.id' 2>/dev/null || echo "")
+          if [ -n "$RELEASE_ID" ]; then
+            echo "Found release ID: $RELEASE_ID, deleting..."
+            gh api -X DELETE "repos/${{ github.repository }}/releases/$RELEASE_ID"
+            echo "Deleted auto-created release for $TAG"
+          else
+            echo "No existing release found for $TAG"
+          fi
+
+  build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -43,21 +76,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Read version
-        id: version
-        shell: bash
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building version: $VERSION"
-
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v${{ steps.version.outputs.version }}
-          releaseName: 'Piko v${{ steps.version.outputs.version }}'
+          tagName: v${{ needs.prepare.outputs.version }}
+          releaseName: 'Piko v${{ needs.prepare.outputs.version }}'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
