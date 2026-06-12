@@ -10,11 +10,12 @@ permissions:
   contents: write
 
 jobs:
-  # Clean up any auto-created release for this tag before building
+  # Prepare: delete auto-created release, create fresh draft
   prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      releaseId: ${{ steps.create_release.outputs.releaseId }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,21 +28,37 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version: $VERSION"
 
-      - name: Delete existing release for this tag
+      - name: Delete auto-created release and create draft
+        id: create_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           TAG="v${{ steps.version.outputs.version }}"
+          REPO="${{ github.repository }}"
+
+          # Delete any auto-created release
           echo "Looking for existing release: $TAG"
-          RELEASE_ID=$(gh release view "$TAG" --json id --jq '.id' 2>/dev/null || echo "")
-          if [ -n "$RELEASE_ID" ]; then
-            echo "Found release ID: $RELEASE_ID, deleting..."
-            gh api -X DELETE "repos/${{ github.repository }}/releases/$RELEASE_ID"
-            echo "Deleted auto-created release for $TAG"
-          else
-            echo "No existing release found for $TAG"
+          EXISTING_ID=$(gh release view "$TAG" --json databaseId --jq '.databaseId' 2>/dev/null || echo "")
+          if [ -n "$EXISTING_ID" ]; then
+            echo "Found release ID: $EXISTING_ID, deleting..."
+            gh api -X DELETE "repos/$REPO/releases/$EXISTING_ID"
+            echo "Deleted auto-created release"
+            sleep 2
           fi
+
+          # Create a fresh draft release
+          echo "Creating draft release for $TAG..."
+          RELEASE_ID=$(gh api "repos/$REPO/releases" \
+            -f tag_name="$TAG" \
+            -f name="Piko ${{ steps.version.outputs.version }}" \
+            -f body="See the assets to download this version and install." \
+            -f draft=true \
+            -f prerelease=false \
+            --jq '.id')
+
+          echo "Created release ID: $RELEASE_ID"
+          echo "releaseId=$RELEASE_ID" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
@@ -76,16 +93,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri app
+      - name: Build Tauri app and upload to release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v${{ needs.prepare.outputs.version }}
-          releaseName: 'Piko v${{ needs.prepare.outputs.version }}'
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.prepare.outputs.releaseId }}
           retryAttempts: 3
 
       - name: Upload artifacts
