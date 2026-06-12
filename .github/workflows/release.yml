@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
@@ -42,16 +43,25 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: 'Piko v__VERSION__'
+          tagName: v${{ steps.version.outputs.version }}
+          releaseName: 'Piko v${{ steps.version.outputs.version }}'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
+          retryAttempts: 3
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
