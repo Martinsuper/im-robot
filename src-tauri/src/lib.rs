@@ -2642,6 +2642,18 @@ fn clear_chat_context(context: State<'_, ChatContext>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn get_bubble_chat_history(context: State<'_, ChatContext>) -> Result<Vec<ChatHistoryEntry>, String> {
+    let mut entries = context
+        .0
+        .lock()
+        .map_err(|_| "无法读取对话历史".to_string())?
+        .clone();
+    entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    entries.truncate(20);
+    Ok(entries)
+}
+
 fn stop_local_tts(tts: &LocalTts) -> Result<(), String> {
     let mut active = tts
         .0
@@ -5445,6 +5457,7 @@ pub fn run() {
             list_models,
             chat_start,
             chat_cancel,
+            get_bubble_chat_history,
             get_onboarding_status,
             complete_onboarding,
             skip_onboarding,

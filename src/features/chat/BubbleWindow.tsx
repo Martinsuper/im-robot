@@ -1,4 +1,4 @@
-import { FormEvent, isValidElement, type PointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { FormEvent, isValidElement, type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -7,7 +7,7 @@ import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notif
 import { ActionConfirmationCard, getConfirmationChoices } from "./ActionConfirmationCard";
 import { getBubbleCompanionMessage } from "./bubbleMessage";
 import type { ActionDraft, ActionExecution, ChatEvent } from "./chatTypes";
-import type { AttachmentAction, AttachmentPreview, AppSettings, ScreenshotPreview, Theme } from "../../types/appTypes";
+import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry, ScreenshotPreview, Theme } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { extractHtmlPreviewSource, HtmlPreviewFrame } from "./HtmlPreviewFrame";
@@ -26,7 +26,7 @@ function extractMarkdownText(node: ReactNode): string {
 
 function textForSpeech(text: string) {
   return text
-    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{1F1E6}-\u{1F1FF}\u200D\uFE0E\uFE0F\u20E3]/gu, "");
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{1F1E6}-\u{1F1FF}‍︎️⃣]/gu, "");
 }
 
 function MarkdownContent({ children }: { children: string }) {
@@ -69,9 +69,166 @@ function MarkdownContent({ children }: { children: string }) {
   );
 }
 
+function formatTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function truncate(text: string, max: number): string {
+  const cleaned = text.replace(/\n+/g, " ").trim();
+  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
+}
+
+// --- Sub-components ---
+
+function InlineToolbar({
+  message,
+  isSpeaking,
+  copyFeedback,
+  htmlPreviewEnabled,
+  onCopy,
+  onSpeech,
+  onSave,
+  onUpdateHtmlPreview,
+  onClearContext,
+  onOpenPanel,
+}: {
+  message: string;
+  isSpeaking: boolean;
+  copyFeedback: boolean;
+  htmlPreviewEnabled: boolean;
+  onCopy: () => void;
+  onSpeech: () => void;
+  onSave: () => void;
+  onUpdateHtmlPreview: (enabled: boolean) => void;
+  onClearContext: () => void;
+  onOpenPanel: () => void;
+}) {
+  if (!message.trim()) return null;
+  return (
+    <div className="inline-toolbar">
+      <button
+        type="button"
+        className={`inline-toolbar__btn${copyFeedback ? " inline-toolbar__btn--feedback" : ""}`}
+        onClick={onCopy}
+        title="复制结果"
+      >
+        {copyFeedback ? "✓" : "📋"}
+      </button>
+      <button
+        type="button"
+        className={`inline-toolbar__btn${isSpeaking ? " inline-toolbar__btn--active" : ""}`}
+        onClick={onSpeech}
+        title={isSpeaking ? "停止朗读" : "朗读回复"}
+      >
+        {isSpeaking ? "🔊⏹" : "🔊"}
+      </button>
+      <button type="button" className="inline-toolbar__btn" onClick={onSave} title="保存回复">
+        💾
+      </button>
+      <details className="inline-more-menu" data-no-drag>
+        <summary className="inline-toolbar__btn" title="更多">⋯</summary>
+        <div>
+          <button
+            type="button"
+            className={htmlPreviewEnabled ? "is-active" : ""}
+            onClick={() => onUpdateHtmlPreview(!htmlPreviewEnabled)}
+          >
+            HTML 预览
+          </button>
+          <button type="button" onClick={onClearContext}>
+            清空上下文
+          </button>
+          <button type="button" onClick={onOpenPanel}>
+            打开面板
+          </button>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function HistoryItem({
+  entry,
+  isExpanded,
+  onToggle,
+}: {
+  entry: ChatHistoryEntry;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className={`bubble-thread__history-item${isExpanded ? " bubble-thread__history-item--expanded" : ""}`}>
+      <button type="button" className="bubble-thread__history-toggle" onClick={onToggle}>
+        <span className="bubble-thread__history-arrow">{isExpanded ? "▾" : "▸"}</span>
+        <span className="bubble-thread__history-prompt">{truncate(entry.prompt, 30)}</span>
+        <span className="bubble-thread__history-time">{formatTime(entry.createdAt)}</span>
+      </button>
+      {isExpanded ? (
+        <div className="bubble-thread__history-body">
+          <div className="bubble-thread__user-bubble bubble-thread__user-bubble--history">
+            {entry.prompt}
+          </div>
+          <div className="bubble-thread__ai-card bubble-thread__ai-card--history">
+            <div className="bubble-thread__ai-sprite">
+              <PetSprite mode="idle" compact />
+            </div>
+            <div className="bubble-thread__ai-content">
+              <MarkdownContent>{entry.response}</MarkdownContent>
+            </div>
+          </div>
+          <div className="inline-toolbar">
+            <button
+              type="button"
+              className="inline-toolbar__btn"
+              onClick={() => void navigator.clipboard.writeText(entry.response)}
+              title="复制"
+            >
+              📋
+            </button>
+            <button
+              type="button"
+              className="inline-toolbar__btn"
+              onClick={() => {
+                if (!("speechSynthesis" in window)) return;
+                const spoken = textForSpeech(entry.response).trim();
+                if (!spoken) return;
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(spoken);
+                utterance.lang = "zh-CN";
+                window.speechSynthesis.speak(utterance);
+              }}
+              title="朗读"
+            >
+              🔊
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="bubble-thread__history-response">
+          ↳ {truncate(entry.response, 40)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function WelcomeState({ companionName, message }: { companionName: string; message: string }) {
+  return (
+    <div className="bubble-welcome">
+      <PetSprite mode="idle" />
+      <p className="bubble-welcome__greeting">
+        {message || `你好，我是 ${companionName}。今天想一起完成什么？`}
+      </p>
+    </div>
+  );
+}
+
+// --- Main Component ---
+
 export function BubbleWindow() {
   const [prompt, setPrompt] = useState("");
-  const [message, setMessage] = useState(() => getBubbleCompanionMessage() || "你好，我是 Piko。今天想一起完成什么？");
+  const [message, setMessage] = useState("");
   const [companionName, setCompanionName] = useState("Piko");
   const [theme, setTheme] = useState<Theme>("sage");
   const [htmlPreviewEnabled, setHtmlPreviewEnabled] = useState(false);
@@ -92,6 +249,11 @@ export function BubbleWindow() {
   const [showReplySkeleton, setShowReplySkeleton] = useState(false);
   const [memoryActivity, setMemoryActivity] = useState<string>("");
   const [isReplyEntering, setIsReplyEntering] = useState(false);
+  // New state for redesign
+  const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
+  const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
+  const [currentPrompt, setCurrentPrompt] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState(false);
   const hasInputContext = Boolean(attachment || screenshot || attachmentError || isDraggingFile);
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
@@ -99,6 +261,7 @@ export function BubbleWindow() {
   const previewReplyTimer = useRef<number | undefined>(undefined);
   const skeletonHideTimer = useRef<number | undefined>(undefined);
   const receivedFirstDelta = useRef(false);
+  const threadScrollRef = useRef<HTMLDivElement>(null);
   const confirmationChoices = pendingAction ? getConfirmationChoices(pendingAction) : [];
   const skeletonLineCount = pendingPromptSummary.length > 80 ? 4 : pendingPromptSummary.length > 24 ? 3 : 2;
   const skeletonLines = Array.from({ length: skeletonLineCount }, (_, index) => {
@@ -112,12 +275,20 @@ export function BubbleWindow() {
       ? "正在分析截图并生成回复"
       : "正在生成回复";
 
+  const topbarStatus = useMemo(() => {
+    if (memoryActivity) return { label: memoryActivity, pulse: false };
+    if (isSpeaking) return { label: "朗读中", pulse: false };
+    if (isThinking) return { label: "思考中…", pulse: true };
+    return { label: "在线", pulse: false };
+  }, [isThinking, isSpeaking, memoryActivity]);
+
+  const hasCurrentTurn = Boolean(currentPrompt || message || pendingAction || showReplySkeleton);
+  const showWelcome = !hasCurrentTurn && chatHistory.length === 0;
+
   function startBubbleDrag(event: PointerEvent<HTMLElement>) {
     if (!isTauriRuntime || event.button !== 0) return;
-
     const target = event.target as HTMLElement;
     if (target.closest("button, input, textarea, select, a, [data-no-drag]")) return;
-
     void getCurrentWindow().startDragging();
   }
 
@@ -137,6 +308,13 @@ export function BubbleWindow() {
     }, 220);
   }
 
+  function refreshChatHistory() {
+    if (!isTauriRuntime) return;
+    void runCommand<ChatHistoryEntry[]>("get_bubble_chat_history", undefined, []).then((entries) => {
+      if (entries) setChatHistory(entries);
+    });
+  }
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -149,8 +327,8 @@ export function BubbleWindow() {
       setCompanionName(settings.companionName);
       setTheme(settings.theme);
       setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
-      setMessage((current) => current || `你好，我是 ${settings.companionName}。今天想一起完成什么？`);
     });
+    refreshChatHistory();
   }, []);
 
   useEffect(() => {
@@ -174,24 +352,6 @@ export function BubbleWindow() {
       });
     };
   }, []);
-
-  useEffect(() => {
-    const syncCompanionMessage = () => {
-      if (prompt.trim() || isThinking) return;
-      const bubbleMessage = getBubbleCompanionMessage();
-      if (bubbleMessage) {
-        setMessage(bubbleMessage);
-      }
-    };
-
-    window.addEventListener("storage", syncCompanionMessage);
-    window.addEventListener("piko-bubble-companion-message-changed", syncCompanionMessage);
-    syncCompanionMessage();
-    return () => {
-      window.removeEventListener("storage", syncCompanionMessage);
-      window.removeEventListener("piko-bubble-companion-message-changed", syncCompanionMessage);
-    };
-  }, [isThinking, prompt]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -244,13 +404,13 @@ export function BubbleWindow() {
         clearSkeletonHideTimer();
         setShowReplySkeleton(false);
         setIsReplyEntering(false);
+        refreshChatHistory();
       }
       if (event.payload.type === "action-proposed") {
         setIsThinking(false);
         clearSkeletonHideTimer();
         setShowReplySkeleton(false);
         setIsReplyEntering(false);
-        setMessage("请确认是否执行以下操作。");
         setPendingAction(event.payload.draft);
         setSelectedChoiceIndexes(getConfirmationChoices(event.payload.draft).map((choice) => choice.index));
       }
@@ -260,6 +420,7 @@ export function BubbleWindow() {
         setShowReplySkeleton(false);
         setIsReplyEntering(false);
         setMessage((current) => current || "已停止生成。");
+        refreshChatHistory();
       }
       if (event.payload.type === "failed") {
         setIsThinking(false);
@@ -277,15 +438,14 @@ export function BubbleWindow() {
     };
   }, []);
 
-  // Listen for memory capture events from chat rounds
   useEffect(() => {
     if (!isTauriRuntime) return;
     const unlisten = listen<{ confirmed: number; pending: number }>("memory-captured", (event) => {
       const { confirmed, pending } = event.payload;
       if (pending > 0) {
-        setMemoryActivity(`💡 有 ${pending} 条记忆待确认，请在记忆中心查看`);
+        setMemoryActivity(`💡 有 ${pending} 条记忆待确认`);
       } else if (confirmed > 0) {
-        setMemoryActivity(`💡 已记住 ${confirmed} 条信息`);
+        setMemoryActivity(`💡 已记住 ${confirmed} 条`);
       }
       const timer = window.setTimeout(() => setMemoryActivity(""), 4000);
       return () => window.clearTimeout(timer);
@@ -327,15 +487,24 @@ export function BubbleWindow() {
     };
   }, []);
 
-  async function sendPrompt(currentPrompt: string) {
-    if (!currentPrompt.trim() && !attachment && !screenshot) return;
+  // Auto-scroll thread to bottom when new messages arrive
+  useEffect(() => {
+    const el = threadScrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [message, showReplySkeleton, currentPrompt, chatHistory.length]);
 
-    const requestPrompt = currentPrompt.trim();
+  async function sendPrompt(currentPromptValue: string) {
+    if (!currentPromptValue.trim() && !attachment && !screenshot) return;
+
+    const requestPrompt = currentPromptValue.trim();
     const currentRequestId = crypto.randomUUID();
+    setCurrentPrompt(requestPrompt);
     setIsThinking(true);
     setPendingAction(undefined);
     setSelectedChoiceIndexes([]);
-    setMessage("Piko 正在连接模型服务...");
+    setMessage("");
     setShowReplySkeleton(true);
     setIsReplyEntering(false);
     receivedFirstDelta.current = false;
@@ -378,9 +547,8 @@ export function BubbleWindow() {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!prompt.trim() && !attachment && !screenshot) return;
-
-    const currentPrompt = prompt.trim();
-    void sendPrompt(currentPrompt);
+    const currentPromptValue = prompt.trim();
+    void sendPrompt(currentPromptValue);
   }
 
   function cancel() {
@@ -400,6 +568,8 @@ export function BubbleWindow() {
 
   async function copyResult() {
     await navigator.clipboard.writeText(message);
+    setCopyFeedback(true);
+    window.setTimeout(() => setCopyFeedback(false), 1200);
   }
 
   async function confirmAction() {
@@ -516,7 +686,13 @@ export function BubbleWindow() {
   async function clearContext() {
     try {
       await runCommand("clear_chat_context");
-      setContextNotice("已清空上下文，下一次对话会从新会话开始。");
+      setChatHistory([]);
+      setCurrentPrompt("");
+      setMessage("");
+      setPendingAction(undefined);
+      setShowReplySkeleton(false);
+      setContextNotice("已清空上下文。");
+      window.setTimeout(() => setContextNotice(""), 3000);
     } catch (error) {
       setContextNotice(String(error));
     }
@@ -553,174 +729,219 @@ export function BubbleWindow() {
     }
   }
 
+  function toggleHistoryItem(id: string) {
+    setExpandedHistoryIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function collapseAllHistory() {
+    setExpandedHistoryIds(new Set());
+  }
+
   const htmlPreviewSource = htmlPreviewEnabled ? extractHtmlPreviewSource(message) : null;
 
   return (
     <main className={`bubble-shell bubble-shell--${theme}`}>
-      <header className="bubble-header" onPointerDown={startBubbleDrag}>
-        <div className="companion-heading">
+      {/* Layer 1: Top Bar */}
+      <header className="bubble-topbar" onPointerDown={startBubbleDrag}>
+        <div className="bubble-topbar__left">
           <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
-          <div>
-            <p className="eyebrow">{companionName.toUpperCase()} · QUICK CHAT</p>
-            <h1>{isThinking ? "正在思考..." : "今天想做点什么？"}</h1>
-          </div>
+          <span className="bubble-topbar__name">{companionName.toUpperCase()}</span>
         </div>
-        <div className="bubble-header__actions">
-          <button className="close-button" type="button" onClick={() => runCommand("hide_bubble")} aria-label="关闭">
+        <div className="bubble-topbar__center">
+          <span className={`bubble-topbar__status${topbarStatus.pulse ? " bubble-topbar__status--pulse" : ""}`}>
+            <span className="bubble-topbar__dot" />
+            {topbarStatus.label}
+          </span>
+        </div>
+        <div className="bubble-topbar__right">
+          <button
+            className="bubble-topbar__btn"
+            type="button"
+            onClick={() => runCommand("hide_bubble")}
+            aria-label="关闭"
+          >
             ×
           </button>
         </div>
       </header>
-      <div className={`bubble-reply-stage${showReplySkeleton ? " bubble-reply-stage--loading" : ""}`}>
-        {showReplySkeleton ? (
-          <div className="bubble-skeleton" role="status" aria-live="polite" aria-busy="true">
-            <div className="bubble-skeleton__eyebrow">
-              <span className="bubble-skeleton__dot" />
-              <span>{skeletonLabel}</span>
-              <span className="bubble-skeleton__typing" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </span>
-            </div>
-            <div className="bubble-skeleton__lines" aria-hidden="true">
-              {skeletonLines.map((className, index) => (
-                <span className={`bubble-skeleton__line ${className}`} key={index} />
-              ))}
-            </div>
+
+      {/* Layer 2: Thread Area */}
+      <section className="bubble-thread" ref={threadScrollRef}>
+        {showWelcome && <WelcomeState companionName={companionName} message={getBubbleCompanionMessage() || ""} />}
+
+        {chatHistory.length > 0 && (
+          <div className="bubble-thread__history">
+            {chatHistory.map((entry) => (
+              <HistoryItem
+                key={entry.id}
+                entry={entry}
+                isExpanded={expandedHistoryIds.has(entry.id)}
+                onToggle={() => toggleHistoryItem(entry.id)}
+              />
+            ))}
+            {expandedHistoryIds.size > 0 && (
+              <button type="button" className="bubble-thread__collapse-all" onClick={collapseAllHistory}>
+                ── 折叠全部 ({expandedHistoryIds.size}) ──
+              </button>
+            )}
           </div>
-        ) : null}
-        <div className={`bubble-message${isReplyEntering ? " bubble-message--entering" : ""}`}>
-          {htmlPreviewSource ? (
-            <HtmlPreviewFrame source={htmlPreviewSource} />
-          ) : message.trim() ? (
-            <MarkdownContent>{message}</MarkdownContent>
-          ) : null}
-        </div>
-      </div>
-      {pendingAction && (
-        <ActionConfirmationCard
-          draft={pendingAction}
-          selectedChoiceIndexes={selectedChoiceIndexes}
-          onChoiceToggle={(choiceIndex) =>
-            setSelectedChoiceIndexes((current) =>
-              current.includes(choiceIndex) ? current.filter((value) => value !== choiceIndex) : [...current, choiceIndex],
-            )
-          }
-          onConfirm={() => void confirmAction()}
-          onReject={() => void rejectAction()}
-        />
-      )}
-      {hasInputContext && (
-        <section className="bubble-context-tray" aria-label="待发送内容">
-          {(attachment || attachmentError || isDraggingFile) && (
-            <div className={`attachment-dropzone${isDraggingFile ? " is-dragging" : ""}`}>
-              {attachment ? (
-                <>
-                  <div className="attachment-heading">
-                    <div>
-                      <strong>{attachment.displayName}</strong>
-                      <span>
-                        {formatBytes(attachment.byteSize)} · {attachment.charCount} 字符
-                      </span>
-                    </div>
-                    <button type="button" onClick={() => void clearAttachment()}>
-                      移除
-                    </button>
+        )}
+
+        {hasCurrentTurn && (
+          <div className="bubble-thread__current">
+            {currentPrompt && (
+              <div className="bubble-thread__user-bubble">
+                {currentPrompt}
+              </div>
+            )}
+
+            {showReplySkeleton ? (
+              <div className="bubble-thread__ai-card bubble-thread__ai-card--loading">
+                <div className="bubble-thread__ai-sprite">
+                  <PetSprite mode="thinking" compact />
+                </div>
+                <div className="bubble-skeleton" role="status" aria-live="polite" aria-busy="true">
+                  <div className="bubble-skeleton__eyebrow">
+                    <span className="bubble-skeleton__dot" />
+                    <span>{skeletonLabel}</span>
+                    <span className="bubble-skeleton__typing" aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
                   </div>
-                  <div className="attachment-actions" aria-label="附件处理方式">
-                    {attachmentActionOptions.map(({ label, value }) => (
-                      <button
-                        className={attachmentAction === value ? "is-active" : ""}
-                        key={value}
-                        type="button"
-                        onClick={() => setAttachmentAction(value)}
-                      >
-                        {label}
-                      </button>
+                  <div className="bubble-skeleton__lines" aria-hidden="true">
+                    {skeletonLines.map((className, index) => (
+                      <span className={`bubble-skeleton__line ${className}`} key={index} />
                     ))}
                   </div>
-                </>
-              ) : (
-                <div className="attachment-empty">
-                  <p>{isDraggingFile ? "松开即可读取文本文件" : "可处理 .txt、.md、.json、.csv 或 .log"}</p>
-                  <button type="button" onClick={() => void chooseAttachment()}>选择文件</button>
                 </div>
-              )}
-              {attachmentError && <span className="attachment-error">{attachmentError}</span>}
-            </div>
-          )}
-          {screenshot && (
-            <div className="screenshot-card">
-              <img src={screenshot.dataUrl} alt="待发送的截图预览" />
-              <div>
-                <strong>截图</strong>
-                <span>{screenshot.width} × {screenshot.height}</span>
-                <button type="button" onClick={() => void clearScreenshot()}>移除</button>
               </div>
-            </div>
-          )}
-        </section>
-      )}
-      <form className="prompt-form" onSubmit={submit}>
-        <div className="prompt-tools" aria-label="输入工具">
-          <button type="button" onClick={() => void chooseAttachment()} aria-label="选择文件" title="选择文件">
-            +
-          </button>
-          <button type="button" onClick={() => runCommand("begin_screen_capture")} aria-label="截图提问" title="截图提问">
-            □
-          </button>
-        </div>
-        <input
-          autoFocus
-          value={prompt}
-          onChange={(event) => setPrompt(event.currentTarget.value)}
-          placeholder={attachment || screenshot ? "可补充处理要求" : "输入问题，或描述一个任务"}
-          aria-label="发送给 Piko 的问题"
-        />
-        <button type="submit" disabled={(!prompt.trim() && !attachment && !screenshot) || isThinking}>
-          发送
-        </button>
-      </form>
-      <footer className="bubble-footer">
-        <span>⌘ / Ctrl + Shift + Space</span>
-        <div className="bubble-footer__actions">
-          {isThinking && (
-            <button type="button" onClick={cancel}>
-              停止生成
+            ) : pendingAction ? (
+              <ActionConfirmationCard
+                draft={pendingAction}
+                selectedChoiceIndexes={selectedChoiceIndexes}
+                onChoiceToggle={(choiceIndex) =>
+                  setSelectedChoiceIndexes((current) =>
+                    current.includes(choiceIndex) ? current.filter((value) => value !== choiceIndex) : [...current, choiceIndex],
+                  )
+                }
+                onConfirm={() => void confirmAction()}
+                onReject={() => void rejectAction()}
+              />
+            ) : htmlPreviewSource ? (
+              <div className="bubble-thread__ai-card">
+                <div className="bubble-thread__ai-sprite">
+                  <PetSprite mode="idle" compact />
+                </div>
+                <HtmlPreviewFrame source={htmlPreviewSource} />
+              </div>
+            ) : message.trim() ? (
+              <div className={`bubble-thread__ai-card${isReplyEntering ? " bubble-thread__ai-card--entering" : ""}`}>
+                <div className="bubble-thread__ai-sprite">
+                  <PetSprite mode="idle" compact />
+                </div>
+                <div className="bubble-thread__ai-content">
+                  <MarkdownContent>{message}</MarkdownContent>
+                </div>
+              </div>
+            ) : null}
+
+            {!isThinking && message.trim() && !pendingAction && (
+              <InlineToolbar
+                message={message}
+                isSpeaking={isSpeaking}
+                copyFeedback={copyFeedback}
+                htmlPreviewEnabled={htmlPreviewEnabled}
+                onCopy={copyResult}
+                onSpeech={toggleSpeech}
+                onSave={() => void saveResult()}
+                onUpdateHtmlPreview={(enabled) => void updateHtmlPreviewEnabled(enabled)}
+                onClearContext={() => void clearContext()}
+                onOpenPanel={() => runCommand("open_panel")}
+              />
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Layer 3: Input Zone */}
+      <div className="bubble-input-zone">
+        {hasInputContext && (
+          <div className="bubble-input-zone__chips">
+            {attachment && (
+              <div className="bubble-input-zone__chip">
+                <span className="bubble-input-zone__chip-text">
+                  📄 {attachment.displayName} · {formatBytes(attachment.byteSize)}
+                </span>
+                <button type="button" className="bubble-input-zone__chip-remove" onClick={() => void clearAttachment()}>
+                  ✕
+                </button>
+              </div>
+            )}
+            {screenshot && (
+              <div className="bubble-input-zone__chip">
+                <img src={screenshot.dataUrl} alt="" className="bubble-input-zone__chip-thumb" />
+                <span className="bubble-input-zone__chip-text">截图 {screenshot.width}×{screenshot.height}</span>
+                <button type="button" className="bubble-input-zone__chip-remove" onClick={() => void clearScreenshot()}>
+                  ✕
+                </button>
+              </div>
+            )}
+            {attachmentError && <span className="bubble-input-zone__error">{attachmentError}</span>}
+            {attachment && (
+              <div className="bubble-input-zone__actions">
+                {attachmentActionOptions.map(({ label, value }) => (
+                  <button
+                    className={attachmentAction === value ? "is-active" : ""}
+                    key={value}
+                    type="button"
+                    onClick={() => setAttachmentAction(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <form className="prompt-form" onSubmit={submit}>
+          <div className="prompt-tools" aria-label="输入工具">
+            <button type="button" onClick={() => void chooseAttachment()} aria-label="选择文件" title="选择文件">
+              +
+            </button>
+            <button type="button" onClick={() => runCommand("begin_screen_capture")} aria-label="截图提问" title="截图提问">
+              □
+            </button>
+          </div>
+          <input
+            autoFocus
+            value={prompt}
+            onChange={(event) => setPrompt(event.currentTarget.value)}
+            placeholder={attachment || screenshot ? "可补充处理要求" : "输入问题，或描述一个任务"}
+            aria-label="发送给 Piko 的问题"
+          />
+          {isThinking ? (
+            <button type="button" className="prompt-form__stop" onClick={cancel} title="停止生成">
+              ■
+            </button>
+          ) : (
+            <button type="submit" disabled={!prompt.trim() && !attachment && !screenshot}>
+              ➤
             </button>
           )}
-          <details className="bubble-more-menu" data-no-drag open>
-            <summary>更多</summary>
-            <div>
-              <button
-                type="button"
-                className={htmlPreviewEnabled ? "is-active" : ""}
-                onClick={() => void updateHtmlPreviewEnabled(!htmlPreviewEnabled)}
-              >
-                HTML 预览
-              </button>
-              <button type="button" disabled={!message} onClick={() => void copyResult()}>
-                复制结果
-              </button>
-              <button type="button" disabled={!message} onClick={() => void toggleSpeech()}>
-                {isSpeaking ? "停止朗读" : "朗读回复"}
-              </button>
-              <button type="button" disabled={!message} onClick={() => void saveResult()}>
-                保存回复
-              </button>
-              <button type="button" onClick={() => void clearContext()}>
-                清空上下文
-              </button>
-              <button type="button" onClick={() => runCommand("open_panel")}>
-                打开面板
-              </button>
-            </div>
-          </details>
-        </div>
-      </footer>
+        </form>
+      </div>
+
       {contextNotice && <p className="bubble-context-note" role="status">{contextNotice}</p>}
-      {memoryActivity && <p className="bubble-memory-note" role="status">💡 {memoryActivity}</p>}
       {speechError && <p className="speech-error" role="alert">{speechError}</p>}
       {saveError && <p className="speech-error" role="alert">{saveError}</p>}
     </main>
