@@ -49,17 +49,8 @@ jobs:
 
           # Create a fresh draft release
           echo "Creating draft release for $TAG..."
-          RELEASE_ID=$(gh api "repos/$REPO/releases" \
-            --input <(cat <<EOF
-{
-  "tag_name": "$TAG",
-  "name": "Piko ${{ steps.version.outputs.version }}",
-  "body": "See the assets to download this version and install.",
-  "draft": true,
-  "prerelease": false
-}
-EOF
-) --jq '.id')
+          RELEASE_BODY="See the assets to download this version and install."
+          RELEASE_ID=$(echo "{\"tag_name\":\"$TAG\",\"name\":\"Piko ${{ steps.version.outputs.version }}\",\"body\":\"$RELEASE_BODY\",\"draft\":true,\"prerelease\":false}" | gh api "repos/$REPO/releases" --input - --jq '.id')
 
           echo "Created release ID: $RELEASE_ID"
           echo "releaseId=$RELEASE_ID" >> "$GITHUB_OUTPUT"
