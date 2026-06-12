@@ -546,7 +546,7 @@ export const quietModeOptions: Array<{ label: string; value: QuietMode }> = [
 export const panelTabOptions: Array<{ label: string; value: PanelTab }> = [
   { label: "精灵", value: "companion" },
   { label: "设置", value: "settings" },
-  { label: "时间", value: "reminders" },
+  { label: "提醒", value: "reminders" },
   { label: "日程", value: "calendar" },
   { label: "历史", value: "history" },
   { label: "记忆", value: "memory" },

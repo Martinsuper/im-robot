@@ -4438,21 +4438,24 @@ fn parse_pet_companion_generation_output(
     let parsed: Value = serde_json::from_str(fragment)
         .map_err(|error| format!("模型返回的 JSON 无法解析：{error}"))?;
 
-    let message = parsed["message"].as_str().map(|value| value.trim().to_string());
-    let motion_style = parsed["motionStyle"].as_str().and_then(|value| {
-        match value.trim() {
+    let message = parsed["message"]
+        .as_str()
+        .map(|value| value.trim().to_string());
+    let motion_style = parsed["motionStyle"]
+        .as_str()
+        .and_then(|value| match value.trim() {
             "soft" | "balanced" | "lively" => Some(value.trim().to_string()),
             _ => None,
-        }
-    });
-    let behavior_profile = parsed["behaviorProfile"].as_str().and_then(|value| {
-        match value.trim() {
-            "calm" | "balanced" | "playful" | "curious" | "focused" => {
-                Some(value.trim().to_string())
-            }
-            _ => None,
-        }
-    });
+        });
+    let behavior_profile =
+        parsed["behaviorProfile"]
+            .as_str()
+            .and_then(|value| match value.trim() {
+                "calm" | "balanced" | "playful" | "curious" | "focused" => {
+                    Some(value.trim().to_string())
+                }
+                _ => None,
+            });
     let behavior_priority = parsed["behaviorPriority"]
         .as_array()
         .map(|items| {
@@ -4737,13 +4740,18 @@ async fn stream_chat(
             request_id: request_id.to_string(),
         },
     );
-    let (confirmed_count, pending_count) = memory::auto_capture_from_chat(
+    let (confirmed_count, pending_count) = match memory::auto_capture_from_chat(
         memory_db,
         cache,
         &history_entry.prompt,
         &history_entry.response,
-    )
-    .unwrap_or((0, 0));
+    ) {
+        Ok(counts) => counts,
+        Err(error) => {
+            eprintln!("memory capture failed: {error}");
+            (0, 0)
+        }
+    };
 
     if confirmed_count > 0 || pending_count > 0 {
         let _ = app.emit(

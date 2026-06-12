@@ -644,7 +644,7 @@ export function BubbleWindow() {
               ) : (
                 <div className="attachment-empty">
                   <p>{isDraggingFile ? "松开即可读取文本文件" : "可处理 .txt、.md、.json、.csv 或 .log"}</p>
-                  <button type="button" onClick={() => void chooseAttachment()}>选择</button>
+                  <button type="button" onClick={() => void chooseAttachment()}>选择文件</button>
                 </div>
               )}
               {attachmentError && <span className="attachment-error">{attachmentError}</span>}
@@ -664,7 +664,7 @@ export function BubbleWindow() {
       )}
       <form className="prompt-form" onSubmit={submit}>
         <div className="prompt-tools" aria-label="输入工具">
-          <button type="button" onClick={() => void chooseAttachment()} aria-label="添加附件" title="添加附件">
+          <button type="button" onClick={() => void chooseAttachment()} aria-label="选择文件" title="选择文件">
             +
           </button>
           <button type="button" onClick={() => runCommand("begin_screen_capture")} aria-label="截图提问" title="截图提问">
@@ -690,7 +690,7 @@ export function BubbleWindow() {
               停止生成
             </button>
           )}
-          <details className="bubble-more-menu" data-no-drag>
+          <details className="bubble-more-menu" data-no-drag open>
             <summary>更多</summary>
             <div>
               <button

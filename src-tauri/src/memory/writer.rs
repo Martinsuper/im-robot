@@ -24,6 +24,19 @@ fn candidate_id() -> String {
     )
 }
 
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn char_window_around(value: &str, marker: &str, before: usize, after: usize) -> Option<String> {
+    let marker_byte_pos = value.find(marker)?;
+    let marker_char_pos = value[..marker_byte_pos].chars().count();
+    let marker_len = marker.chars().count();
+    let start = marker_char_pos.saturating_sub(before);
+    let len = before + marker_len + after;
+    Some(value.chars().skip(start).take(len).collect::<String>())
+}
+
 /// In-memory cache of pending candidates (not yet persisted).
 pub struct CandidateCache(Mutex<Vec<MemoryCandidate>>);
 
@@ -205,14 +218,12 @@ fn extract_chat_candidates(prompt: &str, response: &str) -> Vec<MemoryCandidate>
         "我叫",
     ];
     for marker in &preference_markers {
-        if let Some(pos) = prompt.find(marker) {
-            let start = pos.saturating_sub(10);
-            let end = (pos + marker.len() + 80).min(prompt.len());
-            let snippet = prompt[start..end].trim();
+        if let Some(snippet) = char_window_around(prompt, marker, 10, 80) {
+            let snippet = snippet.trim();
             if snippet.len() > 5 {
                 candidates.push(MemoryCandidate {
                     id: format!("chat-cand-{}-pref", now_unix()),
-                    title: format!("用户偏好：{}", &snippet[..snippet.len().min(20)]),
+                    title: format!("用户偏好：{}", truncate_chars(snippet, 20)),
                     content: snippet.to_string(),
                     memory_type: MemoryType::Profile,
                     source: MemorySource::Conversation,
@@ -244,7 +255,7 @@ fn extract_chat_candidates(prompt: &str, response: &str) -> Vec<MemoryCandidate>
             if !context.is_empty() {
                 candidates.push(MemoryCandidate {
                     id: format!("chat-cand-{}-outcome", now_unix()),
-                    title: format!("任务结果：{}", &context[..context.len().min(20)]),
+                    title: format!("任务结果：{}", truncate_chars(&context, 20)),
                     content: context,
                     memory_type: MemoryType::Event,
                     source: MemorySource::TaskOutcome,
@@ -260,15 +271,12 @@ fn extract_chat_candidates(prompt: &str, response: &str) -> Vec<MemoryCandidate>
 
     // Heuristic 3: Detect operational knowledge Q&A - requires confirmation
     if prompt.contains("怎么") || prompt.contains("如何") || prompt.contains("怎样") {
-        let snippet = &prompt[..prompt.len().min(50)];
+        let snippet = truncate_chars(prompt, 50);
+        let response_preview = truncate_chars(response, 200);
         candidates.push(MemoryCandidate {
             id: format!("chat-cand-{}-op", now_unix()),
             title: format!("操作知识：{}", snippet),
-            content: format!(
-                "问：{}\n答：{}",
-                prompt,
-                &response[..response.len().min(200)]
-            ),
+            content: format!("问：{}\n答：{}", prompt, response_preview),
             memory_type: MemoryType::Operational,
             source: MemorySource::Conversation,
             confidence: 0.5,
@@ -282,11 +290,37 @@ fn extract_chat_candidates(prompt: &str, response: &str) -> Vec<MemoryCandidate>
 }
 
 fn extract_outcome_context(response: &str, marker: &str) -> String {
-    if let Some(pos) = response.find(marker) {
-        let start = pos.saturating_sub(20);
-        let end = (pos + marker.len() + 60).min(response.len());
-        response[start..end].trim().to_string()
-    } else {
-        String::new()
+    char_window_around(response, marker, 20, 60)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_chinese_preference_without_byte_boundary_panics() {
+        let candidates = extract_chat_candidates(
+            "请记一下，我喜欢早上喝咖啡然后开始写代码。",
+            "好的，我会记下这个偏好。",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].memory_type, MemoryType::Profile);
+        assert!(candidates[0].title.starts_with("用户偏好："));
+        assert!(candidates[0].content.contains("我喜欢早上喝咖啡"));
+    }
+
+    #[test]
+    fn extracts_chinese_task_outcome_without_byte_boundary_panics() {
+        let candidates =
+            extract_chat_candidates("帮我创建提醒", "已创建提醒「提交周报」，时间是明天 18:00。");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].memory_type, MemoryType::Event);
+        assert_eq!(candidates[0].source, MemorySource::TaskOutcome);
+        assert!(!candidates[0].requires_confirmation);
     }
 }

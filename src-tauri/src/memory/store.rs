@@ -1,11 +1,12 @@
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Manager;
 
 use super::model::{
     AddRelationInput, BuildContextInput, FeedbackInput, ListMemoriesInput, MemoryItem,
-    MemoryRelation, MemoryStatus, MemoryType, ReflectionSummary, SearchMemoriesInput,
+    MemoryRelation, MemoryStatus, MemoryType, PrivacyLevel, ReflectionSummary, SearchMemoriesInput,
     SearchRelatedInput, UpdateMemoryInput,
 };
 
@@ -128,6 +129,37 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
             period_start INTEGER,
             period_end INTEGER
         );
+
+        UPDATE memory_items
+        SET memory_type = CASE memory_type
+            WHEN 'Profile' THEN '"profile"'
+            WHEN 'Event' THEN '"event"'
+            WHEN 'Semantic' THEN '"semantic"'
+            WHEN 'Operational' THEN '"operational"'
+            WHEN 'Reflection' THEN '"reflection"'
+            ELSE memory_type
+        END,
+        source = CASE source
+            WHEN 'UserExplicit' THEN '"userExplicit"'
+            WHEN 'Conversation' THEN '"conversation"'
+            WHEN 'ToolResult' THEN '"toolResult"'
+            WHEN 'TaskOutcome' THEN '"taskOutcome"'
+            WHEN 'SystemReflection' THEN '"systemReflection"'
+            ELSE source
+        END,
+        privacy_level = CASE privacy_level
+            WHEN 'PublicToUser' THEN '"publicToUser"'
+            WHEN 'SensitiveLocalOnly' THEN '"sensitiveLocalOnly"'
+            WHEN 'Ephemeral' THEN '"ephemeral"'
+            ELSE privacy_level
+        END,
+        status = CASE status
+            WHEN 'Active' THEN '"active"'
+            WHEN 'Archived' THEN '"archived"'
+            WHEN 'Superseded' THEN '"superseded"'
+            WHEN 'Deleted' THEN '"deleted"'
+            ELSE status
+        END;
     "#,
     )
     .map_err(|e| format!("创建内存表失败: {}", e))
@@ -172,6 +204,11 @@ fn summary_row_to_struct(row: &rusqlite::Row<'_>) -> Result<ReflectionSummary, r
 const SELECT_COLS: &str = "SELECT id, memory_type, title, content, source, importance, \
     confidence, recency_score, privacy_level, status, \
     created_at, updated_at, last_used_at, expires_at, tags, embedding_id, is_pinned";
+
+fn enum_sql_literal<T: Serialize>(value: &T) -> Result<String, String> {
+    let serialized = serde_json::to_string(value).map_err(|e| e.to_string())?;
+    Ok(format!("'{}'", serialized.replace('\'', "''")))
+}
 
 /// Recency decay factor: score drops ~50% after 30 days.
 fn recency_decay_factor(updated_at: u64, now: u64) -> f32 {
@@ -371,9 +408,10 @@ impl MemoryDb {
         let deleted_str =
             serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
         let type_str = serde_json::to_string(&memory_type).map_err(|e| e.to_string())?;
+        let deleted_status = enum_sql_literal(&MemoryStatus::Deleted)?;
 
         db.execute(
-            "UPDATE memory_items SET status = ?1, updated_at = ?2 WHERE memory_type = ?3 AND status != 'Deleted'",
+            &format!("UPDATE memory_items SET status = ?1, updated_at = ?2 WHERE memory_type = ?3 AND status != {deleted_status}"),
             params![deleted_str, now, type_str],
         )
         .map_err(|e| e.to_string())
@@ -388,9 +426,10 @@ impl MemoryDb {
             .as_secs();
         let deleted_str =
             serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
+        let deleted_status = enum_sql_literal(&MemoryStatus::Deleted)?;
 
         db.execute(
-            "UPDATE memory_items SET status = ?1, updated_at = ?2 WHERE status != 'Deleted'",
+            &format!("UPDATE memory_items SET status = ?1, updated_at = ?2 WHERE status != {deleted_status}"),
             params![deleted_str, now],
         )
         .map_err(|e| e.to_string())
@@ -403,13 +442,14 @@ impl MemoryDb {
 
         let limit = input.limit.unwrap_or(20);
         let query = input.query.trim();
+        let active_status = enum_sql_literal(&MemoryStatus::Active)?;
 
         // Use FTS5 for full-text search if the query is non-empty
         if !query.is_empty() {
             let base_query = format!(
                 "{SELECT_COLS} FROM memory_items \
                  WHERE rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?1) \
-                 AND status = 'Active'"
+                 AND status = {active_status}"
             );
 
             let (sql, _param_count) = match &input.memory_type {
@@ -458,7 +498,7 @@ impl MemoryDb {
         let mut stmt = db
             .prepare(&format!(
                 "{SELECT_COLS} FROM memory_items \
-                 WHERE (title LIKE ?1 OR content LIKE ?1) AND status = 'Active'\
+                 WHERE (title LIKE ?1 OR content LIKE ?1) AND status = {active_status}\
                  {} \
                  ORDER BY is_pinned DESC, updated_at DESC LIMIT ?{}",
                 if input.memory_type.is_some() {
@@ -492,6 +532,7 @@ impl MemoryDb {
 
         let limit = input.limit.unwrap_or(10);
         let query = input.query.trim();
+        let active_status = enum_sql_literal(&MemoryStatus::Active)?;
 
         if query.is_empty() {
             return Ok(Vec::new());
@@ -502,7 +543,7 @@ impl MemoryDb {
             .prepare(&format!(
                 "{SELECT_COLS} FROM memory_items \
                  WHERE rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?1) \
-                 AND status = 'Active' \
+                 AND status = {active_status} \
                  ORDER BY is_pinned DESC, (confidence * recency_score * importance) DESC \
                  LIMIT ?2"
             ))
@@ -528,7 +569,7 @@ impl MemoryDb {
         let mut stmt = db
             .prepare(&format!(
                 "{SELECT_COLS} FROM memory_items \
-                 WHERE (title LIKE ?1 OR content LIKE ?1) AND status = 'Active' \
+                 WHERE (title LIKE ?1 OR content LIKE ?1) AND status = {active_status} \
                  ORDER BY is_pinned DESC, (confidence * recency_score * importance) DESC \
                  LIMIT ?2"
             ))
@@ -544,11 +585,12 @@ impl MemoryDb {
 
     pub fn get_recent(&self, limit: usize) -> Result<Vec<MemoryItem>, String> {
         let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let active_status = enum_sql_literal(&MemoryStatus::Active)?;
 
         let mut stmt = db
             .prepare(&format!(
                 "{SELECT_COLS} FROM memory_items \
-                 WHERE status = 'Active' \
+                 WHERE status = {active_status} \
                  ORDER BY is_pinned DESC, updated_at DESC LIMIT ?1"
             ))
             .map_err(|e| e.to_string())?;
@@ -576,15 +618,18 @@ impl MemoryDb {
         // 3. Memories matching query (via FTS5)
         // 4. Recent memories sorted by recency score
         let query = input.current_query.as_deref().map(str::trim).unwrap_or("");
+        let active_status = enum_sql_literal(&MemoryStatus::Active)?;
+        let public_privacy = enum_sql_literal(&PrivacyLevel::PublicToUser)?;
+        let profile_type = enum_sql_literal(&MemoryType::Profile)?;
 
         let mut stmt = if query.is_empty() {
             db.prepare(&format!(
                 "{SELECT_COLS} FROM memory_items \
-                 WHERE status = 'Active' \
-                 AND privacy_level = '\"PublicToUser\"' \
+                 WHERE status = {active_status} \
+                 AND privacy_level = {public_privacy} \
                  ORDER BY \
                     is_pinned DESC, \
-                    CASE WHEN memory_type = '\"Profile\"' THEN 1 ELSE 0 END DESC, \
+                    CASE WHEN memory_type = {profile_type} THEN 1 ELSE 0 END DESC, \
                     (confidence * recency_score * importance) DESC \
                  LIMIT ?1"
             ))
@@ -592,11 +637,11 @@ impl MemoryDb {
         } else {
             let query_sql = format!(
                 "{SELECT_COLS} FROM memory_items \
-                 WHERE status = 'Active' \
-                 AND privacy_level = '\"PublicToUser\"' \
+                 WHERE status = {active_status} \
+                 AND privacy_level = {public_privacy} \
                  ORDER BY \
                     is_pinned DESC, \
-                    CASE WHEN memory_type = '\"Profile\"' THEN 1 ELSE 0 END DESC, \
+                    CASE WHEN memory_type = {profile_type} THEN 1 ELSE 0 END DESC, \
                     CASE WHEN rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?1) THEN 1 ELSE 0 END DESC, \
                     (confidence * recency_score * importance) DESC \
                  LIMIT ?2"
@@ -620,11 +665,11 @@ impl MemoryDb {
 
             db.prepare(&format!(
                 "{SELECT_COLS} FROM memory_items \
-                 WHERE status = 'Active' \
-                 AND privacy_level = '\"PublicToUser\"' \
+                 WHERE status = {active_status} \
+                 AND privacy_level = {public_privacy} \
                  ORDER BY \
                     is_pinned DESC, \
-                    CASE WHEN memory_type = '\"Profile\"' THEN 1 ELSE 0 END DESC, \
+                    CASE WHEN memory_type = {profile_type} THEN 1 ELSE 0 END DESC, \
                     (confidence * recency_score * importance) DESC \
                  LIMIT ?1"
             ))
@@ -797,11 +842,12 @@ impl MemoryDb {
 
     pub fn get_in_range(&self, start: u64, end: u64) -> Result<Vec<MemoryItem>, String> {
         let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let active_status = enum_sql_literal(&MemoryStatus::Active)?;
 
         let mut stmt = db
             .prepare(&format!(
                 "{SELECT_COLS} FROM memory_items \
-                 WHERE created_at >= ?1 AND created_at < ?2 AND status = 'Active' \
+                 WHERE created_at >= ?1 AND created_at < ?2 AND status = {active_status} \
                  ORDER BY updated_at DESC"
             ))
             .map_err(|e| e.to_string())?;
@@ -912,10 +958,13 @@ impl MemoryDb {
 
         let archived_str =
             serde_json::to_string(&MemoryStatus::Archived).map_err(|e| e.to_string())?;
+        let active_status = enum_sql_literal(&MemoryStatus::Active)?;
 
         db.execute(
-            "UPDATE memory_items SET status = ?1, updated_at = ?2 \
-             WHERE expires_at IS NOT NULL AND expires_at < ?3 AND status = 'Active'",
+            &format!(
+                "UPDATE memory_items SET status = ?1, updated_at = ?2 \
+             WHERE expires_at IS NOT NULL AND expires_at < ?3 AND status = {active_status}"
+            ),
             params![archived_str, now, now],
         )
         .map_err(|e| e.to_string())
@@ -930,12 +979,15 @@ impl MemoryDb {
             .as_secs();
 
         // Recalculate recency score based on decay
+        let active_status = enum_sql_literal(&MemoryStatus::Active)?;
         let affected = db
             .execute(
-                "UPDATE memory_items SET \
+                &format!(
+                    "UPDATE memory_items SET \
              recency_score = MAX(0.1, 1.0 / (1.0 + 0.02 * ((?1 - updated_at) / 86400.0))), \
              updated_at = ?1 \
-             WHERE status = 'Active'",
+             WHERE status = {active_status}"
+                ),
                 params![now],
             )
             .map_err(|e| e.to_string())?;
@@ -1082,5 +1134,124 @@ impl MemoryDb {
         .map_err(|e| e.to_string())?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::model::{MemorySource, PrivacyLevel};
+
+    fn test_db() -> MemoryDb {
+        let conn = Connection::open_in_memory().expect("in-memory database should open");
+        run_migrations(&conn).expect("memory migrations should run");
+        MemoryDb(Mutex::new(conn))
+    }
+
+    fn memory_item(id: &str, memory_type: MemoryType, content: &str) -> MemoryItem {
+        MemoryItem {
+            id: id.to_string(),
+            memory_type,
+            title: "用户偏好".to_string(),
+            content: content.to_string(),
+            source: MemorySource::Conversation,
+            importance: 5,
+            confidence: 0.8,
+            recency_score: 1.0,
+            privacy_level: PrivacyLevel::PublicToUser,
+            status: MemoryStatus::Active,
+            created_at: 100,
+            updated_at: 100,
+            last_used_at: None,
+            expires_at: None,
+            tags: vec!["用户偏好".to_string()],
+            embedding_id: None,
+            is_pinned: false,
+        }
+    }
+
+    #[test]
+    fn active_memories_are_queryable_after_json_enum_storage() {
+        let db = test_db();
+        db.create(&memory_item(
+            "memory-1",
+            MemoryType::Profile,
+            "我喜欢早上喝咖啡",
+        ))
+        .expect("memory should be created");
+
+        let recent = db.get_recent(10).expect("recent memories should load");
+        assert_eq!(recent.len(), 1);
+
+        let searched = db
+            .search(SearchMemoriesInput {
+                query: "咖啡".to_string(),
+                memory_type: None,
+                limit: Some(10),
+            })
+            .expect("memory search should work");
+        assert_eq!(searched.len(), 1);
+
+        let context = db
+            .build_context(BuildContextInput {
+                current_query: Some("咖啡".to_string()),
+                window_type: None,
+                limit: Some(10),
+            })
+            .expect("memory context should build");
+        assert_eq!(context.len(), 1);
+    }
+
+    #[test]
+    fn memory_maintenance_updates_active_rows_with_json_enum_storage() {
+        let db = test_db();
+        db.create(&MemoryItem {
+            expires_at: Some(50),
+            ..memory_item("memory-1", MemoryType::Event, "已完成一次任务")
+        })
+        .expect("memory should be created");
+
+        assert_eq!(db.recalculate_confidence().unwrap(), 1);
+        assert_eq!(db.expire_old_memories().unwrap(), 1);
+        assert_eq!(
+            db.get("memory-1").unwrap().unwrap().status,
+            MemoryStatus::Archived
+        );
+    }
+
+    #[test]
+    fn migrations_normalize_legacy_plain_enum_values() {
+        let conn = Connection::open_in_memory().expect("in-memory database should open");
+        run_migrations(&conn).expect("initial migration should run");
+        conn.execute(
+            "INSERT INTO memory_items \
+             (id, memory_type, title, content, source, importance, confidence, recency_score, \
+              privacy_level, status, created_at, updated_at, tags) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                "legacy-memory",
+                "Profile",
+                "旧格式记忆",
+                "我喜欢热咖啡",
+                "Conversation",
+                5,
+                0.8,
+                1.0,
+                "PublicToUser",
+                "Active",
+                100,
+                100,
+                "[]",
+            ],
+        )
+        .expect("legacy row should insert");
+        run_migrations(&conn).expect("normalizing migration should run");
+
+        let db = MemoryDb(Mutex::new(conn));
+        let recent = db.get_recent(10).expect("legacy memory should deserialize");
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].memory_type, MemoryType::Profile);
+        assert_eq!(recent[0].status, MemoryStatus::Active);
+        assert_eq!(recent[0].privacy_level, PrivacyLevel::PublicToUser);
     }
 }
