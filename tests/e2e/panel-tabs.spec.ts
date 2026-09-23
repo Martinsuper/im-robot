@@ -50,6 +50,10 @@ test("today shows the greeting, focus card, quick add and one timeline", async (
   // 演示数据里 14:00-15:00 与 14:30-15:30 重叠
   await expect(page.getByText(/有 \d+ 处时间冲突/)).toBeVisible();
 
+  // 03 §7：系统日历同步收敛成一个入口，导出放在同一处，不再有三个并排按钮
+  await expect(page.getByRole("button", { name: "与系统日历同步" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "导出 iCalendar" })).toBeVisible();
+
 });
 
 test("records merges memos and what Piko remembers", async ({ page }) => {

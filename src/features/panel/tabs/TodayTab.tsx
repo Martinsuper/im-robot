@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Check, Coffee, ListTodo, Pause, Play, Plus, Timer, TriangleAlert } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import type { FocusSnapshot, ReminderRepeat, ScheduleItem } from "../../../types/appTypes";
+import { save } from "@tauri-apps/plugin-dialog";
+import type { CalendarSyncStatus, FocusSnapshot, ReminderRepeat, ScheduleItem } from "../../../types/appTypes";
 import { EmptyState, ErrorState } from "../../../components/feedback/States";
 import { useToast } from "../../../components/feedback/toastStore";
 import { toUserMessage } from "../../../lib/errors";
@@ -84,6 +85,8 @@ export function TodayTab() {
   const [draftAt, setDraftAt] = useState(defaultQuickAddTime);
   const [draftDurationMinutes, setDraftDurationMinutes] = useState(60);
   const [draftRepeat, setDraftRepeat] = useState<ReminderRepeat>("none");
+  const [calendarSync, setCalendarSync] = useState<CalendarSyncStatus | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   /**
    * 自然语言识别（03 §4.2）。
@@ -121,6 +124,60 @@ export function TodayTab() {
     }
   }, []);
 
+  const loadCalendarSyncStatus = useCallback(async () => {
+    const status = await runCommand<CalendarSyncStatus>(
+      "get_calendar_sync_status",
+      undefined,
+      // 预览环境没有后端。这里的 fallback 模拟 macOS（目标平台支持直连），
+      // 好让浏览器预览与 e2e 能看到「与系统日历同步」这个入口。
+      { platform: "macos", available: true, lastSync: null, mappingCount: 0 },
+    );
+    setCalendarSync(status ?? null);
+  }, []);
+
+  /**
+   * 03 §7：三个同步按钮收敛成一个入口。
+   *
+   * 刻意做成**一次性动作**而不是开关：后端没有持久化「是否开启同步」的字段，
+   * 做成开关会变成第二个「看起来存在但不生效」的控件——正是 Live2D 选择器那类问题。
+   */
+  async function syncWithSystemCalendar() {
+    setIsSyncing(true);
+    try {
+      const pushed = await runCommand<{ pushed: number }>("sync_calendar_to_system", undefined, { pushed: 0 });
+      const pulled = await runCommand<{ imported: number }>("sync_calendar_from_system", undefined, { imported: 0 });
+      const parts = [
+        pushed?.pushed ? `推出 ${pushed.pushed} 条` : "",
+        pulled?.imported ? `导入 ${pulled.imported} 条` : "",
+      ].filter(Boolean);
+      toast.success(parts.length ? `已与系统日历同步：${parts.join("、")}` : "已与系统日历同步，没有变化");
+      await Promise.all([loadItems(), loadCalendarSyncStatus()]);
+    } catch (error) {
+      toast.error(toUserMessage(error, "与系统日历同步失败，请重试。"));
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
+  async function exportCalendar() {
+    const path = await save({
+      defaultPath: "piko-calendar.ics",
+      filters: [{ name: "iCalendar", extensions: ["ics"] }],
+    });
+    if (!path) return;
+    try {
+      await runCommand("export_calendar_events", { path });
+      // 用带动作按钮的 toast 取代原生 confirm：R0 已把「原生弹窗」列为要清理的模式。
+      toast.show({
+        message: "日程已导出",
+        tone: "success",
+        action: { label: "交给系统日历导入", onClick: () => void runCommand("open_calendar_import", { path }) },
+      });
+    } catch (error) {
+      toast.error(toUserMessage(error, "导出失败，请重试。"));
+    }
+  }
+
   const loadFocus = useCallback(async () => {
     const snapshot = await runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot);
     setFocus(snapshot ?? defaultFocusSnapshot);
@@ -129,7 +186,7 @@ export function TodayTab() {
   useEffect(() => {
     let disposed = false;
     void (async () => {
-      await Promise.all([loadItems(), loadFocus()]);
+      await Promise.all([loadItems(), loadFocus(), loadCalendarSyncStatus()]);
       if (!disposed) setIsLoading(false);
     })();
 
@@ -144,7 +201,7 @@ export function TodayTab() {
         void pending.then((dispose) => dispose()).catch(() => undefined);
       }
     };
-  }, [loadFocus, loadItems]);
+  }, [loadCalendarSyncStatus, loadFocus, loadItems]);
 
   // 专注倒计时走本地时钟，不依赖后端每秒推送。
   const [tick, setTick] = useState(0);
@@ -452,6 +509,30 @@ export function TodayTab() {
             })}
           </ul>
         )}
+      </section>
+
+      <section className="today-card today-more" aria-label="更多">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">MORE</p>
+            <h2>日历</h2>
+          </div>
+        </div>
+        <div className="today-more__row">
+          {calendarSync?.available ? (
+            <button type="button" disabled={isSyncing} onClick={() => void syncWithSystemCalendar()}>
+              {isSyncing ? "同步中…" : "与系统日历同步"}
+            </button>
+          ) : (
+            <span className="today-more__hint">当前系统未开放日历直连，可用导出方式交给系统日历。</span>
+          )}
+          <button type="button" className="text-action" onClick={() => void exportCalendar()}>
+            导出 iCalendar
+          </button>
+        </div>
+        {calendarSync?.lastSync ? (
+          <p className="today-more__meta">上次同步：{formatClock(calendarSync.lastSync)}</p>
+        ) : null}
       </section>
 
       {upcomingItems.length ? (
