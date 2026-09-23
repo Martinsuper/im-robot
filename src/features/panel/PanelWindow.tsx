@@ -108,7 +108,13 @@ function toneFromStatus(text: string, fallback: ToastTone = "info"): ToastTone {
 export function PanelWindow() {
   const mountedRef = useRef(true);
   const toast = useToast();
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const [panelTab, setPanelTab] = useState<PanelTab>("companion");
+
+  /** 切 Tab 时把内容区回到顶部：面板只渲染当前 Tab，但滚动位置会保留在同一个滚动容器上。 */
+  useEffect(() => {
+    workspaceRef.current?.scrollTo({ top: 0 });
+  }, [panelTab]);
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
   const [companionName, setCompanionName] = useState("Piko");
@@ -211,8 +217,6 @@ export function PanelWindow() {
     ],
     [connectionStatus],
   );
-  const panelSectionClass = (tab: PanelTab, base = "panel-card") =>
-    `${base} panel-section panel-section--${tab}${panelTab === tab ? "" : " is-hidden"}`;
   const lastInteractionLabel = interactionStats.lastInteractionAt
     ? new Intl.DateTimeFormat("zh-CN", {
         month: "numeric",
@@ -877,7 +881,7 @@ export function PanelWindow() {
     <main className={`panel-shell panel-shell--${theme}`}>
       <PanelHeader tab={panelTab} companionName={companionName} />
       <PanelNavigation tab={panelTab} onChange={setPanelTab} />
-      <div className="panel-workspace">
+      <div className="panel-workspace" ref={workspaceRef}>
       <section className={`panel-overview panel-overview--${panelTab}`} aria-label="面板总览">
         <div className="panel-overview__status">
           <span>AI 对话</span>
@@ -899,7 +903,9 @@ export function PanelWindow() {
 
       {panelTab === "companion" && <CompanionHero companionName={companionName} styleLabel={petVisualStyleLabel} modelLabel={petVisualStyle === "character" ? live2dModelLabel : null} onReminders={() => setPanelTab("reminders")} />}
 
-      <details className={panelSectionClass("companion", "panel-card companion-metrics-card")}><summary>一起成长的记录 <span>Lv. {growthSnapshot.level} · {Math.round(interactionStats.intimacy)} 亲密</span></summary><div className="companion-metrics-detail">
+      {panelTab === "companion" && (
+        <>
+      <details className="panel-card companion-metrics-card panel-section panel-section--companion"><summary>一起成长的记录 <span>Lv. {growthSnapshot.level} · {Math.round(interactionStats.intimacy)} 亲密</span></summary><div className="companion-metrics-detail">
         <div className="section-heading">
           <div>
             <p className="eyebrow">INTERACTION</p>
@@ -947,8 +953,12 @@ export function PanelWindow() {
           累计 {growthSnapshot.totalXp.toLocaleString("zh-CN")} 经验 · {growthSnapshot.completedTasks} 个任务进度 · {growthSnapshot.unlockedAchievements} 项成就
         </p>
       </div></details>
+        </>
+      )}
 
-      <section className={panelSectionClass("about")}>
+      {panelTab === "about" && (
+        <>
+      <section className="panel-card panel-section panel-section--about">
         <p className="eyebrow">PRIVACY & PERMISSIONS</p>
         <h2>权限中心</h2>
         <div className="permission-list">
@@ -959,7 +969,7 @@ export function PanelWindow() {
         </div>
       </section>
 
-      <section className={panelSectionClass("about")}>
+      <section className="panel-card panel-section panel-section--about">
         <p className="eyebrow">BUSINESS PLUGINS</p>
         <h2>外部插件</h2>
         {externalPlugins.length ? (
@@ -976,7 +986,7 @@ export function PanelWindow() {
         )}
       </section>
 
-      <section className={panelSectionClass("about")}>
+      <section className="panel-card panel-section panel-section--about">
         <div className="section-heading">
           <div>
             <p className="eyebrow">ABOUT</p>
@@ -1003,8 +1013,12 @@ export function PanelWindow() {
           </button>
         )}
       </section>
+        </>
+      )}
 
-      <section className={panelSectionClass("companion", "panel-card companion-status-card")}>
+      {panelTab === "companion" && (
+        <>
+      <section className="panel-card companion-status-card panel-section panel-section--companion">
         <div className="section-heading">
           <div>
             <p className="eyebrow">STATUS</p>
@@ -1049,8 +1063,12 @@ export function PanelWindow() {
           </div>
         </div>
       </section>
+        </>
+      )}
 
-      <section className={panelSectionClass("settings")}>
+      {panelTab === "settings" && (
+        <>
+      <section className="panel-card panel-section panel-section--settings">
         <p className="eyebrow">PREFERENCES</p>
         <h2>个性化与系统</h2>
         <div className="settings-form">
@@ -1143,7 +1161,7 @@ export function PanelWindow() {
         </div>
       </section>
 
-      <section className={panelSectionClass("settings")}>
+      <section className="panel-card panel-section panel-section--settings">
         <p className="eyebrow">PERSONALITY</p>
         <h2>互动活泼度</h2>
         <div className="segmented-control" aria-label="互动活泼度">
@@ -1160,7 +1178,7 @@ export function PanelWindow() {
         </div>
       </section>
 
-      <section className={panelSectionClass("settings")}>
+      <section className="panel-card panel-section panel-section--settings">
         <p className="eyebrow">WORK RHYTHM</p>
         <h2>休息提醒</h2>
         <div className="settings-form">
@@ -1229,7 +1247,7 @@ export function PanelWindow() {
         </div>
       </section>
 
-      <section className={panelSectionClass("settings")}>
+      <section className="panel-card panel-section panel-section--settings">
         <p className="eyebrow">MODEL PROVIDER</p>
         <h2>模型服务</h2>
         <div className="settings-form">
@@ -1342,7 +1360,7 @@ export function PanelWindow() {
         </div>
       </section>
 
-      <section className={panelSectionClass("settings")}>
+      <section className="panel-card panel-section panel-section--settings">
         <p className="eyebrow">OUTPUT PREVIEW</p>
         <h2>HTML 预览</h2>
         <div className="feature-toggle-card">
@@ -1357,8 +1375,12 @@ export function PanelWindow() {
           <p className="empty-state">开启后，气泡窗口会在检测到 HTML 片段时优先使用沙箱 iframe 预览。</p>
         </div>
       </section>
+        </>
+      )}
 
-      <section className={panelSectionClass("reminders")}>
+      {panelTab === "reminders" && (
+        <>
+      <section className="panel-card panel-section panel-section--reminders">
         <div className="focus-card">
           <div className="section-heading">
             <div>
@@ -1442,8 +1464,12 @@ export function PanelWindow() {
           <p className="empty-state">暂无提醒。</p>
         )}
       </section>
+        </>
+      )}
 
-      <section className={panelSectionClass("calendar")}>
+      {panelTab === "calendar" && (
+        <>
+      <section className="panel-card panel-section panel-section--calendar">
         <div className="section-heading">
           <div>
             <p className="eyebrow">CALENDAR</p>
@@ -1509,8 +1535,12 @@ export function PanelWindow() {
           <p className="empty-state">暂无日程。</p>
         )}
       </section>
+        </>
+      )}
 
-      <section className={panelSectionClass("memos")}>
+      {panelTab === "memos" && (
+        <>
+      <section className="panel-card panel-section panel-section--memos">
         <div className="section-heading">
           <div>
             <p className="eyebrow">MEMOS</p>
@@ -1609,13 +1639,19 @@ export function PanelWindow() {
           </p>
         )}
       </section>
+        </>
+      )}
 
       {panelTab === "history" && <PanelHistory chatHistory={chatHistory} focusMinutes={focusState.todayMinutes} onClear={clearChatHistory} />}
 
 
-      <section className={panelSectionClass("memory")}>
+      {panelTab === "memory" && (
+        <>
+      <section className="panel-card panel-section panel-section--memory">
         <MemoryCenter />
       </section>
+        </>
+      )}
       </div>
 
     </main>
