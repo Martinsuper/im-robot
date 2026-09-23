@@ -12,6 +12,16 @@ import { MemoryCenter } from "../memory/MemoryCenter";
 import { ErrorState } from "../../components/feedback/States";
 import { useToast, type ToastTone } from "../../components/feedback/toastStore";
 import { toUserMessage } from "../../lib/errors";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import {
+  defaultPreferencesDraft,
+  defaultWorkRhythmDraft,
+  isWorkRhythmDraftValid,
+  toPreferencesDraft,
+  toWorkRhythmDraft,
+  type PreferencesDraft,
+  type WorkRhythmDraft,
+} from "./settingsDrafts";
 import {
   loadGrowthSnapshot,
   loadInteractionStats,
@@ -117,8 +127,13 @@ export function PanelWindow() {
   }, [panelTab]);
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
-  const [companionName, setCompanionName] = useState("Piko");
-  const [theme, setTheme] = useState<Theme>("sage");
+  const autoSave = useAutoSave();
+  // 偏好与休息提醒改为「草稿 + 已保存基线」两个来源：
+  // 只有服务端返回值会更新基线，用户改动只动草稿，自动保存因此不会误判。
+  const [preferences, setPreferences] = useState<PreferencesDraft>(defaultPreferencesDraft);
+  const preferencesRef = useRef(preferences);
+  const savedPreferencesRef = useRef(preferences);
+  const { companionName, theme, sensingPaused } = preferences;
   const petVisualStyle = usePetVisualStyle();
   const live2dModelId = useLive2DModelId();
   const customPetImagePath = useCustomPetImagePath();
@@ -128,13 +143,17 @@ export function PanelWindow() {
   const disabledLive2DModelOptions = live2dModelOptions.filter((option) => !option.enabled);
   const live2dModelLabel =
     live2dModelOptions.find((option) => option.value === live2dModelId)?.label ?? enabledLive2DModelOptions[0]?.label;
-  const [sensingPaused, setSensingPaused] = useState(false);
-  const [breakRemindersEnabled, setBreakRemindersEnabled] = useState(true);
-  const [breakReminderIntervalMinutes, setBreakReminderIntervalMinutes] = useState(45);
-  const [breakReminderCooldownMinutes, setBreakReminderCooldownMinutes] = useState(30);
-  const [breakReminderQuietHoursEnabled, setBreakReminderQuietHoursEnabled] = useState(false);
-  const [breakReminderQuietHoursStart, setBreakReminderQuietHoursStart] = useState("22:00");
-  const [breakReminderQuietHoursEnd, setBreakReminderQuietHoursEnd] = useState("08:00");
+  const [workRhythm, setWorkRhythm] = useState<WorkRhythmDraft>(defaultWorkRhythmDraft);
+  const workRhythmRef = useRef(workRhythm);
+  const savedWorkRhythmRef = useRef(workRhythm);
+  const {
+    breakRemindersEnabled,
+    breakReminderIntervalMinutes,
+    breakReminderCooldownMinutes,
+    breakReminderQuietHoursEnabled,
+    breakReminderQuietHoursStart,
+    breakReminderQuietHoursEnd,
+  } = workRhythm;
   const [htmlPreviewEnabled, setHtmlPreviewEnabled] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [preferencesStatus, setPreferencesStatus] = useState("");
@@ -328,15 +347,8 @@ export function PanelWindow() {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
       setQuietMode(settings.quietMode);
       setAiSettings(settings.ai);
-      setCompanionName(settings.companionName);
-      setTheme(settings.theme);
-      setSensingPaused(settings.sensingPaused);
-      setBreakRemindersEnabled(settings.breakRemindersEnabled);
-      setBreakReminderIntervalMinutes(settings.breakReminderIntervalMinutes);
-      setBreakReminderCooldownMinutes(settings.breakReminderCooldownMinutes);
-      setBreakReminderQuietHoursEnabled(settings.breakReminderQuietHoursEnabled);
-      setBreakReminderQuietHoursStart(settings.breakReminderQuietHoursStart);
-      setBreakReminderQuietHoursEnd(settings.breakReminderQuietHoursEnd);
+      applyServerPreferences(settings);
+      applyServerWorkRhythm(settings);
       setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
       setConnectionStatus(settings.hasApiKey ? "已配置密钥" : "等待测试");
     });
@@ -407,15 +419,8 @@ export function PanelWindow() {
     const unlistenSettings = listen<AppSettings>("settings-updated", (event) => {
       setQuietMode(event.payload.quietMode);
       setAiSettings(event.payload.ai);
-      setCompanionName(event.payload.companionName);
-      setTheme(event.payload.theme);
-      setSensingPaused(event.payload.sensingPaused);
-      setBreakRemindersEnabled(event.payload.breakRemindersEnabled);
-      setBreakReminderIntervalMinutes(event.payload.breakReminderIntervalMinutes);
-      setBreakReminderCooldownMinutes(event.payload.breakReminderCooldownMinutes);
-      setBreakReminderQuietHoursEnabled(event.payload.breakReminderQuietHoursEnabled);
-      setBreakReminderQuietHoursStart(event.payload.breakReminderQuietHoursStart);
-      setBreakReminderQuietHoursEnd(event.payload.breakReminderQuietHoursEnd);
+      applyServerPreferences(event.payload);
+      applyServerWorkRhythm(event.payload);
       setHtmlPreviewEnabled(event.payload.htmlPreviewEnabled);
     });
     const refreshOnVisible = () => {
@@ -461,6 +466,72 @@ export function PanelWindow() {
     });
     setOnboardingStatus(status);
     return status;
+  }
+
+  /** 服务端返回的设置是唯一权威值（00 §5.8）；只有这里会推进「已保存基线」。 */
+  function applyServerPreferences(settings: AppSettings) {
+    const next = toPreferencesDraft(settings);
+    savedPreferencesRef.current = next;
+    preferencesRef.current = next;
+    setPreferences(next);
+  }
+
+  function applyServerWorkRhythm(settings: AppSettings) {
+    const next = toWorkRhythmDraft(settings);
+    savedWorkRhythmRef.current = next;
+    workRhythmRef.current = next;
+    setWorkRhythm(next);
+  }
+
+  function updatePreferences(patch: Partial<PreferencesDraft>) {
+    const next = { ...preferencesRef.current, ...patch };
+    preferencesRef.current = next;
+    setPreferences(next);
+    // update_preferences 是整组替换，必须带上组内全部字段，不能只传改动的那个。
+    autoSave.schedule(
+      () =>
+        runCommand<AppSettings>("update_preferences", { input: next }, {
+          ...defaultAppSettings,
+          ...next,
+          ai: aiSettings,
+        }),
+      {
+        rollback: () => {
+          const saved = savedPreferencesRef.current;
+          preferencesRef.current = saved;
+          setPreferences(saved);
+        },
+        onSuccess: applyServerPreferences,
+        errorFallback: "个性化设置保存失败，请重试。",
+      },
+    );
+  }
+
+  function updateWorkRhythm(patch: Partial<WorkRhythmDraft>) {
+    const next = { ...workRhythmRef.current, ...patch };
+    workRhythmRef.current = next;
+    setWorkRhythm(next);
+    if (!isWorkRhythmDraftValid(next)) {
+      autoSave.cancel();
+      return;
+    }
+    autoSave.schedule(
+      () =>
+        runCommand<AppSettings>("update_work_rhythm_preferences", { input: next }, {
+          ...defaultAppSettings,
+          ...next,
+          ai: aiSettings,
+        }),
+      {
+        rollback: () => {
+          const saved = savedWorkRhythmRef.current;
+          workRhythmRef.current = saved;
+          setWorkRhythm(saved);
+        },
+        onSuccess: applyServerWorkRhythm,
+        errorFallback: "休息提醒设置保存失败，请重试。",
+      },
+    );
   }
 
   function updateQuietMode(mode: QuietMode) {
@@ -728,61 +799,6 @@ export function PanelWindow() {
 
   async function updateFocus(command: string, args?: Record<string, unknown>) {
     setFocusState(await runCommand<FocusSnapshot>(command, args, defaultFocusSnapshot));
-  }
-
-  async function savePreferences() {
-    setPreferencesStatus("");
-    try {
-      const settings = await runCommand<AppSettings>(
-        "update_preferences",
-        { input: { companionName, theme, sensingPaused } },
-        { ...defaultAppSettings, companionName, theme, sensingPaused, ai: aiSettings },
-      );
-      setCompanionName(settings.companionName);
-      setTheme(settings.theme);
-      setSensingPaused(settings.sensingPaused);
-      setPreferencesStatus("已保存");
-    } catch (error) {
-      setPreferencesStatus(toUserMessage(error));
-    }
-  }
-
-  async function saveWorkRhythmPreferences() {
-    setPreferencesStatus("");
-    try {
-      const settings = await runCommand<AppSettings>(
-        "update_work_rhythm_preferences",
-        {
-          input: {
-            breakRemindersEnabled,
-            breakReminderIntervalMinutes,
-            breakReminderCooldownMinutes,
-            breakReminderQuietHoursEnabled,
-            breakReminderQuietHoursStart,
-            breakReminderQuietHoursEnd,
-          },
-        },
-        {
-          ...defaultAppSettings,
-          breakRemindersEnabled,
-          breakReminderIntervalMinutes,
-          breakReminderCooldownMinutes,
-          breakReminderQuietHoursEnabled,
-          breakReminderQuietHoursStart,
-          breakReminderQuietHoursEnd,
-          ai: aiSettings,
-        },
-      );
-      setBreakRemindersEnabled(settings.breakRemindersEnabled);
-      setBreakReminderIntervalMinutes(settings.breakReminderIntervalMinutes);
-      setBreakReminderCooldownMinutes(settings.breakReminderCooldownMinutes);
-      setBreakReminderQuietHoursEnabled(settings.breakReminderQuietHoursEnabled);
-      setBreakReminderQuietHoursStart(settings.breakReminderQuietHoursStart);
-      setBreakReminderQuietHoursEnd(settings.breakReminderQuietHoursEnd);
-      setPreferencesStatus("休息提醒设置已保存");
-    } catch (error) {
-      setPreferencesStatus(toUserMessage(error));
-    }
   }
 
   async function updateHtmlPreviewEnabled(enabled: boolean) {
@@ -1077,12 +1093,12 @@ export function PanelWindow() {
             <input
               value={companionName}
               maxLength={24}
-              onChange={(event) => setCompanionName(event.currentTarget.value)}
+              onChange={(event) => updatePreferences({ companionName: event.currentTarget.value })}
             />
           </label>
           <label>
             <span>主题色</span>
-            <select value={theme} onChange={(event) => setTheme(event.currentTarget.value as Theme)}>
+            <select value={theme} onChange={(event) => updatePreferences({ theme: event.currentTarget.value as Theme })}>
               <option value="sage">鼠尾草绿</option>
               <option value="blue">湖水蓝</option>
               <option value="peach">暖桃色</option>
@@ -1132,7 +1148,7 @@ export function PanelWindow() {
             <input
               type="checkbox"
               checked={!sensingPaused}
-              onChange={(event) => setSensingPaused(!event.currentTarget.checked)}
+              onChange={(event) => updatePreferences({ sensingPaused: !event.currentTarget.checked })}
             />
             <span>主动感知</span>
           </label>
@@ -1144,9 +1160,6 @@ export function PanelWindow() {
             />
             <span>开机自动启动</span>
           </label>
-          <button type="button" onClick={() => void savePreferences()}>
-            保存个性化设置
-          </button>
           <button
             type="button"
             onClick={() => {
@@ -1186,7 +1199,7 @@ export function PanelWindow() {
             <input
               type="checkbox"
               checked={breakRemindersEnabled}
-              onChange={(event) => setBreakRemindersEnabled(event.currentTarget.checked)}
+              onChange={(event) => updateWorkRhythm({ breakRemindersEnabled: event.currentTarget.checked })}
             />
             <span>开启休息提醒</span>
           </label>
@@ -1199,7 +1212,7 @@ export function PanelWindow() {
                 max="240"
                 step="5"
                 value={breakReminderIntervalMinutes}
-                onChange={(event) => setBreakReminderIntervalMinutes(Number(event.currentTarget.value))}
+                onChange={(event) => updateWorkRhythm({ breakReminderIntervalMinutes: Number(event.currentTarget.value) })}
               />
             </label>
             <label>
@@ -1210,7 +1223,7 @@ export function PanelWindow() {
                 max="240"
                 step="5"
                 value={breakReminderCooldownMinutes}
-                onChange={(event) => setBreakReminderCooldownMinutes(Number(event.currentTarget.value))}
+                onChange={(event) => updateWorkRhythm({ breakReminderCooldownMinutes: Number(event.currentTarget.value) })}
               />
             </label>
           </div>
@@ -1218,7 +1231,7 @@ export function PanelWindow() {
             <input
               type="checkbox"
               checked={breakReminderQuietHoursEnabled}
-              onChange={(event) => setBreakReminderQuietHoursEnabled(event.currentTarget.checked)}
+              onChange={(event) => updateWorkRhythm({ breakReminderQuietHoursEnabled: event.currentTarget.checked })}
             />
             <span>启用静默时段</span>
           </label>
@@ -1228,7 +1241,7 @@ export function PanelWindow() {
               <input
                 type="time"
                 value={breakReminderQuietHoursStart}
-                onChange={(event) => setBreakReminderQuietHoursStart(event.currentTarget.value)}
+                onChange={(event) => updateWorkRhythm({ breakReminderQuietHoursStart: event.currentTarget.value })}
               />
             </label>
             <label>
@@ -1236,13 +1249,10 @@ export function PanelWindow() {
               <input
                 type="time"
                 value={breakReminderQuietHoursEnd}
-                onChange={(event) => setBreakReminderQuietHoursEnd(event.currentTarget.value)}
+                onChange={(event) => updateWorkRhythm({ breakReminderQuietHoursEnd: event.currentTarget.value })}
               />
             </label>
           </div>
-          <button type="button" onClick={() => void saveWorkRhythmPreferences()}>
-            保存休息提醒设置
-          </button>
           <p className="empty-state">提醒会根据今日输入、空闲状态和前台场景自动判断，只在适合的时候发声。</p>
         </div>
       </section>
