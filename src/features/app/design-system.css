@@ -1,22 +1,6 @@
-/* Shared desktop surfaces: warm paper, botanical accents and readable controls. */
-:root {
-  --piko-paper: #f7f7f2;
-  --piko-ink: #293b34;
-  --piko-muted: #68756e;
-  --piko-accent: #356951;
-  --piko-soft: #e9f0e7;
-  --piko-line: #dfe5dc;
-}
-button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
-button svg { flex-shrink: 0; vertical-align: middle; }
-button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
-  outline: 2px solid var(--piko-accent); outline-offset: 3px;
-}
+/* Shared desktop surfaces: warm paper, botanical accents and readable controls.
+   令牌见 src/styles/tokens.css，基础规则见 src/styles/base.css（本文件不再定义）。 */
 .panel-shell {
-  --panel-text: var(--piko-ink); --panel-muted: var(--piko-muted);
-  --panel-subtle: #6d796f; --panel-accent: var(--piko-accent);
-  --panel-accent-soft: var(--piko-soft); --panel-line: var(--piko-line);
-  --panel-fill: #fffefa; --panel-fill-strong: #fffefa;
   padding: 24px; gap: 20px; background: var(--piko-paper);
   grid-template-columns: 132px minmax(0, 1fr); font-size: 14px;
 }

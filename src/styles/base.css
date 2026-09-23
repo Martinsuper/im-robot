@@ -1,0 +1,21 @@
+/*
+ * 基础层（R0-5）
+ *
+ * 只放跨窗口生效的浏览器默认收敛规则，来自：
+ *   - design-system.css:10  -webkit-tap-highlight-color
+ *   - design-system.css:11  button svg
+ *   - design-system.css:12 + App.css 原 `:focus-visible` 重复规则（合并为这一处）
+ * 依赖 tokens.css 里的品牌色变量，必须在 App.css 之前引入。
+ */
+
+button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button svg { flex-shrink: 0; vertical-align: middle; }
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--piko-accent);
+  outline-offset: 3px;
+}

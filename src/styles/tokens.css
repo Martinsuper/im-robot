@@ -1,0 +1,72 @@
+/*
+ * 设计令牌层（R0-5）
+ *
+ * 全站唯一令牌源：颜色 / 间距 / 圆角 / 字号 / 层级。
+ * 引入顺序：tokens.css → base.css → App.css → design-system.css
+ * 后续层可以「用」令牌，但不要再「定义」 --piko-* / --panel-*。
+ */
+
+:root {
+  /* --- 品牌与纸张（值沿用原 design-system.css:2-8，未改动） --- */
+  --piko-paper: #f7f7f2;
+  --piko-ink: #293b34;
+  --piko-muted: #68756e;
+  --piko-accent: #356951;
+  --piko-soft: #e9f0e7;
+  --piko-line: #dfe5dc;
+  /* 新增：卡片 / Toast 的实底填充色（feedback.css 已引用，此前只能走字面量兜底） */
+  --piko-fill: #fffefa;
+
+  /* --- 间距（够 R1 用的最小集） --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* --- 圆角 --- */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 13px;
+  --radius-xl: 16px;
+
+  /* --- 字号 --- */
+  --text-xs: 9px;
+  --text-sm: 11px;
+  --text-md: 12px;
+  --text-base: 13px;
+  --text-lg: 15px;
+
+  /* --- 层级（现有实际取值，避免各窗口继续各写各的） --- */
+  --z-base: 1;
+  --z-raised: 2;
+  --z-overlay: 3;
+  --z-float: 10;
+  --z-toast: 90;
+}
+
+/*
+ * 面板语义令牌：集中到这一处唯一定义。
+ *
+ * 值取 design-system.css 现行生效值（绿色系），不取 App.css 里那份已被覆盖的 iOS 蓝。
+ * 选择器写成 `:root, .panel-shell` 而非只写 `:root`，是为了保住主题覆盖：
+ * `var()` 在「声明所在的那个元素」上求值 —— 若只挂在 :root，`.panel-shell--blue`
+ * 覆盖的 `--piko-accent` 就传不进 `--panel-accent`，蓝 / 桃主题会退回绿色。
+ * 挂在 .panel-shell 上时，会拿该元素上（含主题覆盖后）的 --piko-* 重新求值，
+ * 渲染结果与迁移前逐值一致。
+ */
+:root,
+.panel-shell {
+  --panel-text: var(--piko-ink);
+  --panel-muted: var(--piko-muted);
+  --panel-subtle: #6d796f;
+  --panel-accent: var(--piko-accent);
+  --panel-accent-soft: var(--piko-soft);
+  --panel-line: var(--piko-line);
+  --panel-fill: #fffefa;
+  --panel-fill-strong: #fffefa;
+  /* 面板底纹用的淡色底。design-system.css 从未覆盖它，所以现行生效值就是
+     App.css 原来的 #f4f7f4，这里照搬以保证渐变背景逐像素不变。 */
+  --panel-tint: #f4f7f4;
+}

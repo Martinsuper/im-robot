@@ -1,6 +1,8 @@
 import { lazy, Suspense } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ToastProvider } from "./components/feedback/Toast";
+import "./styles/tokens.css";
+import "./styles/base.css";
 import "./App.css";
 import "./features/app/design-system.css";
 

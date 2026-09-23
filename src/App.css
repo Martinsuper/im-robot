@@ -11,10 +11,6 @@
 html, body, #root { min-height: 100%; margin: 0; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
-button:focus-visible, input:focus-visible, select:focus-visible {
-  outline: 2px solid rgba(87, 121, 109, .48);
-  outline-offset: 2px;
-}
 
 .pet-stage {
   display: grid;
@@ -1124,10 +1120,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   transition: color 100ms ease;
 }
 .bubble-input-zone__chip-remove:hover { color: #b85a51; }
-.bubble-input-zone__error {
-  color: #b85a51;
-  font-size: 10px;
-}
 .bubble-input-zone__actions {
   display: flex;
   gap: 3px;
@@ -1239,7 +1231,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   font-size: 9px;
   line-height: 1.4;
 }
-.speech-error { margin: 0; color: #b85a51; font-size: 10px; line-height: 1.35; }
 
 /* --- Onboarding --- */
 .onboarding-container {
@@ -1416,15 +1407,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 }
 
 .panel-shell {
-  --panel-tint: #f4f7f4;
-  --panel-accent: #007aff;
-  --panel-accent-soft: rgba(0, 122, 255, .12);
-  --panel-text: #1d1d1f;
-  --panel-muted: #6e6e73;
-  --panel-subtle: #86868b;
-  --panel-line: rgba(60, 60, 67, .12);
-  --panel-fill: rgba(255, 255, 255, .74);
-  --panel-fill-strong: rgba(255, 255, 255, .9);
   height: 100vh;
   display: grid;
   grid-template-columns: 118px minmax(0, 1fr);
@@ -1439,8 +1421,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
   scrollbar-color: rgba(60, 60, 67, .2) transparent;
 }
-.panel-shell--blue { --panel-tint: #edf6fb; --panel-accent: #007aff; --panel-accent-soft: rgba(0, 122, 255, .12); }
-.panel-shell--peach { --panel-tint: #fff3ed; --panel-accent: #ff6b3d; --panel-accent-soft: rgba(255, 107, 61, .13); }
 .panel-shell h1,
 .panel-shell h2,
 .panel-shell h3 {
@@ -1454,13 +1434,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 .panel-shell select,
 .panel-shell textarea {
   font: inherit;
-}
-.panel-shell button:focus-visible,
-.panel-shell input:focus-visible,
-.panel-shell select:focus-visible,
-.panel-shell textarea:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--panel-accent) 26%, transparent);
-  outline-offset: 2px;
 }
 .panel-header {
   grid-column: 1 / -1;
@@ -1561,7 +1534,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 }
 .panel-overview__status strong { color: var(--panel-accent); }
 .panel-overview:not(.panel-overview--companion) { display: none; }
-.is-hidden { display: none; }
 .panel-section { align-self: start; }
 .status-pill, .trait-list span {
   display: inline-flex;
@@ -1620,7 +1592,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   box-shadow: 0 10px 28px rgba(0, 0, 0, .055), inset 0 1px 0 rgba(255, 255, 255, .72);
   backdrop-filter: blur(22px) saturate(1.25);
 }
-.panel-section.is-hidden { display: none; }
 .panel-section--companion.panel-card { grid-column: span 7; }
 .panel-section--companion.companion-status-card { grid-column: 1 / -1; }
 .panel-section--settings.panel-card,
@@ -1901,7 +1872,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   cursor: not-allowed;
   opacity: .42;
 }
-.connection-status { margin: 0; color: var(--panel-accent); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
 .release-link { margin-top: 6px; border: 0; border-radius: 10px; padding: 7px 10px; color: #fff; background: var(--panel-accent); font-size: 11px; font-weight: 720; }
 .settings-form .setting-toggle {
   display: flex;
@@ -2044,8 +2014,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 .reminder-list strong { overflow: hidden; color: var(--panel-text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .reminder-list span { color: var(--panel-subtle); font-size: 9px; }
 .reminder-list button { flex: 0 0 auto; min-height: 26px; color: var(--panel-accent); background: var(--panel-accent-soft); }
-.reminder-error { margin: 6px 0 0; color: #b85a51; font-size: 10px; line-height: 1.35; }
-.calendar-notice { margin: 6px 0 0; color: var(--panel-muted); font-size: 10px; line-height: 1.35; }
 .memo-filter-select {
   min-height: 32px;
   border: 1px solid var(--panel-line);
@@ -2398,7 +2366,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   font-size: 11px;
   font-weight: 600;
 }
-.memory-error { margin: 0; color: #c25449; font-size: 11px; }
 .memory-list { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; padding-right: 2px; }
 
 /* Search bar */
