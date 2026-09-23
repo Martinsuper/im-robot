@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
+import "./features/app/design-system.css";
 
 type WindowLabel = "pet" | "bubble" | "panel" | "capture";
 
@@ -11,9 +12,15 @@ const PanelWindow = lazy(() => import("./features/panel/PanelWindow").then((modu
 const PetWindow = lazy(() => import("./features/pet/PetWindow").then((module) => ({ default: module.PetWindow })));
 
 function detectWindowLabel(): WindowLabel {
-  if (isTauriRuntime) return getCurrentWindow().label as WindowLabel;
-
   const preview = new URLSearchParams(window.location.search).get("view");
+  if (preview === "bubble" || preview === "panel" || preview === "capture" || preview === "pet") return preview;
+
+  if (isTauriRuntime) {
+    const label = getCurrentWindow().label;
+    if (label === "bubble" || label === "panel" || label === "capture") return label;
+    return "pet";
+  }
+
   return preview === "bubble" || preview === "panel" || preview === "capture" ? preview : "pet";
 }
 

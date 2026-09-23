@@ -1,7 +1,7 @@
 import { CSSProperties, useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { emit, listen, UnlistenFn } from "@tauri-apps/api/event";
-import { Live2DCharacterPet } from "./Live2DCharacterPet";
+import { LiveCharacterPet } from "./LiveCharacterPet";
 
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 import type {
@@ -58,7 +58,7 @@ export const petVisualStyleStorageKey = "piko-pet-visual-style";
 export const customPetImageStorageKey = "piko-custom-pet-image-path";
 export const live2dModelStorageKey = "piko-live2d-model-id";
 export const live2dOfficialMigrationStorageKey = "piko-live2d-official-model-migrated";
-export const defaultPetVisualStyle: PetVisualStyle = "character";
+export const defaultPetVisualStyle: PetVisualStyle = "classic";
 export const defaultLive2DModelId: Live2DModelId = "official-hiyori";
 
 export const petVisualStyleOptions: Array<{ label: string; value: PetVisualStyle }> = [
@@ -149,8 +149,8 @@ export const live2dModelOptions: Array<{
 
 export function getPetVisualStyle(): PetVisualStyle {
   if (typeof window === "undefined") return defaultPetVisualStyle;
-  if (window.localStorage.getItem(live2dOfficialMigrationStorageKey) !== "3") {
-    window.localStorage.setItem(live2dOfficialMigrationStorageKey, "3");
+  if (window.localStorage.getItem(live2dOfficialMigrationStorageKey) !== "4") {
+    window.localStorage.setItem(live2dOfficialMigrationStorageKey, "4");
     window.localStorage.setItem(petVisualStyleStorageKey, defaultPetVisualStyle);
     window.localStorage.setItem(live2dModelStorageKey, defaultLive2DModelId);
     return defaultPetVisualStyle;
@@ -385,7 +385,6 @@ export function PetSprite({
 }) {
   const sprite = petSpriteStates[mode];
   const visualStyle = usePetVisualStyle();
-  const live2dModelId = useLive2DModelId();
   const customPetImageUrl = useCustomPetImageUrl();
   const effectiveVisualStyle = visualStyle === "custom" && !customPetImageUrl ? "classic" : visualStyle;
   const robotCatFrame = getRobotCatFrame(mode, emotion, reaction);
@@ -430,23 +429,7 @@ export function PetSprite({
   }
 
   if (effectiveVisualStyle === "character") {
-    return (
-      <span
-        className={`pet-sprite-frame pet-sprite-frame--character${compact ? " pet-sprite-frame--compact" : ""}`}
-        style={style}
-      >
-        <Live2DCharacterPet
-          key={live2dModelId}
-          mode={mode}
-          emotion={emotion}
-          reaction={reaction}
-          compact={compact}
-          mouseDelta={mouseDelta}
-          modelId={live2dModelId}
-          profileUrl={getLive2DProfileUrl(live2dModelId)}
-        />
-      </span>
-    );
+    return <LiveCharacterPet mode={mode} emotion={emotion} reaction={reaction} compact={compact} mouseDelta={mouseDelta} style={style} />;
   }
 
   if (effectiveVisualStyle === "custom" && customPetImageUrl) {
@@ -482,6 +465,7 @@ export const defaultAiSettings: AiSettings = {
   provider: "openai-compatible",
   baseUrl: "http://localhost:11434/v1",
   model: "gemma4:e4b",
+  speechModel: "sense-voice",
   temperature: 0.7,
   timeoutSeconds: 120,
 };
@@ -548,6 +532,7 @@ export const panelTabOptions: Array<{ label: string; value: PanelTab }> = [
   { label: "设置", value: "settings" },
   { label: "提醒", value: "reminders" },
   { label: "日程", value: "calendar" },
+  { label: "备忘", value: "memos" },
   { label: "历史", value: "history" },
   { label: "记忆", value: "memory" },
   { label: "关于", value: "about" },

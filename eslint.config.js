@@ -54,6 +54,9 @@ export default tseslint.config(
       ...react.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
       "react/react-in-jsx-scope": "off",
+      // Compiler-specific migration checks remain visible while this app uses
+      // imperative Canvas/Tauri adapters without React Compiler enabled.
+      "react-hooks/set-state-in-effect": "warn",
       "react/prop-types": "off",
       "react-hooks/exhaustive-deps": "warn",
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],

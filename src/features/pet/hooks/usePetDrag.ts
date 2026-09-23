@@ -28,22 +28,26 @@ export interface UsePetDragOptions {
   onStroke?: (distance: number, duration: number) => void;
   onClick?: () => void;
   onLongPress?: (position: { x: number; y: number }) => void;
+  onLongPressStart?: () => void;
+  onLongPressEnd?: () => void;
 }
 
 export interface UsePetDragReturn {
   isDragging: boolean;
+  isLongPressing: boolean;
   handlers: {
     onMouseDown: (event: React.MouseEvent) => void;
-    onMouseUp: () => void;
+    onMouseUp: (event: React.MouseEvent) => void;
     onMouseMove: (event: React.MouseEvent) => void;
     onClick: () => void;
   };
 }
 
 export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
-  const { onDragEnd, onStroke, onClick, onLongPress } = options;
+  const { onDragEnd, onStroke, onClick, onLongPress, onLongPressStart, onLongPressEnd } = options;
 
   const [isDragging, setIsDragging] = useState(false);
+  const [isLongPressing, setIsLongPressing] = useState(false);
   const [dragOrigin, setDragOrigin] = useState<{ x: number; y: number } | null>(null);
   const dragOffset = useRef({ x: 0, y: 0 });
   const didDrag = useRef(false);
@@ -52,6 +56,7 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
   const longPressTimer = useRef<number>(0);
   const longPressTriggered = useRef(false);
   const suppressClickRef = useRef(false);
+  const isPrimaryPointerDown = useRef(false);
   const petPos = useRef({ x: 0, y: 0 });
 
   function movePet(x: number, y: number) {
@@ -103,17 +108,33 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
 
   const onMouseDown = (event: React.MouseEvent) => {
     if (!isTauriRuntime || event.button !== 0) return;
+    isPrimaryPointerDown.current = true;
     stopInertia();
     didDrag.current = false;
     longPressTriggered.current = false;
     suppressClickRef.current = false;
     dragSamples.current = [{ x: event.screenX, y: event.screenY, t: performance.now() }];
+
+    // 立即清除旧的长按定时器，避免与新的拖动冲突
+    if (longPressTimer.current) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = 0;
+    }
+
+    // 启动长按状态（用于显示进度环）
+    setIsLongPressing(true);
+    onLongPressStart?.();
+
+    // 重新启动长按定时器
     longPressTimer.current = window.setTimeout(() => {
       if (!didDrag.current) {
         longPressTriggered.current = true;
+        setIsLongPressing(false);
+        onLongPressEnd?.();
         onLongPress?.({ x: event.clientX, y: event.clientY });
       }
     }, LONG_PRESS_MS);
+
     void runCommand<[number, number]>("get_pet_position", undefined, [petPos.current.x, petPos.current.y])
       .then(([x, y]) => {
         petPos.current = { x, y };
@@ -125,8 +146,15 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     setDragOrigin({ x: event.screenX, y: event.screenY });
   };
 
-  const onMouseUp = () => {
+  const onMouseUp = (event: React.MouseEvent) => {
+    if (event.button !== 0 || !isPrimaryPointerDown.current) return;
+    isPrimaryPointerDown.current = false;
+
     if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    // 清除长按状态
+    setIsLongPressing(false);
+    onLongPressEnd?.();
+
     if (didDrag.current) {
       startInertia();
       const distance = pathDistance(dragSamples.current);
@@ -160,8 +188,15 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     const dx = event.screenX - dragOrigin.x;
     const dy = event.screenY - dragOrigin.y;
     if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+
+    // 超过拖动阈值，立即清除长按定时器和状态，避免冲突
     didDrag.current = true;
-    if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    if (longPressTimer.current) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = 0;
+    }
+    setIsLongPressing(false);
+    onLongPressEnd?.();
     setIsDragging(true);
     rememberDragPoint(event.screenX, event.screenY);
     event.preventDefault();
@@ -179,12 +214,14 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
   useEffect(() => {
     return () => {
       if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+      isPrimaryPointerDown.current = false;
       stopInertia();
     };
   }, []);
 
   return {
     isDragging,
+    isLongPressing,
     handlers: {
       onMouseDown,
       onMouseUp,

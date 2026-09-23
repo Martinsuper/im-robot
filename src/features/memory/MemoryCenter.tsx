@@ -448,7 +448,7 @@ export function MemoryCenter() {
       {subView === "reflections" && (
         <>
           {summaries.length === 0 ? (
-            <p className="empty-state">还没有反思总结。点击"反思"按钮运行第一次反思。</p>
+            <p className="empty-state">还没有反思总结。点击“反思”按钮运行第一次反思。</p>
           ) : (
             <div className="reflection-list">
               {summaries.map((s) => (

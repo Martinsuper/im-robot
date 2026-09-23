@@ -1,18 +1,16 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Timelike};
+use futures_util::StreamExt;
 use screenshots::{image::DynamicImage, Screen};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::Cursor,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     process::{Child, Command},
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -30,9 +28,17 @@ use wasmtime_wasi::WasiCtxBuilder;
 
 // --- Module declarations for new features ---
 pub mod app_awareness;
+mod chat;
+mod chat_stream;
+use chat::*;
+mod debounce;
 pub mod memory;
+mod reminder_schedule;
+mod storage;
 pub mod sync;
 pub mod typing_activity;
+use reminder_schedule::next_repeat_due;
+use tokio_util::sync::CancellationToken;
 
 const PET_MARGIN: i32 = 16;
 /// How many pixels of the pet window stay visible when tucked at screen edge.
@@ -95,6 +101,8 @@ struct AiSettings {
     provider: String,
     base_url: String,
     model: String,
+    #[serde(default = "default_speech_model")]
+    speech_model: String,
     temperature: f32,
     timeout_seconds: u64,
 }
@@ -105,9 +113,58 @@ struct AiSettingsInput {
     provider: String,
     base_url: String,
     model: String,
+    speech_model: Option<String>,
     temperature: f32,
     timeout_seconds: u64,
     api_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VoiceTranscriptionInput {
+    audio_data_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VoiceTranscriptionOutput {
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeechModelStatus {
+    id: String,
+    name: String,
+    file_name: String,
+    download_url: String,
+    downloaded: bool,
+    byte_size: u64,
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadSpeechModelInput {
+    model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpeechModelDownloadProgress {
+    model_id: String,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    percent: Option<f32>,
+    completed: bool,
+}
+
+struct SpeechModelDefinition {
+    id: &'static str,
+    name: &'static str,
+    file_name: &'static str,
+    download_url: &'static str,
+    archive_dir: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,7 +289,7 @@ struct MemoryCapturedEvent {
 }
 
 #[derive(Default)]
-struct ChatRequests(Mutex<HashMap<String, Arc<AtomicBool>>>);
+struct ChatRequests(Mutex<HashMap<String, CancellationToken>>);
 
 #[derive(Default)]
 struct ChatContext(Mutex<Vec<ChatHistoryEntry>>);
@@ -303,6 +360,36 @@ struct ReminderInput {
     due_at: u64,
     #[serde(default = "default_repeat_rule")]
     repeat: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Memo {
+    id: String,
+    title: String,
+    content: String,
+    category: String,
+    summary: String,
+    tags: Vec<String>,
+    created_at: u64,
+    updated_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoInput {
+    title: String,
+    content: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoSummaryGroup {
+    category: String,
+    count: usize,
+    latest_updated_at: u64,
+    summary: String,
+    top_tags: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -407,6 +494,7 @@ trait PikoPlugin: Send + Sync {
 }
 
 struct ReminderPlugin;
+struct MemoPlugin;
 struct CalendarPlugin;
 
 struct PluginRegistry {
@@ -571,6 +659,59 @@ impl PikoPlugin for ReminderPlugin {
                 serde_json::to_value(deleted).map_err(|error| error.to_string())
             }
             _ => Err("提醒插件不支持该工具".to_string()),
+        }
+    }
+}
+
+impl MemoPlugin {
+    fn tool_manifests() -> Vec<PluginToolManifest> {
+        vec![
+            PluginToolManifest {
+                name: "list_memos".to_string(),
+                description: "列出全部本地备忘录，可用于查询用户已经记录过的备忘".to_string(),
+                input_schema: json!({ "type": "object", "properties": {} }),
+                risk: "read".to_string(),
+                confirmation: "never".to_string(),
+            },
+            PluginToolManifest {
+                name: "create_memo".to_string(),
+                description: "创建一条本地备忘录。用户说“记一下”“帮我记”“添加备忘”“写到备忘录”等无需提醒时间的信息时使用。系统会自动分类、摘要和打标签。".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["title", "content"],
+                    "properties": {
+                        "title": { "type": "string", "maxLength": 120, "description": "简短标题" },
+                        "content": { "type": "string", "maxLength": 8000, "description": "要保存的备忘正文" }
+                    }
+                }),
+                risk: "write".to_string(),
+                confirmation: "always".to_string(),
+            },
+        ]
+    }
+}
+
+impl PikoPlugin for MemoPlugin {
+    fn manifest(&self) -> PluginManifest {
+        PluginManifest {
+            id: "piko.memos".to_string(),
+            name: "备忘录".to_string(),
+            version: "1.0.0".to_string(),
+            description: "创建和查询本地备忘录，并自动汇总分类".to_string(),
+            tools: Self::tool_manifests(),
+        }
+    }
+
+    fn execute(&self, app: &AppHandle, tool: &str, input: Value) -> Result<Value, String> {
+        match tool {
+            "list_memos" => {
+                serde_json::to_value(read_memos(app)).map_err(|error| error.to_string())
+            }
+            "create_memo" => {
+                let memo = create_memo_record(app, memo_input_from_value(&input)?)?;
+                serde_json::to_value(memo).map_err(|error| error.to_string())
+            }
+            _ => Err("备忘录插件不支持该工具".to_string()),
         }
     }
 }
@@ -765,9 +906,11 @@ impl PikoPlugin for DeclarativePlugin {
 impl PluginRegistry {
     fn with_builtin_plugins() -> Self {
         let reminder_plugin: Arc<dyn PikoPlugin> = Arc::new(ReminderPlugin);
+        let memo_plugin: Arc<dyn PikoPlugin> = Arc::new(MemoPlugin);
         let calendar_plugin: Arc<dyn PikoPlugin> = Arc::new(CalendarPlugin);
         let mut plugins = HashMap::new();
         plugins.insert(reminder_plugin.manifest().id, reminder_plugin);
+        plugins.insert(memo_plugin.manifest().id, memo_plugin);
         plugins.insert(calendar_plugin.manifest().id, calendar_plugin);
         Self {
             plugins: Mutex::new(plugins),
@@ -946,10 +1089,31 @@ impl Default for AiSettings {
             provider: "openai-compatible".to_string(),
             base_url: "http://localhost:11434/v1".to_string(),
             model: "gemma4:e4b".to_string(),
+            speech_model: default_speech_model(),
             temperature: 0.7,
             timeout_seconds: 120,
         }
     }
+}
+
+fn default_speech_model() -> String {
+    "sense-voice".to_string()
+}
+
+fn speech_model_definitions() -> &'static [SpeechModelDefinition] {
+    &[SpeechModelDefinition {
+        id: "sense-voice",
+        name: "SenseVoice 中文优化",
+        file_name: "model.int8.onnx",
+        download_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
+        archive_dir: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+    }]
+}
+
+fn speech_model_definition(model_id: &str) -> Option<&'static SpeechModelDefinition> {
+    speech_model_definitions()
+        .iter()
+        .find(|model| model.id == model_id)
 }
 
 fn pet_position_path(app: &AppHandle) -> Option<PathBuf> {
@@ -987,6 +1151,13 @@ fn reminders_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|directory| directory.join("reminders.json"))
 }
 
+fn memos_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("memos.json"))
+}
+
 fn calendar_events_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
@@ -1010,23 +1181,17 @@ fn focus_records_path(app: &AppHandle) -> Option<PathBuf> {
 
 fn read_chat_history(app: &AppHandle) -> Vec<ChatHistoryEntry> {
     chat_history_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .map(|path| storage::read_or_default(&path))
         .unwrap_or_default()
 }
 
 fn persist_chat_history(app: &AppHandle, history: &[ChatHistoryEntry]) -> Result<(), String> {
-    let path = chat_history_path(app).ok_or_else(|| "无法获取历史记录路径".to_string())?;
-    let directory = path
-        .parent()
-        .ok_or_else(|| "无法获取历史记录目录".to_string())?;
-    let json = serde_json::to_string(history).map_err(|error| error.to_string())?;
-
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    fs::write(path, json).map_err(|error| error.to_string())
+    let path = chat_history_path(app).ok_or("无法获取数据路径")?;
+    storage::write(&path, history)
 }
 
 fn append_chat_history(app: &AppHandle, entry: ChatHistoryEntry) -> Result<(), String> {
+    let _transaction = storage::transaction();
     const MAX_CHAT_HISTORY: usize = 50;
 
     let mut history = read_chat_history(app);
@@ -1044,20 +1209,24 @@ fn append_session_chat_history(history: &mut Vec<ChatHistoryEntry>, entry: ChatH
 
 fn read_reminders(app: &AppHandle) -> Vec<Reminder> {
     reminders_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .map(|path| storage::read_or_default(&path))
         .unwrap_or_default()
 }
 
 fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), String> {
-    let path = reminders_path(app).ok_or_else(|| "无法获取提醒记录路径".to_string())?;
-    let directory = path
-        .parent()
-        .ok_or_else(|| "无法获取提醒记录目录".to_string())?;
-    let json = serde_json::to_string(reminders).map_err(|error| error.to_string())?;
+    let path = reminders_path(app).ok_or("无法获取数据路径")?;
+    storage::write(&path, reminders)
+}
 
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    fs::write(path, json).map_err(|error| error.to_string())
+fn read_memos(app: &AppHandle) -> Vec<Memo> {
+    memos_path(app)
+        .map(|path| storage::read_or_default(&path))
+        .unwrap_or_default()
+}
+
+fn persist_memos(app: &AppHandle, memos: &[Memo]) -> Result<(), String> {
+    let path = memos_path(app).ok_or("无法获取数据路径")?;
+    storage::write(&path, memos)
 }
 
 fn read_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
@@ -1067,25 +1236,17 @@ fn read_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
 }
 
 fn read_calendar_events_from_path(path: &Path) -> Vec<CalendarEvent> {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_default()
+    storage::read_or_default(path)
 }
 
 fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<(), String> {
+    let _transaction = storage::transaction();
     let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
     persist_calendar_events_to_path(&path, events)
 }
 
 fn persist_calendar_events_to_path(path: &Path, events: &[CalendarEvent]) -> Result<(), String> {
-    let directory = path
-        .parent()
-        .ok_or_else(|| "无法获取日程记录目录".to_string())?;
-    let json = serde_json::to_string(events).map_err(|error| error.to_string())?;
-
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    fs::write(path, json).map_err(|error| error.to_string())
+    storage::write(path, events)
 }
 
 struct ExternalPluginPackage {
@@ -1224,20 +1385,13 @@ fn execute_wasm_plugin(
 
 fn read_focus_records(app: &AppHandle) -> Vec<FocusRecord> {
     focus_records_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .map(|path| storage::read_or_default(&path))
         .unwrap_or_default()
 }
 
 fn persist_focus_records(app: &AppHandle, records: &[FocusRecord]) -> Result<(), String> {
-    let path = focus_records_path(app).ok_or_else(|| "无法获取专注记录路径".to_string())?;
-    let directory = path
-        .parent()
-        .ok_or_else(|| "无法获取专注记录目录".to_string())?;
-    let json = serde_json::to_string(records).map_err(|error| error.to_string())?;
-
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    fs::write(path, json).map_err(|error| error.to_string())
+    let path = focus_records_path(app).ok_or("无法获取数据路径")?;
+    storage::write(&path, records)
 }
 
 fn unix_timestamp() -> u64 {
@@ -1250,6 +1404,16 @@ fn unix_timestamp() -> u64 {
 fn reminder_id() -> String {
     format!(
         "reminder-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    )
+}
+
+fn memo_id() -> String {
+    format!(
+        "memo-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -1627,6 +1791,18 @@ fn reminder_input_from_value(value: &Value) -> Result<ReminderInput, String> {
     })
 }
 
+fn memo_input_from_value(value: &Value) -> Result<MemoInput, String> {
+    let title = value["title"]
+        .as_str()
+        .ok_or_else(|| "备忘录标题不能为空".to_string())?
+        .to_string();
+    let content = value["content"]
+        .as_str()
+        .ok_or_else(|| "备忘录内容不能为空".to_string())?
+        .to_string();
+    Ok(MemoInput { title, content })
+}
+
 fn calendar_event_input_from_value(value: &Value) -> Result<CalendarEventInput, String> {
     let title = value["title"]
         .as_str()
@@ -1772,6 +1948,17 @@ fn action_draft_from_tool_call(
                 .unwrap_or_default();
             format!("删除提醒「{title}」{due_at}{repeat}")
         }
+        ("piko.memos", "create_memo") => {
+            let input = memo_input_from_value(&call.arguments)?;
+            let preview = summarize_memo(&input.title, &input.content);
+            let category = infer_memo_category(&input.title, &input.content);
+            format!(
+                "创建备忘录「{}」\n分类：{}\n摘要：{}",
+                input.title,
+                memo_category_label(&category),
+                preview
+            )
+        }
         ("piko.calendar", "create_event") => {
             let input = calendar_event_input_from_value(&call.arguments)?;
             let formatted_start = Local
@@ -1865,26 +2052,15 @@ fn today_focus_minutes(records: &[FocusRecord], now: u64) -> u64 {
 
 fn read_settings(app: &AppHandle) -> AppSettings {
     let mut settings: AppSettings = app_settings_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .map(|path| storage::read_or_default(&path))
         .unwrap_or_default();
     settings.has_api_key = read_api_key().is_some();
     settings
 }
 
-fn persist_settings(app: &AppHandle, settings: &AppSettings) {
-    let Some(path) = app_settings_path(app) else {
-        return;
-    };
-    let Some(directory) = path.parent() else {
-        return;
-    };
-    let Ok(json) = serde_json::to_string(settings) else {
-        return;
-    };
-
-    let _ = fs::create_dir_all(directory);
-    let _ = fs::write(path, json);
+fn persist_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
+    let path = app_settings_path(app).ok_or("无法获取设置路径")?;
+    storage::write(&path, settings)
 }
 
 fn keyring_entry() -> Result<keyring::Entry, String> {
@@ -1946,6 +2122,9 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
     }
     if settings.model.trim().is_empty() && !is_local_provider(&settings.provider) {
         return Err("模型名称不能为空".to_string());
+    }
+    if settings.speech_model.trim().is_empty() {
+        return Err("语音识别模型名称不能为空".to_string());
     }
     if !(0.0..=2.0).contains(&settings.temperature) {
         return Err("Temperature 必须在 0 到 2 之间".to_string());
@@ -2025,6 +2204,174 @@ fn chat_url(settings: &AiSettings) -> Result<String, String> {
     }
 }
 
+fn speech_models_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|directory| directory.join("speech-models"))
+        .map_err(|error| format!("无法访问应用数据目录：{error}"))
+}
+
+fn speech_model_path(
+    app: &AppHandle,
+    definition: &SpeechModelDefinition,
+) -> Result<PathBuf, String> {
+    Ok(speech_models_dir(app)?
+        .join(definition.archive_dir)
+        .join(definition.file_name))
+}
+
+fn sense_voice_tokens_path(
+    app: &AppHandle,
+    definition: &SpeechModelDefinition,
+) -> Result<PathBuf, String> {
+    Ok(speech_models_dir(app)?
+        .join(definition.archive_dir)
+        .join("tokens.txt"))
+}
+
+fn speech_model_status(app: &AppHandle, definition: &SpeechModelDefinition) -> SpeechModelStatus {
+    let path = speech_model_path(app, definition).ok();
+    let byte_size = path
+        .as_ref()
+        .and_then(|path| fs::metadata(path).ok())
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let downloaded = byte_size > 0
+        && sense_voice_tokens_path(app, definition)
+            .map(|p| p.exists())
+            .unwrap_or(false);
+    SpeechModelStatus {
+        id: definition.id.to_string(),
+        name: definition.name.to_string(),
+        file_name: definition.file_name.to_string(),
+        download_url: definition.download_url.to_string(),
+        downloaded,
+        byte_size,
+        path: path.map(|path| path.to_string_lossy().to_string()),
+    }
+}
+
+fn read_le_u16(bytes: &[u8], offset: usize) -> Result<u16, String> {
+    let chunk = bytes
+        .get(offset..offset + 2)
+        .ok_or_else(|| "WAV 数据不完整".to_string())?;
+    Ok(u16::from_le_bytes([chunk[0], chunk[1]]))
+}
+
+fn read_le_u32(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let chunk = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| "WAV 数据不完整".to_string())?;
+    Ok(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+}
+
+fn decode_wav_pcm16_mono(bytes: &[u8]) -> Result<(u32, Vec<f32>), String> {
+    if bytes.len() < 44 || bytes.get(0..4) != Some(b"RIFF") || bytes.get(8..12) != Some(b"WAVE") {
+        return Err("录音必须是 WAV 格式。".to_string());
+    }
+
+    let mut offset = 12usize;
+    let mut channels = 0u16;
+    let mut sample_rate = 0u32;
+    let mut bits_per_sample = 0u16;
+    let mut audio_format = 0u16;
+    let mut data_start = 0usize;
+    let mut data_len = 0usize;
+
+    while offset + 8 <= bytes.len() {
+        let chunk_id = &bytes[offset..offset + 4];
+        let chunk_size = read_le_u32(bytes, offset + 4)? as usize;
+        let chunk_start = offset + 8;
+        let chunk_end = chunk_start.saturating_add(chunk_size);
+        if chunk_end > bytes.len() {
+            return Err("WAV chunk 数据不完整。".to_string());
+        }
+        if chunk_id == b"fmt " {
+            audio_format = read_le_u16(bytes, chunk_start)?;
+            channels = read_le_u16(bytes, chunk_start + 2)?;
+            sample_rate = read_le_u32(bytes, chunk_start + 4)?;
+            bits_per_sample = read_le_u16(bytes, chunk_start + 14)?;
+        } else if chunk_id == b"data" {
+            data_start = chunk_start;
+            data_len = chunk_size;
+        }
+        offset = chunk_end + (chunk_size % 2);
+    }
+
+    if audio_format != 1 || bits_per_sample != 16 {
+        return Err("当前内置 Whisper 只支持 PCM16 WAV 录音。".to_string());
+    }
+    if channels == 0 || channels > 2 {
+        return Err("当前只支持单声道或双声道录音。".to_string());
+    }
+    if sample_rate == 0 || data_len == 0 {
+        return Err("WAV 录音没有有效音频数据。".to_string());
+    }
+
+    let frame_count = data_len / (usize::from(channels) * 2);
+    let mut samples = Vec::with_capacity(frame_count);
+    for frame in 0..frame_count {
+        let mut value = 0.0f32;
+        for channel in 0..usize::from(channels) {
+            let sample_offset = data_start + (frame * usize::from(channels) + channel) * 2;
+            let chunk = bytes
+                .get(sample_offset..sample_offset + 2)
+                .ok_or_else(|| "WAV 采样数据不完整。".to_string())?;
+            value += i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / i16::MAX as f32;
+        }
+        samples.push(value / f32::from(channels));
+    }
+    Ok((sample_rate, samples))
+}
+
+fn resample_to_16khz(sample_rate: u32, samples: &[f32]) -> Vec<f32> {
+    const TARGET_SAMPLE_RATE: u32 = 16_000;
+    if sample_rate == TARGET_SAMPLE_RATE || samples.is_empty() {
+        return samples.to_vec();
+    }
+    let ratio = sample_rate as f64 / TARGET_SAMPLE_RATE as f64;
+    let output_len = (samples.len() as f64 / ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(output_len);
+    for index in 0..output_len {
+        let source = index as f64 * ratio;
+        let left = source.floor() as usize;
+        let right = (left + 1).min(samples.len().saturating_sub(1));
+        let fraction = (source - left as f64) as f32;
+        output.push(samples[left] * (1.0 - fraction) + samples[right] * fraction);
+    }
+    output
+}
+
+fn transcribe_with_sense_voice(
+    model_path: PathBuf,
+    tokens_path: PathBuf,
+    audio: Vec<f32>,
+    sample_rate: i32,
+) -> Result<String, String> {
+    use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineSenseVoiceModelConfig};
+
+    let mut config = OfflineRecognizerConfig::default();
+    config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
+        model: Some(model_path.to_string_lossy().into_owned()),
+        language: Some("zh".to_string()),
+        use_itn: true,
+    };
+    config.model_config.tokens = Some(tokens_path.to_string_lossy().into_owned());
+    config.model_config.provider = Some("cpu".to_string());
+    config.model_config.num_threads = 2;
+
+    let recognizer = OfflineRecognizer::create(&config)
+        .ok_or_else(|| "加载 SenseVoice 模型失败：无法创建识别器".to_string())?;
+    let stream = recognizer.create_stream();
+    stream.accept_waveform(sample_rate, &audio);
+    recognizer.decode(&stream);
+    let text = stream
+        .get_result()
+        .map(|result| result.text.trim().to_string())
+        .unwrap_or_default();
+    Ok(text)
+}
+
 fn parse_data_url(data_url: &str) -> Result<(&str, &str), String> {
     let encoded = data_url
         .strip_prefix("data:")
@@ -2080,6 +2427,24 @@ fn monitor_contains(
         && position.y < monitor_position.y + monitor_size.height as i32
 }
 
+fn clamp_pet_physical_position(
+    requested: PhysicalPosition<i32>,
+    window_size: PhysicalSize<u32>,
+    work_area_position: PhysicalPosition<i32>,
+    work_area_size: PhysicalSize<u32>,
+    peek: i32,
+) -> PhysicalPosition<i32> {
+    let x = requested
+        .x
+        .max(work_area_position.x - window_size.width as i32 + peek)
+        .min(work_area_position.x + work_area_size.width as i32 - peek);
+    let y = requested
+        .y
+        .max(work_area_position.y - window_size.height as i32 + peek)
+        .min(work_area_position.y + work_area_size.height as i32 - peek);
+    PhysicalPosition::new(x, y)
+}
+
 fn restore_pet_position(app: &AppHandle) {
     let Some(window) = app.get_webview_window("pet") else {
         return;
@@ -2094,17 +2459,39 @@ fn restore_pet_position(app: &AppHandle) {
         return;
     };
     let position = PhysicalPosition::new(saved.x, saved.y);
-    let is_visible = window
-        .available_monitors()
-        .map(|monitors| {
-            monitors
-                .iter()
-                .any(|monitor| monitor_contains(*monitor.position(), *monitor.size(), position))
-        })
-        .unwrap_or(false);
+    let Ok(monitors) = window.available_monitors() else {
+        return;
+    };
+    let Ok(window_size) = window.outer_size() else {
+        return;
+    };
+    let peek = window
+        .scale_factor()
+        .map(|scale| (PET_PEEK as f64 * scale).round() as i32)
+        .unwrap_or(PET_PEEK)
+        .max(1);
+    let Some(monitor) = monitors
+        .iter()
+        .find(|monitor| monitor_contains(*monitor.position(), *monitor.size(), position))
+        .or_else(|| monitors.first())
+    else {
+        return;
+    };
+    let work_area = monitor.work_area();
+    let clamped = clamp_pet_physical_position(
+        position,
+        window_size,
+        work_area.position,
+        work_area.size,
+        peek,
+    );
+    let _ = window.set_position(clamped);
+}
 
-    if is_visible {
-        let _ = window.set_position(position);
+fn show_pet_on_startup(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("pet") {
+        let _ = window.unminimize();
+        let _ = window.show();
     }
 }
 
@@ -2261,23 +2648,15 @@ fn watch_pet_position(app: &AppHandle) {
     let Some(window) = app.get_webview_window("pet") else {
         return;
     };
-    let revision = Arc::new(AtomicU64::new(0));
     let app = app.clone();
-
-    window.on_window_event(move |event| {
-        if !matches!(event, WindowEvent::Moved(_)) {
-            return;
-        }
-
-        let revision = Arc::clone(&revision);
-        let current = revision.fetch_add(1, Ordering::Relaxed) + 1;
-        let app = app.clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(PET_MOVE_DEBOUNCE_MS));
-            if revision.load(Ordering::Relaxed) == current {
-                save_current_pet_position(&app);
-            }
+    let debounce =
+        debounce::Debouncer::new(Duration::from_millis(PET_MOVE_DEBOUNCE_MS), move || {
+            save_current_pet_position(&app)
         });
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Moved(_)) {
+            debounce.trigger();
+        }
     });
 }
 
@@ -2285,23 +2664,15 @@ fn watch_bubble_resize(app: &AppHandle) {
     let Some(window) = app.get_webview_window("bubble") else {
         return;
     };
-    let revision = Arc::new(AtomicU64::new(0));
     let app = app.clone();
-
-    window.on_window_event(move |event| {
-        if !matches!(event, WindowEvent::Resized(_)) {
-            return;
-        }
-
-        let revision = Arc::clone(&revision);
-        let current = revision.fetch_add(1, Ordering::Relaxed) + 1;
-        let app = app.clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(PET_MOVE_DEBOUNCE_MS));
-            if revision.load(Ordering::Relaxed) == current {
-                save_current_bubble_size(&app);
-            }
+    let debounce =
+        debounce::Debouncer::new(Duration::from_millis(PET_MOVE_DEBOUNCE_MS), move || {
+            save_current_bubble_size(&app)
         });
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Resized(_)) {
+            debounce.trigger();
+        }
     });
 }
 
@@ -2361,6 +2732,20 @@ fn show_and_focus(app: &AppHandle, label: &str) {
     }
 }
 
+fn focus_pet_after_bubble_show(app: &AppHandle) {
+    if let Some(pet_window) = app.get_webview_window("pet") {
+        let _ = pet_window.set_focus();
+    }
+
+    let app = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(40));
+        if let Some(pet_window) = app.get_webview_window("pet") {
+            let _ = pet_window.set_focus();
+        }
+    });
+}
+
 #[tauri::command]
 fn show_bubble(app: AppHandle) {
     show_and_focus(&app, "bubble");
@@ -2374,8 +2759,35 @@ fn hide_bubble(app: AppHandle) {
 }
 
 #[tauri::command]
+fn toggle_bubble(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("bubble") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            // 显示气泡但不抢焦点，保持宠物窗口为焦点窗口
+            // 这样再次点击宠物时可以立即触发切换，不需要先激活窗口
+            place_bubble_near_pet(&app);
+            let _ = window.unminimize();
+            let _ = window.show();
+            focus_pet_after_bubble_show(&app);
+        }
+    }
+}
+
+#[tauri::command]
 fn open_panel(app: AppHandle) {
     show_and_focus(&app, "panel");
+}
+
+#[tauri::command]
+fn toggle_panel(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("panel") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            show_and_focus(&app, "panel");
+        }
+    }
 }
 
 #[tauri::command]
@@ -2622,6 +3034,7 @@ fn list_chat_history(app: AppHandle) -> Vec<ChatHistoryEntry> {
 
 #[tauri::command]
 fn clear_chat_history(app: AppHandle, context: State<'_, ChatContext>) -> Result<(), String> {
+    let _transaction = storage::transaction();
     context
         .0
         .lock()
@@ -2643,13 +3056,15 @@ fn clear_chat_context(context: State<'_, ChatContext>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_bubble_chat_history(context: State<'_, ChatContext>) -> Result<Vec<ChatHistoryEntry>, String> {
+fn get_bubble_chat_history(
+    context: State<'_, ChatContext>,
+) -> Result<Vec<ChatHistoryEntry>, String> {
     let mut entries = context
         .0
         .lock()
         .map_err(|_| "无法读取对话历史".to_string())?
         .clone();
-    entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at));
     entries.truncate(20);
     Ok(entries)
 }
@@ -2745,7 +3160,255 @@ fn list_reminders(app: AppHandle) -> Vec<Reminder> {
     reminders
 }
 
+fn truncate_text(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn memo_category_label(category: &str) -> &'static str {
+    match category {
+        "task" => "任务",
+        "idea" => "想法",
+        "learning" => "学习",
+        "work" => "工作",
+        "life" => "生活",
+        "reference" => "资料",
+        _ => "其他",
+    }
+}
+
+fn infer_memo_category(title: &str, content: &str) -> String {
+    let text = format!("{title}\n{content}").to_lowercase();
+    let rules = [
+        (
+            "task",
+            [
+                "todo", "待办", "任务", "完成", "处理", "跟进", "提交", "检查", "修复", "提醒",
+                "截止",
+            ]
+            .as_slice(),
+        ),
+        (
+            "idea",
+            [
+                "想法", "灵感", "可以", "也许", "方案", "创意", "idea", "假设",
+            ]
+            .as_slice(),
+        ),
+        (
+            "learning",
+            [
+                "学习", "笔记", "知识", "课程", "阅读", "概念", "总结", "复盘", "learn",
+            ]
+            .as_slice(),
+        ),
+        (
+            "work",
+            [
+                "工作", "项目", "会议", "需求", "评审", "客户", "版本", "发布", "prd",
+            ]
+            .as_slice(),
+        ),
+        (
+            "life",
+            [
+                "生活", "购物", "买", "家里", "旅行", "运动", "健康", "吃", "家庭",
+            ]
+            .as_slice(),
+        ),
+        (
+            "reference",
+            [
+                "链接", "资料", "参考", "文档", "地址", "url", "http", "配置", "账号",
+            ]
+            .as_slice(),
+        ),
+    ];
+
+    rules
+        .iter()
+        .find(|(_, keywords)| keywords.iter().any(|keyword| text.contains(keyword)))
+        .map(|(category, _)| (*category).to_string())
+        .unwrap_or_else(|| "other".to_string())
+}
+
+fn summarize_memo(title: &str, content: &str) -> String {
+    let content = content.replace('\n', " ");
+    let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        truncate_text(title, 80)
+    } else if normalized.chars().count() <= 96 {
+        normalized
+    } else {
+        format!("{}...", truncate_text(&normalized, 96))
+    }
+}
+
+fn infer_memo_tags(category: &str, title: &str, content: &str) -> Vec<String> {
+    let text = format!("{title}\n{content}").to_lowercase();
+    let mut tags = vec![memo_category_label(category).to_string()];
+    for (tag, keywords) in [
+        ("紧急", ["紧急", "马上", "今天", "尽快", "asap"].as_slice()),
+        ("会议", ["会议", "meeting", "评审", "同步"].as_slice()),
+        ("代码", ["代码", "bug", "修复", "接口", "api"].as_slice()),
+        ("资料", ["链接", "文档", "参考", "http", "资料"].as_slice()),
+        ("计划", ["计划", "安排", "路线", "步骤"].as_slice()),
+    ] {
+        if keywords.iter().any(|keyword| text.contains(keyword)) {
+            tags.push(tag.to_string());
+        }
+    }
+    tags.sort();
+    tags.dedup();
+    tags.truncate(4);
+    tags
+}
+
+fn memo_from_input(id: String, input: MemoInput, created_at: u64) -> Result<Memo, String> {
+    let title = input.title.trim();
+    let content = input.content.trim();
+    if title.is_empty() {
+        return Err("备忘录标题不能为空".to_string());
+    }
+    if title.chars().count() > 120 {
+        return Err("备忘录标题不能超过 120 个字符".to_string());
+    }
+    if content.is_empty() {
+        return Err("备忘录内容不能为空".to_string());
+    }
+    if content.chars().count() > 8000 {
+        return Err("备忘录内容不能超过 8000 个字符".to_string());
+    }
+
+    let category = infer_memo_category(title, content);
+    let now = unix_timestamp();
+    Ok(Memo {
+        id,
+        title: title.to_string(),
+        content: content.to_string(),
+        summary: summarize_memo(title, content),
+        tags: infer_memo_tags(&category, title, content),
+        category,
+        created_at,
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+fn list_memos(app: AppHandle) -> Vec<Memo> {
+    let mut memos = read_memos(&app);
+    memos.sort_by_key(|memo| std::cmp::Reverse(memo.updated_at));
+    memos
+}
+
+#[tauri::command]
+fn create_memo(app: AppHandle, input: MemoInput) -> Result<Memo, String> {
+    create_memo_record(&app, input)
+}
+
+fn create_memo_record(app: &AppHandle, input: MemoInput) -> Result<Memo, String> {
+    let _transaction = storage::transaction();
+    let now = unix_timestamp();
+    let memo = memo_from_input(memo_id(), input, now)?;
+    let mut memos = read_memos(app);
+    memos.push(memo.clone());
+    persist_memos(app, &memos)?;
+    let _ = app.emit_to("panel", "memos-updated", ());
+    Ok(memo)
+}
+
+#[tauri::command]
+fn update_memo(app: AppHandle, id: String, input: MemoInput) -> Result<Memo, String> {
+    let _transaction = storage::transaction();
+    let mut memos = read_memos(&app);
+    let index = memos
+        .iter()
+        .position(|memo| memo.id == id)
+        .ok_or_else(|| "未找到该备忘录".to_string())?;
+    let created_at = memos[index].created_at;
+    let memo = memo_from_input(id, input, created_at)?;
+    memos[index] = memo.clone();
+    persist_memos(&app, &memos)?;
+    let _ = app.emit_to("panel", "memos-updated", ());
+    Ok(memo)
+}
+
+#[tauri::command]
+fn delete_memo(app: AppHandle, id: String) -> Result<(), String> {
+    let _transaction = storage::transaction();
+    let mut memos = read_memos(&app);
+    let previous_len = memos.len();
+    memos.retain(|memo| memo.id != id);
+    if memos.len() == previous_len {
+        return Err("未找到该备忘录".to_string());
+    }
+    persist_memos(&app, &memos)?;
+    let _ = app.emit_to("panel", "memos-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
+fn summarize_memos(app: AppHandle) -> Vec<MemoSummaryGroup> {
+    let memos = read_memos(&app);
+    let order = [
+        "task",
+        "idea",
+        "learning",
+        "work",
+        "life",
+        "reference",
+        "other",
+    ];
+    let mut groups = Vec::new();
+
+    for category in order {
+        let items = memos
+            .iter()
+            .filter(|memo| memo.category == category)
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            continue;
+        }
+
+        let mut tag_counts: HashMap<String, usize> = HashMap::new();
+        for memo in &items {
+            for tag in &memo.tags {
+                *tag_counts.entry(tag.clone()).or_default() += 1;
+            }
+        }
+        let mut top_tags = tag_counts.into_iter().collect::<Vec<_>>();
+        top_tags.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+
+        let latest_updated_at = items
+            .iter()
+            .map(|memo| memo.updated_at)
+            .max()
+            .unwrap_or_default();
+        let sample_titles = items
+            .iter()
+            .take(3)
+            .map(|memo| memo.title.as_str())
+            .collect::<Vec<_>>()
+            .join("、");
+
+        groups.push(MemoSummaryGroup {
+            category: category.to_string(),
+            count: items.len(),
+            latest_updated_at,
+            summary: format!(
+                "{}类备忘共 {} 条：{}",
+                memo_category_label(category),
+                items.len(),
+                sample_titles
+            ),
+            top_tags: top_tags.into_iter().take(4).map(|(tag, _)| tag).collect(),
+        });
+    }
+
+    groups
+}
+
 fn create_reminder_record(app: &AppHandle, input: ReminderInput) -> Result<Reminder, String> {
+    let _transaction = storage::transaction();
     let title = input.title.trim();
     if title.is_empty() {
         return Err("提醒内容不能为空".to_string());
@@ -2778,6 +3441,7 @@ fn create_reminder_record(app: &AppHandle, input: ReminderInput) -> Result<Remin
 }
 
 fn delete_reminder_record(app: &AppHandle, input: ReminderDeleteInput) -> Result<Reminder, String> {
+    let _transaction = storage::transaction();
     let mut reminders = read_reminders(app);
     let index = reminders
         .iter()
@@ -2815,6 +3479,7 @@ fn create_calendar_event_record_at_path(
     path: &Path,
     input: CalendarEventInput,
 ) -> Result<CalendarEvent, String> {
+    let _transaction = storage::transaction();
     let mut events = read_calendar_events_from_path(path);
     let event = calendar_event_from_input(input)?;
     events.push(event.clone());
@@ -2826,6 +3491,7 @@ fn delete_calendar_event_record(
     app: &AppHandle,
     input: CalendarDeleteInput,
 ) -> Result<CalendarEvent, String> {
+    let _transaction = storage::transaction();
     let mut events = read_calendar_events(app);
     let index = events
         .iter()
@@ -2857,6 +3523,7 @@ fn delete_calendar_event_batch_record_at_path(
     path: &Path,
     input: CalendarDeleteBatchInput,
 ) -> Result<Vec<CalendarEvent>, String> {
+    let _transaction = storage::transaction();
     let mut ids = HashSet::new();
     for event in &input.events {
         if !ids.insert(event.id.as_str()) {
@@ -2922,6 +3589,7 @@ fn create_calendar_event_batch_record(
     app: &AppHandle,
     batch: CalendarEventBatchInput,
 ) -> Result<Vec<CalendarEvent>, String> {
+    let _transaction = storage::transaction();
     let mut events = read_calendar_events(app);
     let mut created = Vec::with_capacity(batch.events.len());
     for input in batch.events {
@@ -2944,6 +3612,7 @@ fn create_calendar_event(
 
 #[tauri::command]
 fn delete_calendar_event(app: AppHandle, id: String) -> Result<(), String> {
+    let _transaction = storage::transaction();
     let mut events = read_calendar_events(&app);
     let previous_len = events.len();
     events.retain(|event| event.id != id);
@@ -3144,6 +3813,7 @@ fn confirm_chat_action(
             "日程已删除。"
         }
         "piko.calendar" => "日程已创建。",
+        "piko.memos" => "备忘录已创建。",
         "piko.reminders" if tool_name == "delete_reminder" => "提醒已删除。",
         _ => "提醒已创建。",
     };
@@ -3172,6 +3842,7 @@ fn reject_chat_action(drafts: State<'_, ActionDrafts>, id: String) -> Result<(),
 
 #[tauri::command]
 fn delete_reminder(app: AppHandle, id: String) -> Result<(), String> {
+    let _transaction = storage::transaction();
     let mut reminders = read_reminders(&app);
     let previous_len = reminders.len();
     reminders.retain(|reminder| reminder.id != id);
@@ -3198,24 +3869,8 @@ fn collect_due_reminders(reminders: &mut [Reminder], now: u64) -> Vec<Reminder> 
     due
 }
 
-fn next_repeat_due(mut due_at: u64, repeat: &str, now: u64) -> u64 {
-    loop {
-        due_at += match repeat {
-            "weekly" => 7 * 24 * 60 * 60,
-            _ => 24 * 60 * 60,
-        };
-        if repeat == "weekdays" {
-            while matches!((due_at / 86_400 + 4) % 7, 0 | 6) {
-                due_at += 24 * 60 * 60;
-            }
-        }
-        if due_at > now {
-            return due_at;
-        }
-    }
-}
-
 fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String> {
+    let _transaction = storage::transaction();
     let now = unix_timestamp();
     let mut reminders = read_reminders(app);
     let due = collect_due_reminders(&mut reminders, now);
@@ -3305,16 +3960,36 @@ fn process_due_calendar_events(app: &AppHandle) -> Result<Vec<CalendarEvent>, St
 fn watch_reminders(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || loop {
-        let _ = process_due_reminders(&app);
-        thread::sleep(Duration::from_secs(1));
+        let revision = storage::revision();
+        if let Err(error) = process_due_reminders(&app) {
+            eprintln!("[reminders] {error}");
+        }
+        let now = unix_timestamp();
+        let delay = read_reminders(&app)
+            .iter()
+            .filter(|item| item.status == "pending")
+            .map(|item| item.due_at.saturating_sub(now).clamp(1, 60))
+            .min()
+            .unwrap_or(60);
+        storage::wait_for_change(revision, Duration::from_secs(delay));
     });
 }
 
 fn watch_calendar_events(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || loop {
-        let _ = process_due_calendar_events(&app);
-        thread::sleep(Duration::from_secs(10));
+        let revision = storage::revision();
+        if let Err(error) = process_due_calendar_events(&app) {
+            eprintln!("[calendar] {error}");
+        }
+        let now = unix_timestamp();
+        let delay = read_calendar_events(&app)
+            .iter()
+            .filter(|item| item.start_at > now)
+            .map(|item| item.start_at.saturating_sub(now).clamp(1, 60))
+            .min()
+            .unwrap_or(60);
+        storage::wait_for_change(revision, Duration::from_secs(delay));
     });
 }
 
@@ -3659,6 +4334,7 @@ fn process_focus_timer(app: &AppHandle, focus: &FocusTimer) -> Result<bool, Stri
     };
 
     if completed.kind == "focus" {
+        let _transaction = storage::transaction();
         let mut records = read_focus_records(app);
         records.push(FocusRecord {
             completed_at: now,
@@ -3957,13 +4633,14 @@ fn clear_text_attachment(attachments: State<'_, TextAttachmentStore>) -> Result<
 
 #[tauri::command]
 fn update_quiet_mode(app: AppHandle, quiet_mode: String) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
     if !["active", "balanced", "minimal"].contains(&quiet_mode.as_str()) {
         return Err("Unsupported quiet mode".to_string());
     }
 
     let mut settings = read_settings(&app);
     settings.quiet_mode = quiet_mode;
-    persist_settings(&app, &settings);
+    persist_settings(&app, &settings)?;
     let _ = app.emit_to("panel", "settings-updated", &settings);
     let _ = app.emit_to("pet", "settings-updated", &settings);
     let _ = app.emit_to("bubble", "settings-updated", &settings);
@@ -3977,6 +4654,7 @@ fn update_preferences(
     awareness: State<'_, app_awareness::ForegroundAppState>,
     input: PreferencesInput,
 ) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
     let companion_name = input.companion_name.trim();
     if companion_name.is_empty() {
         return Err("精灵名称不能为空".to_string());
@@ -3992,7 +4670,7 @@ fn update_preferences(
     settings.companion_name = companion_name.to_string();
     settings.theme = input.theme;
     settings.sensing_paused = input.sensing_paused;
-    persist_settings(&app, &settings);
+    persist_settings(&app, &settings)?;
     if let Ok(mut paused) = awareness.sensing_paused.lock() {
         *paused = settings.sensing_paused;
     }
@@ -4007,6 +4685,7 @@ fn update_work_rhythm_preferences(
     app: AppHandle,
     input: WorkRhythmPreferencesInput,
 ) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
     validate_work_rhythm_preferences(&input)?;
 
     let mut settings = read_settings(&app);
@@ -4018,7 +4697,7 @@ fn update_work_rhythm_preferences(
         normalize_clock_label(&input.break_reminder_quiet_hours_start)?;
     settings.break_reminder_quiet_hours_end =
         normalize_clock_label(&input.break_reminder_quiet_hours_end)?;
-    persist_settings(&app, &settings);
+    persist_settings(&app, &settings)?;
     let _ = app.emit_to("panel", "settings-updated", &settings);
     let _ = app.emit_to("pet", "settings-updated", &settings);
     let _ = app.emit_to("bubble", "settings-updated", &settings);
@@ -4028,10 +4707,16 @@ fn update_work_rhythm_preferences(
 
 #[tauri::command]
 fn update_ai_settings(app: AppHandle, input: AiSettingsInput) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
     let ai = AiSettings {
         provider: input.provider,
         base_url: normalize_base_url(&input.base_url),
         model: input.model.trim().to_string(),
+        speech_model: input
+            .speech_model
+            .unwrap_or_else(default_speech_model)
+            .trim()
+            .to_string(),
         temperature: input.temperature,
         timeout_seconds: input.timeout_seconds,
     };
@@ -4041,8 +4726,133 @@ fn update_ai_settings(app: AppHandle, input: AiSettingsInput) -> Result<AppSetti
     let mut settings = read_settings(&app);
     settings.ai = ai;
     settings.has_api_key = read_api_key().is_some();
-    persist_settings(&app, &settings);
+    persist_settings(&app, &settings)?;
     Ok(settings)
+}
+
+#[tauri::command]
+fn get_speech_model_status(app: AppHandle) -> Vec<SpeechModelStatus> {
+    speech_model_definitions()
+        .iter()
+        .map(|definition| speech_model_status(&app, definition))
+        .collect()
+}
+
+#[tauri::command]
+async fn download_speech_model(
+    app: AppHandle,
+    input: DownloadSpeechModelInput,
+) -> Result<SpeechModelStatus, String> {
+    let definition =
+        speech_model_definition(&input.model_id).ok_or_else(|| "不支持的语音模型".to_string())?;
+    let directory = speech_models_dir(&app)?;
+    fs::create_dir_all(&directory).map_err(|error| format!("创建模型目录失败：{error}"))?;
+
+    if speech_model_status(&app, definition).downloaded {
+        return Ok(speech_model_status(&app, definition));
+    }
+
+    let archive_name = format!("{}.tar.bz2", definition.archive_dir);
+    let temp_path = directory.join(format!("{archive_name}.download"));
+    let final_path = directory.join(&archive_name);
+
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(1800))
+        .build()
+        .map_err(|error| error.to_string())?
+        .get(definition.download_url)
+        .header(reqwest::header::USER_AGENT, "Piko-Desktop-Companion")
+        .send()
+        .await
+        .map_err(|error| format!("下载语音模型失败：{error}"))?
+        .error_for_status()
+        .map_err(|error| format!("下载语音模型失败：{error}"))?;
+    let total_bytes = response.content_length();
+    let mut stream = response.bytes_stream();
+    let mut file =
+        fs::File::create(&temp_path).map_err(|error| format!("创建模型文件失败：{error}"))?;
+    let mut downloaded_bytes = 0u64;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| format!("读取模型下载数据失败：{error}"))?;
+        file.write_all(&chunk)
+            .map_err(|error| format!("写入模型文件失败：{error}"))?;
+        downloaded_bytes += chunk.len() as u64;
+        let progress = SpeechModelDownloadProgress {
+            model_id: definition.id.to_string(),
+            downloaded_bytes,
+            total_bytes,
+            percent: total_bytes.map(|total| downloaded_bytes as f32 / total as f32),
+            completed: false,
+        };
+        let _ = app.emit_to("panel", "speech-model-download-progress", progress);
+    }
+    file.flush()
+        .map_err(|error| format!("保存模型文件失败：{error}"))?;
+    drop(file);
+
+    fs::rename(&temp_path, &final_path).map_err(|error| format!("保存压缩包失败：{error}"))?;
+    let decoder = bzip2::read::BzDecoder::new(
+        fs::File::open(&final_path).map_err(|error| format!("打开压缩包失败：{error}"))?,
+    );
+    let mut archive = tar::Archive::new(decoder);
+    archive
+        .unpack(&directory)
+        .map_err(|error| format!("解压模型失败：{error}"))?;
+    fs::remove_file(&final_path).map_err(|error| format!("清理压缩包失败：{error}"))?;
+
+    let progress = SpeechModelDownloadProgress {
+        model_id: definition.id.to_string(),
+        downloaded_bytes,
+        total_bytes,
+        percent: Some(1.0),
+        completed: true,
+    };
+    let _ = app.emit_to("panel", "speech-model-download-progress", progress);
+    Ok(speech_model_status(&app, definition))
+}
+
+#[tauri::command]
+async fn transcribe_voice_input(
+    app: AppHandle,
+    input: VoiceTranscriptionInput,
+) -> Result<VoiceTranscriptionOutput, String> {
+    let (_, encoded_audio) = parse_data_url(&input.audio_data_url)?;
+    let audio_bytes = BASE64_STANDARD
+        .decode(encoded_audio)
+        .map_err(|error| format!("录音数据解析失败：{error}"))?;
+    if audio_bytes.is_empty() {
+        return Err("没有录到语音内容。".to_string());
+    }
+    if audio_bytes.len() > 25 * 1024 * 1024 {
+        return Err("录音太长，请缩短后重试。".to_string());
+    }
+
+    let definition = speech_model_definitions()
+        .first()
+        .ok_or_else(|| "未配置语音模型".to_string())?;
+    if !speech_model_status(&app, definition).downloaded {
+        return Err(format!(
+            "请先在设置中下载 {}，再使用语音输入。",
+            definition.name
+        ));
+    }
+
+    let (sample_rate, samples) = decode_wav_pcm16_mono(&audio_bytes)?;
+    let audio = resample_to_16khz(sample_rate, &samples);
+    let model_path = speech_model_path(&app, definition)?;
+    let tokens_path = sense_voice_tokens_path(&app, definition)?;
+    let text = tauri::async_runtime::spawn_blocking(move || {
+        transcribe_with_sense_voice(model_path, tokens_path, audio, 16_000)
+    })
+    .await
+    .map_err(|error| format!("本地语音转写任务失败：{error}"))??;
+
+    if text.is_empty() {
+        return Err("语音模型没有识别到文字。".to_string());
+    }
+    Ok(VoiceTranscriptionOutput { text })
 }
 
 #[tauri::command]
@@ -4107,9 +4917,10 @@ async fn generate_pet_companion_response(
 
 #[tauri::command]
 fn update_html_preview_enabled(app: AppHandle, enabled: bool) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
     let mut settings = read_settings(&app);
     settings.html_preview_enabled = enabled;
-    persist_settings(&app, &settings);
+    persist_settings(&app, &settings)?;
     let _ = app.emit_to("panel", "settings-updated", &settings);
     let _ = app.emit_to("pet", "settings-updated", &settings);
     let _ = app.emit_to("bubble", "settings-updated", &settings);
@@ -4143,798 +4954,6 @@ async fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
         .collect())
 }
 
-fn extract_model_ids(provider: &str, body: &Value) -> Vec<String> {
-    let (items, field) = if provider_kind(provider) == Some(ProviderKind::Gemini) {
-        (body["models"].as_array(), "name")
-    } else {
-        (body["data"].as_array(), "id")
-    };
-    items
-        .into_iter()
-        .flatten()
-        .filter_map(|model| model[field].as_str())
-        .map(|id| id.trim_start_matches("models/").to_string())
-        .collect()
-}
-
-fn system_prompt(companion_name: &str, memory_context: Option<&str>) -> String {
-    let now = Local::now();
-    let base = format!(
-        "你是桌面 AI 宠物精灵 {companion_name}。回答应清晰、简洁、友好。当前本地时间是 {}。可以使用已提供的工具读取、创建、检查冲突，或提出提醒和日程草稿。查询提醒时优先调用 list_reminders；查询、删除或定位日程时优先调用 list_events。删除提醒或日程前，先用列表工具找到具体目标，再生成待确认草稿并等待用户确认。删除多个或全部日程时必须使用 delete_event_batch，一次提交全部目标 ID。规划多条日程时优先使用批量创建工具。工具中的时间参数必须使用带时区的 ISO 8601 字符串，例如 2026-06-02T15:00:00+08:00，不要自行计算 Unix 时间戳。写入和删除操作必须等待用户确认；不要声称已经执行未实际执行的电脑操作。遇到时间歧义时先向用户追问。",
-        now.format("%Y-%m-%d %H:%M:%S %:z")
-    );
-
-    match memory_context {
-        Some(ctx) if !ctx.is_empty() => {
-            format!(
-                "{}\n\n--- 长期记忆上下文 ---\n{}\n--- 记忆结束 ---",
-                base, ctx
-            )
-        }
-        _ => base,
-    }
-}
-
-fn prompt_requests_local_action(prompt: &str) -> bool {
-    let normalized = prompt.to_lowercase();
-    let has_local_target = ["提醒", "日程", "calendar", "reminder"]
-        .iter()
-        .any(|term| normalized.contains(term));
-    let has_mutation = [
-        "创建", "新增", "添加", "设置", "安排", "删除", "移除", "取消", "create", "add", "set",
-        "schedule", "delete", "remove", "cancel",
-    ]
-    .iter()
-    .any(|term| normalized.contains(term));
-
-    has_local_target && has_mutation
-}
-
-fn looks_like_unconfirmed_local_action_response(response: &str) -> bool {
-    let normalized = response.to_lowercase();
-    let has_local_target = ["提醒", "日程", "calendar", "reminder"]
-        .iter()
-        .any(|term| normalized.contains(term));
-    let has_mutation = [
-        "创建", "新增", "添加", "设置", "安排", "删除", "移除", "取消", "create", "add", "set",
-        "schedule", "delete", "remove", "cancel",
-    ]
-    .iter()
-    .any(|term| normalized.contains(term));
-    let claims_success = [
-        "已",
-        "成功",
-        "完成",
-        "created",
-        "scheduled",
-        "deleted",
-        "removed",
-        "done",
-    ]
-    .iter()
-    .any(|term| normalized.contains(term));
-
-    has_local_target && has_mutation && claims_success
-}
-
-fn openai_user_content(prompt: &str, screenshot: Option<&ScreenCapture>) -> Value {
-    if let Some(screenshot) = screenshot {
-        json!([
-            { "type": "text", "text": prompt.trim() },
-            { "type": "image_url", "image_url": { "url": screenshot.data_url } }
-        ])
-    } else {
-        json!(prompt.trim())
-    }
-}
-
-fn anthropic_user_content(
-    prompt: &str,
-    screenshot: Option<&ScreenCapture>,
-) -> Result<Value, String> {
-    if let Some(screenshot) = screenshot {
-        let (media_type, data) = parse_data_url(&screenshot.data_url)?;
-        Ok(json!([
-            { "type": "text", "text": prompt.trim() },
-            { "type": "image", "source": { "type": "base64", "media_type": media_type, "data": data } }
-        ]))
-    } else {
-        Ok(json!(prompt.trim()))
-    }
-}
-
-fn gemini_user_parts(prompt: &str, screenshot: Option<&ScreenCapture>) -> Result<Value, String> {
-    let mut parts = vec![json!({ "text": prompt.trim() })];
-    if let Some(screenshot) = screenshot {
-        let (mime_type, data) = parse_data_url(&screenshot.data_url)?;
-        parts.push(json!({ "inlineData": { "mimeType": mime_type, "data": data } }));
-    }
-    Ok(Value::Array(parts))
-}
-
-fn chat_request_body(
-    settings: &AppSettings,
-    recent_history: &[ChatHistoryEntry],
-    prompt: &str,
-    screenshot: Option<&ScreenCapture>,
-    memory_context: Option<&str>,
-) -> Result<Value, String> {
-    match provider_kind(&settings.ai.provider) {
-        Some(ProviderKind::OpenAiCompatible) => {
-            let mut messages = vec![json!({
-                "role": "system",
-                "content": system_prompt(&settings.companion_name, memory_context)
-            })];
-            for entry in recent_history.iter().take(10).rev() {
-                messages.push(json!({ "role": "user", "content": entry.prompt }));
-                messages.push(json!({ "role": "assistant", "content": entry.response }));
-            }
-            messages.push(
-                json!({ "role": "user", "content": openai_user_content(prompt, screenshot) }),
-            );
-            Ok(json!({
-                "model": settings.ai.model,
-                "messages": messages,
-                "temperature": settings.ai.temperature,
-                "stream": true
-            }))
-        }
-        Some(ProviderKind::Anthropic) => {
-            let mut messages = Vec::new();
-            for entry in recent_history.iter().take(10).rev() {
-                messages.push(json!({ "role": "user", "content": entry.prompt }));
-                messages.push(json!({ "role": "assistant", "content": entry.response }));
-            }
-            messages.push(
-                json!({ "role": "user", "content": anthropic_user_content(prompt, screenshot)? }),
-            );
-            Ok(json!({
-                "model": settings.ai.model,
-                "system": system_prompt(&settings.companion_name, memory_context),
-                "messages": messages,
-                "temperature": settings.ai.temperature,
-                "max_tokens": 4096,
-                "stream": true
-            }))
-        }
-        Some(ProviderKind::Gemini) => {
-            let mut contents = Vec::new();
-            for entry in recent_history.iter().take(10).rev() {
-                contents.push(json!({ "role": "user", "parts": [{ "text": entry.prompt }] }));
-                contents.push(json!({ "role": "model", "parts": [{ "text": entry.response }] }));
-            }
-            contents
-                .push(json!({ "role": "user", "parts": gemini_user_parts(prompt, screenshot)? }));
-            Ok(json!({
-                "systemInstruction": { "parts": [{ "text": system_prompt(&settings.companion_name, memory_context) }] },
-                "contents": contents,
-                "generationConfig": { "temperature": settings.ai.temperature }
-            }))
-        }
-        None => Err("不支持的模型服务类型".to_string()),
-    }
-}
-
-fn pet_companion_generation_url(settings: &AiSettings) -> Result<String, String> {
-    let base_url = normalize_base_url(&settings.base_url);
-    match provider_kind(&settings.provider) {
-        Some(ProviderKind::OpenAiCompatible) => Ok(format!("{base_url}/chat/completions")),
-        Some(ProviderKind::Anthropic) => Ok(format!("{base_url}/messages")),
-        Some(ProviderKind::Gemini) => Ok(format!(
-            "{base_url}/models/{}:generateContent",
-            settings.model.trim_start_matches("models/")
-        )),
-        None => Err("不支持的模型服务类型".to_string()),
-    }
-}
-
-fn pet_companion_generation_system_prompt(companion_name: &str) -> String {
-    format!(
-        "你是桌面宠物 {companion_name} 的语言与动作节奏助手。你必须只输出严格 JSON，不要 Markdown，不要解释，不要代码块。\
-返回对象字段如下：message(string，可选但在 dialogue 模式下必须提供)、motionStyle(string，必须是 soft/balanced/lively 之一，可选但在 idleProfile 模式下必须提供)、behaviorProfile(string，必须是 calm/balanced/playful/curious/focused 之一，可选但在 behaviorProfile 模式下必须提供)、behaviorPriority(array[string]，元素必须是 calm/balanced/playful/curious/focused/neutral 之一，可选但在 behaviorPriority 模式下必须提供)。\
-message 必须是自然、简短、中文、像宠物对用户说的话，避免模板味。motionStyle 的含义是：soft=更安静更轻缓，balanced=均衡，lively=更活跃更靠近。"
-    )
-}
-
-fn pet_companion_generation_user_prompt(input: &PetCompanionGenerationInput) -> String {
-    let context = input.context.as_deref().unwrap_or("无额外上下文");
-    let interaction_type = input.interaction_type.as_deref().unwrap_or("none");
-    let personality_summary = input
-        .personality_summary
-        .as_deref()
-        .unwrap_or("无额外人格描述");
-    format!(
-        "请为桌面宠物生成响应。\
-mode: {}\
-scene: {}\
-bondTier: {}\
-interactionType: {}\
-personality: {{\"energy\": {}, \"humor\": {}, \"curiosity\": {}}}\
-personalitySummary: {}\
-context: {}\
-\
-规则：\
-1. 只返回 JSON 对象。\
-2. dialogue 模式下优先给出 message。\
-3. idleProfile 模式下优先给出 motionStyle。\
-4. behaviorProfile 模式下优先给出 behaviorProfile。\
-5. behaviorPriority 模式下优先给出 behaviorPriority。\
-6. 内容要自然，不要像说明书。\
-7. 不要输出多余字段。",
-        input.mode,
-        input.scene,
-        input.bond_tier,
-        interaction_type,
-        input.personality.energy,
-        input.personality.humor,
-        input.personality.curiosity,
-        personality_summary,
-        context
-    )
-}
-
-fn extract_completion_text(provider: &str, body: &Value) -> Option<String> {
-    match provider_kind(provider) {
-        Some(ProviderKind::Anthropic) => {
-            let joined = body["content"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|item| item["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("");
-            let trimmed = joined.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        }
-        Some(ProviderKind::Gemini) => {
-            let joined = body["candidates"][0]["content"]["parts"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|part| part["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("");
-            let trimmed = joined.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        }
-        _ => body["choices"][0]["message"]["content"]
-            .as_str()
-            .map(str::trim)
-            .map(str::to_string)
-            .or_else(|| {
-                body["choices"][0]["message"]["content"]
-                    .as_array()
-                    .and_then(|parts| {
-                        let mut joined = String::new();
-                        for part in parts {
-                            if let Some(text) = part["text"].as_str() {
-                                joined.push_str(text);
-                            }
-                        }
-                        let trimmed = joined.trim().to_string();
-                        if trimmed.is_empty() {
-                            None
-                        } else {
-                            Some(trimmed)
-                        }
-                    })
-            }),
-    }
-}
-
-fn extract_json_fragment(text: &str) -> Option<&str> {
-    let start = text.find('{')?;
-    let end = text.rfind('}')?;
-    if end <= start {
-        return None;
-    }
-    Some(&text[start..=end])
-}
-
-fn parse_pet_companion_generation_output(
-    provider: &str,
-    body: &Value,
-) -> Result<PetCompanionGenerationOutput, String> {
-    let raw_text = extract_completion_text(provider, body)
-        .ok_or_else(|| "模型没有返回有效内容".to_string())?;
-    let trimmed = raw_text.trim();
-    let fragment = extract_json_fragment(trimmed).unwrap_or(trimmed);
-    let parsed: Value = serde_json::from_str(fragment)
-        .map_err(|error| format!("模型返回的 JSON 无法解析：{error}"))?;
-
-    let message = parsed["message"]
-        .as_str()
-        .map(|value| value.trim().to_string());
-    let motion_style = parsed["motionStyle"]
-        .as_str()
-        .and_then(|value| match value.trim() {
-            "soft" | "balanced" | "lively" => Some(value.trim().to_string()),
-            _ => None,
-        });
-    let behavior_profile =
-        parsed["behaviorProfile"]
-            .as_str()
-            .and_then(|value| match value.trim() {
-                "calm" | "balanced" | "playful" | "curious" | "focused" => {
-                    Some(value.trim().to_string())
-                }
-                _ => None,
-            });
-    let behavior_priority = parsed["behaviorPriority"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str())
-                .map(str::trim)
-                .filter(|value| {
-                    matches!(
-                        *value,
-                        "calm" | "balanced" | "playful" | "curious" | "focused" | "neutral"
-                    )
-                })
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .filter(|items| !items.is_empty());
-
-    Ok(PetCompanionGenerationOutput {
-        message,
-        motion_style,
-        behavior_profile,
-        behavior_priority,
-    })
-}
-
-fn extract_chat_deltas(provider: &str, line: &str) -> Vec<String> {
-    let Some(data) = line.strip_prefix("data:") else {
-        return Vec::new();
-    };
-    let data = data.trim();
-    if data.is_empty() || data == "[DONE]" {
-        return Vec::new();
-    }
-
-    let Ok(body) = serde_json::from_str::<Value>(data) else {
-        return Vec::new();
-    };
-    match provider_kind(provider) {
-        Some(ProviderKind::Anthropic) => body["delta"]["text"]
-            .as_str()
-            .map(str::to_string)
-            .into_iter()
-            .collect(),
-        Some(ProviderKind::Gemini) => body["candidates"][0]["content"]["parts"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|part| part["text"].as_str())
-            .map(str::to_string)
-            .collect(),
-        _ => body["choices"][0]["delta"]["content"]
-            .as_str()
-            .map(str::to_string)
-            .into_iter()
-            .collect(),
-    }
-}
-
-fn emit_chat_event(app: &AppHandle, event: ChatEvent) {
-    let _ = app.emit_to("bubble", "chat-event", event.clone());
-    let _ = app.emit_to("pet", "chat-event", event);
-}
-
-async fn send_chat_request(
-    client: &reqwest::Client,
-    settings: &AiSettings,
-    body: &Value,
-) -> Result<reqwest::Response, String> {
-    request_builder(client, settings, reqwest::Method::POST, chat_url(settings)?)
-        .json(body)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())
-}
-
-struct StreamChatInput<'a> {
-    request_id: &'a str,
-    prompt: &'a str,
-    history_prompt: &'a str,
-    screenshot: Option<&'a ScreenCapture>,
-    working: bool,
-    cancelled: &'a AtomicBool,
-}
-
-async fn stream_chat(
-    app: &AppHandle,
-    context: &ChatContext,
-    registry: &PluginRegistry,
-    drafts: &ActionDrafts,
-    memory_db: &memory::MemoryDb,
-    cache: &memory::CandidateCache,
-    input: StreamChatInput<'_>,
-) -> Result<StreamChatOutcome, String> {
-    let StreamChatInput {
-        request_id,
-        prompt,
-        history_prompt,
-        screenshot,
-        working,
-        cancelled,
-    } = input;
-    let settings = read_settings(app);
-    validate_ai_settings(&settings.ai)?;
-    if prompt.trim().is_empty() {
-        return Err("问题不能为空".to_string());
-    }
-
-    emit_chat_event(
-        app,
-        ChatEvent::Started {
-            request_id: request_id.to_string(),
-            working,
-        },
-    );
-
-    let client = http_client(&settings.ai)?;
-    let recent_history = context
-        .0
-        .lock()
-        .map_err(|_| "无法读取当前对话上下文".to_string())?
-        .clone();
-
-    // Build memory context from relevant long-term memories
-    let memory_context_text = memory_db
-        .build_context(memory::BuildContextInput {
-            current_query: Some(prompt.to_string()),
-            window_type: None,
-            limit: Some(10),
-        })
-        .ok()
-        .map(|memories| {
-            memories
-                .iter()
-                .map(|m| format!("- [{}] {}: {}", m.memory_type.label(), m.title, m.content))
-                .collect::<Vec<_>>()
-                .join("\n")
-        });
-
-    let mut request_body = chat_request_body(
-        &settings,
-        &recent_history,
-        prompt,
-        screenshot,
-        memory_context_text.as_deref(),
-    )?;
-    append_provider_tools(
-        &mut request_body,
-        &settings.ai.provider,
-        &registry.manifests(),
-    );
-    let mut assistant_response = String::new();
-    let mut sequence = 0;
-
-    for tool_round in 0..=4 {
-        let response = match send_chat_request(&client, &settings.ai, &request_body).await {
-            Ok(response) => response,
-            Err(_) if tool_round == 0 && request_body.get("tools").is_some() => {
-                if prompt_requests_local_action(prompt) {
-                    return Err(
-                        "当前模型服务没有接受工具调用，不能安全创建或删除日程/提醒。请换用支持工具调用的模型服务后重试。"
-                            .to_string(),
-                    );
-                }
-                request_body
-                    .as_object_mut()
-                    .ok_or_else(|| "模型请求格式无效".to_string())?
-                    .remove("tools");
-                send_chat_request(&client, &settings.ai, &request_body).await?
-            }
-            Err(error) => return Err(error),
-        };
-        let mut response = response;
-        let mut buffer = String::new();
-        let mut openai_tool_calls = Vec::new();
-
-        while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
-            if cancelled.load(Ordering::Relaxed) {
-                return Ok(StreamChatOutcome::Cancelled);
-            }
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(newline) = buffer.find('\n') {
-                let line = buffer.drain(..=newline).collect::<String>();
-                let line = line.trim();
-                update_provider_tool_calls(&settings.ai.provider, line, &mut openai_tool_calls);
-                for text in extract_chat_deltas(&settings.ai.provider, line) {
-                    assistant_response.push_str(&text);
-                    sequence += 1;
-                    emit_chat_event(
-                        app,
-                        ChatEvent::Delta {
-                            request_id: request_id.to_string(),
-                            sequence,
-                            text,
-                        },
-                    );
-                }
-            }
-        }
-        update_provider_tool_calls(&settings.ai.provider, buffer.trim(), &mut openai_tool_calls);
-        for text in extract_chat_deltas(&settings.ai.provider, buffer.trim()) {
-            assistant_response.push_str(&text);
-            sequence += 1;
-            emit_chat_event(
-                app,
-                ChatEvent::Delta {
-                    request_id: request_id.to_string(),
-                    sequence,
-                    text,
-                },
-            );
-        }
-
-        if openai_tool_calls.is_empty() {
-            if looks_like_unconfirmed_local_action_response(&assistant_response) {
-                return Err(
-                    "模型没有返回可执行的工具调用，因此不会创建或删除日程/提醒。请重试，或换用支持工具调用的模型。"
-                        .to_string(),
-                );
-            }
-            break;
-        }
-        if tool_round == 4 {
-            return Err("模型工具调用次数过多".to_string());
-        }
-
-        let calls =
-            coalesce_calendar_delete_calls(decode_openai_tool_calls(registry, openai_tool_calls)?);
-        let mut tool_results = Vec::new();
-        for (id, call) in calls {
-            let manifest = registry.tool_manifest(&call)?;
-            if manifest.confirmation != "never"
-                || matches!(manifest.risk.as_str(), "write" | "sensitive")
-            {
-                let draft = action_draft_from_tool_call(&call, Local::now())?;
-                drafts
-                    .0
-                    .lock()
-                    .map_err(|_| "无法保存待确认动作".to_string())?
-                    .insert(draft.id.clone(), draft.clone());
-                emit_chat_event(
-                    app,
-                    ChatEvent::ActionProposed {
-                        request_id: request_id.to_string(),
-                        draft,
-                    },
-                );
-                return Ok(StreamChatOutcome::ActionProposed);
-            }
-            let result = registry.execute(app, call.clone())?;
-            tool_results.push((id, call, result));
-        }
-        append_provider_tool_results(&mut request_body, &settings.ai.provider, &tool_results)?;
-    }
-
-    let history_entry = ChatHistoryEntry {
-        id: request_id.to_string(),
-        prompt: history_prompt.to_string(),
-        response: assistant_response,
-        created_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-    };
-    append_chat_history(app, history_entry.clone())?;
-    let mut session_history = context
-        .0
-        .lock()
-        .map_err(|_| "无法更新当前对话上下文".to_string())?;
-    append_session_chat_history(&mut session_history, history_entry.clone());
-    let _ = app.emit_to("panel", "chat-history-updated", ());
-
-    if cancelled.load(Ordering::Relaxed) {
-        return Ok(StreamChatOutcome::Cancelled);
-    }
-
-    emit_chat_event(
-        app,
-        ChatEvent::Completed {
-            request_id: request_id.to_string(),
-        },
-    );
-    let (confirmed_count, pending_count) = match memory::auto_capture_from_chat(
-        memory_db,
-        cache,
-        &history_entry.prompt,
-        &history_entry.response,
-    ) {
-        Ok(counts) => counts,
-        Err(error) => {
-            eprintln!("memory capture failed: {error}");
-            (0, 0)
-        }
-    };
-
-    if confirmed_count > 0 || pending_count > 0 {
-        let _ = app.emit(
-            "memory-captured",
-            &MemoryCapturedEvent {
-                confirmed: confirmed_count,
-                pending: pending_count,
-            },
-        );
-    }
-
-    Ok(StreamChatOutcome::Completed)
-}
-
-fn build_attachment_prompt(
-    prompt: &str,
-    attachment_action: Option<&str>,
-    attachment: Option<&TextAttachment>,
-) -> Result<(String, String), String> {
-    let prompt = prompt.trim();
-    let Some(action) = attachment_action else {
-        if prompt.is_empty() {
-            return Err("问题不能为空".to_string());
-        }
-        return Ok((prompt.to_string(), prompt.to_string()));
-    };
-    let attachment = attachment.ok_or_else(|| "请先拖入一个文本文件".to_string())?;
-    let instruction = match action {
-        "summarize" => "请总结附件内容，先给出要点，再给出简短结论。",
-        "translate" => "请将附件内容翻译成中文；如果原文已经是中文，则翻译成英文。",
-        "explain" => "请解释附件内容，指出结构、关键概念和需要注意的地方。",
-        _ => return Err("不支持的附件处理动作".to_string()),
-    };
-    let user_note = if prompt.is_empty() {
-        String::new()
-    } else {
-        format!("\n\n用户补充要求：{prompt}")
-    };
-    Ok((
-        format!(
-            "{instruction}\n\n附件名称：{}\n\n附件正文：\n{}{}",
-            attachment.display_name, attachment.content, user_note
-        ),
-        format!(
-            "[附件{}] {}",
-            attachment_action_label(action),
-            attachment.display_name
-        ),
-    ))
-}
-
-fn attachment_action_label(action: &str) -> &str {
-    match action {
-        "summarize" => "总结",
-        "translate" => "翻译",
-        "explain" => "解释",
-        _ => "处理",
-    }
-}
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-async fn chat_start(
-    app: AppHandle,
-    requests: State<'_, ChatRequests>,
-    context: State<'_, ChatContext>,
-    drafts: State<'_, ActionDrafts>,
-    attachments: State<'_, TextAttachmentStore>,
-    captures: State<'_, ScreenCaptureStore>,
-    memory_db: State<'_, memory::MemoryDb>,
-    cache: State<'_, memory::CandidateCache>,
-    input: ChatStartInput,
-) -> Result<(), String> {
-    let attachment = attachments
-        .0
-        .lock()
-        .map_err(|_| "无法读取附件状态".to_string())?
-        .clone();
-    let prompt = if input.include_screenshot.unwrap_or(false) && input.prompt.trim().is_empty() {
-        "请描述截图中的内容，并指出值得注意的信息。"
-    } else {
-        &input.prompt
-    };
-    let (model_prompt, history_prompt) = build_attachment_prompt(
-        prompt,
-        input.attachment_action.as_deref(),
-        attachment.as_ref(),
-    )?;
-    let screenshot = if input.include_screenshot.unwrap_or(false) {
-        captures
-            .0
-            .lock()
-            .map_err(|_| "无法读取截图状态".to_string())?
-            .clone()
-            .ok_or_else(|| "请先框选截图区域".to_string())?
-            .into()
-    } else {
-        None
-    };
-    let history_prompt = if screenshot.is_some() {
-        format!("[截图] {history_prompt}")
-    } else {
-        history_prompt
-    };
-    let working = input.attachment_action.is_some() || screenshot.is_some();
-    let cancelled = Arc::new(AtomicBool::new(false));
-    requests
-        .0
-        .lock()
-        .map_err(|_| "无法记录当前生成任务".to_string())?
-        .insert(input.request_id.clone(), Arc::clone(&cancelled));
-
-    let registry = app.state::<PluginRegistry>();
-    let result = stream_chat(
-        &app,
-        &context,
-        &registry,
-        &drafts,
-        &memory_db,
-        &cache,
-        StreamChatInput {
-            request_id: &input.request_id,
-            prompt: &model_prompt,
-            history_prompt: &history_prompt,
-            screenshot: screenshot.as_ref(),
-            working,
-            cancelled: &cancelled,
-        },
-    )
-    .await;
-    if let Ok(mut active) = requests.0.lock() {
-        active.remove(&input.request_id);
-    }
-
-    if matches!(result, Ok(StreamChatOutcome::Cancelled)) {
-        emit_chat_event(
-            &app,
-            ChatEvent::Cancelled {
-                request_id: input.request_id.clone(),
-            },
-        );
-    }
-    if let Err(message) = &result {
-        emit_chat_event(
-            &app,
-            ChatEvent::Failed {
-                request_id: input.request_id,
-                message: message.clone(),
-            },
-        );
-    }
-    result.map(|_| ())
-}
-
-#[tauri::command]
-fn chat_cancel(requests: State<'_, ChatRequests>, request_id: String) -> Result<(), String> {
-    if let Some(cancelled) = requests
-        .0
-        .lock()
-        .map_err(|_| "无法读取当前生成任务".to_string())?
-        .get(&request_id)
-    {
-        cancelled.store(true, Ordering::Relaxed);
-    }
-    Ok(())
-}
-
-// ============================================================================
-// ONBOARDING COMMANDS
-// ============================================================================
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OnboardingStatus {
@@ -4959,33 +4978,36 @@ fn complete_onboarding(
     companion_name: String,
     onboarding_version: String,
 ) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
     let mut settings = read_settings(&app);
     settings.onboarding_completed = true;
     settings.onboarding_version = onboarding_version;
     if !companion_name.trim().is_empty() {
         settings.companion_name = companion_name;
     }
-    persist_settings(&app, &settings);
+    persist_settings(&app, &settings)?;
     let _ = app.emit("settings-updated", &settings);
     Ok(settings)
 }
 
 #[tauri::command]
 fn skip_onboarding(app: AppHandle) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
     let mut settings = read_settings(&app);
     settings.onboarding_completed = true;
     settings.onboarding_version = "skipped".to_string();
-    persist_settings(&app, &settings);
+    persist_settings(&app, &settings)?;
     let _ = app.emit("settings-updated", &settings);
     Ok(settings)
 }
 
 #[tauri::command]
 fn reset_onboarding(app: AppHandle) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
     let mut settings = read_settings(&app);
     settings.onboarding_completed = false;
     settings.onboarding_version = String::new();
-    persist_settings(&app, &settings);
+    persist_settings(&app, &settings)?;
     let _ = app.emit("settings-updated", &settings);
     Ok(settings)
 }
@@ -5117,6 +5139,23 @@ fn sync_calendar_to_system(app: AppHandle) -> Result<serde_json::Value, String> 
 
 #[tauri::command]
 fn sync_calendar_from_system(app: AppHandle) -> Result<serde_json::Value, String> {
+    // Write debug log to temp file for troubleshooting
+    let log_path = std::env::temp_dir().join("piko_calendar_debug.log");
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .and_then(|mut f| {
+            std::io::Write::write_all(
+                &mut f,
+                format!("[{ts}] sync_calendar_from_system: command invoked\n").as_bytes(),
+            )
+        });
+
     let since = crate::sync::calendar_sync::read_sync_mappings(&app)
         .iter()
         .map(|mapping| mapping.last_synced_at)
@@ -5372,7 +5411,7 @@ pub fn run() {
             app.state::<PluginRegistry>()
                 .register_declarative_plugins(app.handle());
             let settings = read_settings(app.handle());
-            persist_settings(app.handle(), &settings);
+            persist_settings(app.handle(), &settings)?;
             if let Ok(mut paused) = app
                 .state::<app_awareness::ForegroundAppState>()
                 .sensing_paused
@@ -5384,6 +5423,7 @@ pub fn run() {
                 show_and_focus(app.handle(), "panel");
             }
             restore_pet_position(app.handle());
+            show_pet_on_startup(app.handle());
             watch_pet_position(app.handle());
             restore_bubble_size(app.handle());
             watch_bubble_resize(app.handle());
@@ -5404,7 +5444,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             show_bubble,
             hide_bubble,
+            toggle_bubble,
             open_panel,
+            toggle_panel,
             show_pet,
             hide_pet,
             begin_screen_capture,
@@ -5435,6 +5477,11 @@ pub fn run() {
             list_reminders,
             create_reminder,
             delete_reminder,
+            list_memos,
+            create_memo,
+            update_memo,
+            delete_memo,
+            summarize_memos,
             list_calendar_events,
             create_calendar_event,
             delete_calendar_event,
@@ -5452,11 +5499,14 @@ pub fn run() {
             update_preferences,
             update_work_rhythm_preferences,
             update_ai_settings,
+            get_speech_model_status,
+            download_speech_model,
+            transcribe_voice_input,
             update_html_preview_enabled,
             generate_pet_companion_response,
             list_models,
-            chat_start,
-            chat_cancel,
+            chat::chat_start,
+            chat::chat_cancel,
             get_bubble_chat_history,
             get_onboarding_status,
             complete_onboarding,
@@ -6002,6 +6052,8 @@ mod tests {
         assert!(prompt_requests_local_action("帮我创建明天下午 3 点的日程"));
         assert!(prompt_requests_local_action("delete this calendar event"));
         assert!(prompt_requests_local_action("设置一个喝水提醒"));
+        assert!(prompt_requests_local_action("帮我记一下备忘：买牛奶"));
+        assert!(prompt_requests_local_action("添加备忘：周五提交报告"));
         assert!(!prompt_requests_local_action("解释一下怎么规划日程"));
         assert!(!prompt_requests_local_action("今天适合做什么"));
     }
@@ -6013,6 +6065,12 @@ mod tests {
         ));
         assert!(looks_like_unconfirmed_local_action_response(
             "Reminder deleted successfully."
+        ));
+        assert!(looks_like_unconfirmed_local_action_response(
+            "好的，我已经帮你记到备忘录了 ✅"
+        ));
+        assert!(looks_like_unconfirmed_local_action_response(
+            "已创建备忘：买牛奶"
         ));
         assert!(!looks_like_unconfirmed_local_action_response(
             "我可以帮你创建日程，但需要先确认。"
@@ -6131,19 +6189,24 @@ mod tests {
     #[test]
     fn registers_the_builtin_business_plugins() {
         let manifests = PluginRegistry::with_builtin_plugins().manifests();
-        assert_eq!(manifests.len(), 2);
+        assert_eq!(manifests.len(), 3);
         assert_eq!(manifests[0].id, "piko.calendar");
-        assert_eq!(manifests[1].id, "piko.reminders");
+        assert_eq!(manifests[1].id, "piko.memos");
+        assert_eq!(manifests[2].id, "piko.reminders");
         assert_eq!(manifests[0].tools[0].name, "list_events");
         assert_eq!(manifests[0].tools[4].name, "delete_event");
         assert_eq!(manifests[0].tools[5].name, "delete_event_batch");
         assert_eq!(manifests[0].tools[5].risk, "sensitive");
         assert_eq!(manifests[0].tools[5].confirmation, "always");
-        assert_eq!(manifests[1].tools[0].name, "list_reminders");
-        assert_eq!(manifests[1].tools[2].name, "delete_reminder");
+        assert_eq!(manifests[1].tools[0].name, "list_memos");
+        assert_eq!(manifests[1].tools[1].name, "create_memo");
         assert_eq!(manifests[1].tools[1].risk, "write");
-        assert_eq!(manifests[1].tools[2].risk, "sensitive");
-        assert_eq!(manifests[1].tools[2].confirmation, "always");
+        assert_eq!(manifests[1].tools[1].confirmation, "always");
+        assert_eq!(manifests[2].tools[0].name, "list_reminders");
+        assert_eq!(manifests[2].tools[2].name, "delete_reminder");
+        assert_eq!(manifests[2].tools[1].risk, "write");
+        assert_eq!(manifests[2].tools[2].risk, "sensitive");
+        assert_eq!(manifests[2].tools[2].confirmation, "always");
     }
 
     #[test]
@@ -6586,8 +6649,15 @@ mod tests {
 
     #[test]
     fn weekdays_skip_weekends() {
-        let friday = 86_400;
-        assert_eq!(next_repeat_due(friday, "weekdays", friday), 4 * 86_400);
+        let friday = chrono::Local
+            .with_ymd_and_hms(2026, 9, 25, 7, 0, 0)
+            .unwrap()
+            .timestamp() as u64;
+        let monday = chrono::Local
+            .with_ymd_and_hms(2026, 9, 28, 7, 0, 0)
+            .unwrap()
+            .timestamp() as u64;
+        assert_eq!(next_repeat_due(friday, "weekdays", friday), monday);
     }
 
     #[test]

@@ -1,16 +1,10 @@
+import { Coffee, LayoutGrid, MessageCircle } from "lucide-react";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { AppSettings, PetVisualEvent, QuietMode, Theme } from "../../types/appTypes";
 import {
   PetSprite,
   defaultAppSettings,
-  defaultLive2DModelId,
-  getNextLive2DModelId,
-  getNextPetVisualStyle,
-  live2dModelOptions,
-  setLive2DModelId,
-  setPetVisualStyle,
   useCurrentTime,
-  useLive2DModelId,
   usePetVisualStyle,
 } from "../app/appShared";
 import { runCommand } from "../app/appRuntime";
@@ -82,13 +76,11 @@ function PetWindowContent() {
   const isResting = petState.mode === "resting";
   const resetTimer = useRef<number | undefined>(undefined);
   const [mouseDelta, setMouseDelta] = useState({ x: 0, y: 0 });
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const petRef = useRef<HTMLDivElement>(null);
   const [attentionPulse, setAttentionPulse] = useState(false);
   const idleStartRef = useRef(Date.now());
   const petVisualStyle = usePetVisualStyle();
-  const live2dModelId = useLive2DModelId();
   const noticeTimer = useRef<number>(0);
   const behaviorNoticeTimer = useRef<number>(0);
 
@@ -107,7 +99,7 @@ function PetWindowContent() {
 
   const idleRhythm = useMemo(() => getIdleRhythmProfile(motionStyle), [motionStyle]);
 
-  const { isDragging, handlers: dragHandlers } = usePetDrag({
+  const { isDragging, isLongPressing, handlers: dragHandlers } = usePetDrag({
     onDragEnd: (distance) => {
       handleHumanInteraction({
         type: "drag_end",
@@ -125,9 +117,6 @@ function PetWindowContent() {
     },
     onClick: () => {
       handleHumanInteraction({ type: "click", timestamp: Date.now() });
-    },
-    onLongPress: (position) => {
-      setContextMenu({ x: position.x, y: position.y });
     },
   });
 
@@ -194,7 +183,11 @@ function PetWindowContent() {
       void getPetSpeechForInteraction(event.type, bondTier, livePersonality, describePersonality(livePersonality)).then((message) => {
         setBubbleCompanionMessage(message);
       });
-      void runCommand("show_bubble");
+      // 点击交互始终切换对话框显隐：第一次点击打开，第二次点击收起
+      void runCommand(event.type === "click" ? "toggle_bubble" : "show_bubble");
+    } else if (event.type === "click") {
+      // 即使没有触发宠物语音，点击仍然切换对话框
+      void runCommand("toggle_bubble");
     }
 
     if (result.openPanel) {
@@ -398,17 +391,6 @@ function PetWindowContent() {
   }, []);
 
   useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    window.addEventListener("click", close);
-    window.addEventListener("scroll", close);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("scroll", close);
-    };
-  }, [contextMenu]);
-
-  useEffect(() => {
     if (petState.mode === "idle" && quietMode !== "minimal") {
       return scheduleFidget();
     }
@@ -477,7 +459,7 @@ function PetWindowContent() {
       )}
       <div
         ref={petRef}
-        className={`pet pet--${petVisualStyle} pet--${petState.mode} pet--bond-${bondTier} pet-reaction--${petState.reaction}${isDragOver ? " is-drag-over" : ""}${isDragging ? " is-dragging" : ""}${attentionPulse ? " is-attention-pulse" : ""}`}
+        className={`pet pet--${petVisualStyle} pet--${petState.mode} pet--bond-${bondTier} pet-reaction--${petState.reaction}${isDragOver ? " is-drag-over" : ""}${isDragging ? " is-dragging" : ""}${isLongPressing ? " is-long-pressing" : ""}${attentionPulse ? " is-attention-pulse" : ""}`}
         aria-label="拖动 Piko"
         onMouseEnter={() => {
           handleHumanInteraction({
@@ -537,17 +519,10 @@ function PetWindowContent() {
           setMouseDelta({ x: dx, y: dy });
         }}
         onMouseLeave={() => setMouseDelta({ x: 0, y: 0 })}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          handleHumanInteraction({
-            type: "double_click",
-            timestamp: Date.now(),
-          });
-        }}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          setContextMenu({ x: event.clientX, y: event.clientY });
+          void runCommand("toggle_panel");
         }}
       >
         <PetSprite
@@ -559,107 +534,12 @@ function PetWindowContent() {
         <time className="pet-clock" aria-label={`当前时间 ${currentTime}`}>
           {currentTime}
         </time>
-        <span className={`pet-emotion pet-emotion--${petState.emotion}`} aria-hidden="true" />
       </div>
-      <div className="pet-actions">
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => {
-            handleHumanInteraction({
-              type: "chat_open",
-              timestamp: Date.now(),
-            });
-          }}
-        >
-          对话
-        </button>
-        <button className="icon-button" type="button" onClick={() => runCommand("open_panel")}>
-          面板
-        </button>
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => handleHumanInteraction({
-            type: isResting ? "user_idle_ended" : "user_idle_started",
-            timestamp: Date.now(),
-          })}
-        >
-          {isResting ? "唤醒" : "休息"}
-        </button>
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => {
-            if (petVisualStyle === "character") {
-              const nextModelId = getNextLive2DModelId(live2dModelId);
-              const nextModelLabel = live2dModelOptions.find((option) => option.value === nextModelId)?.label ?? "官方模型";
-              setLive2DModelId(nextModelId);
-              showPetNotice(`已切换到 ${nextModelLabel}`);
-            } else {
-              setLive2DModelId(defaultLive2DModelId);
-              setPetVisualStyle("character");
-              const modelLabel = live2dModelOptions.find((option) => option.value === defaultLive2DModelId)?.label ?? "官方模型";
-              showPetNotice(`已切换到 ${modelLabel}`);
-            }
-          }}
-        >
-          {petVisualStyle === "character" ? "换模型" : "官方"}
-        </button>
-      </div>
-      {contextMenu && (
-        <div
-          className="pet-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              runCommand("show_bubble");
-              setContextMenu(null);
-            }}
-          >
-            对话
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              runCommand("open_panel");
-              setContextMenu(null);
-            }}
-          >
-            面板
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              dispatch({ type: isResting ? "WAKE" : "REST" });
-              setContextMenu(null);
-            }}
-          >
-            {isResting ? "唤醒" : "休息"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setPetVisualStyle(getNextPetVisualStyle(petVisualStyle));
-              setContextMenu(null);
-            }}
-          >
-            切换形象
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              runCommand("hide_pet");
-              setContextMenu(null);
-            }}
-          >
-            隐藏
-          </button>
-        </div>
-      )}
+      <nav className="pet-actions" aria-label="伙伴快捷操作" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" aria-label="对话" title="对话" onClick={() => void runCommand("show_bubble")}><MessageCircle size={16} /></button>
+        <button type="button" aria-label="休息" title="休息五分钟" onClick={() => void runCommand("start_break", { minutes: 5 })}><Coffee size={16} /></button>
+        <button type="button" aria-label="面板" title="打开面板" onClick={() => void runCommand("open_panel")}><LayoutGrid size={16} /></button>
+      </nav>
     </main>
   );
 }

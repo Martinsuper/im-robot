@@ -283,7 +283,7 @@ export function LiveCharacterPet({
   const themeStateRef = useRef<{ theme: keyof typeof POSE_CLIPS; previous: keyof typeof POSE_CLIPS; startedAt: number }>({
     theme: "idle",
     previous: "idle",
-    startedAt: performance.now(),
+    startedAt: 0,
   });
   const [ready, setReady] = useState(false);
 
@@ -323,7 +323,7 @@ export function LiveCharacterPet({
       themeStateRef.current = {
         theme: nextTheme,
         previous: currentTheme,
-        startedAt: performance.now(),
+        startedAt: 0,
       };
     }
   }, [mode, emotion, reaction]);
@@ -383,8 +383,8 @@ export function LiveCharacterPet({
       const sourceRatio = source.w / source.h;
       const poseScale = poseTransform.scale;
       const fitScale = 0.9;
-      let renderW = Math.min(widthPx * globalScale, heightPx * sourceRatio * globalScale) * fitScale * poseScale;
-      let renderH = renderW / sourceRatio;
+      const renderW = Math.min(widthPx * globalScale, heightPx * sourceRatio * globalScale) * fitScale * poseScale;
+      const renderH = renderW / sourceRatio;
 
       const bob = Math.sin(time * (pose === "sleepy" ? 0.001 : 0.0021)) * (pose === "sleepy" ? 3 : pose === "celebrate" ? 7 : 4);
       const sway = Math.sin(time * (pose === "playful" ? 0.003 : 0.0012)) * (pose === "playful" ? 5 : 1.7);

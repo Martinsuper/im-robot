@@ -8,9 +8,15 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "build": "tsc && vite build",
+    "build:app": "bash scripts/build.sh",
+    "build:app:clean": "bash scripts/build.sh --clean",
+    "build:app:debug": "bash scripts/build.sh --debug",
     "smoke:install": "node scripts/release-smoke.mjs",
+    "test:build": "bash scripts/test-build.sh",
+    "test:build:full": "bash scripts/test-build.sh --full",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "lint": "eslint src"
   },
   "dependencies": {
     "@hazart-pkg/live2d-core": "^1.0.1",
@@ -20,6 +26,7 @@
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2",
     "katex": "^0.17.0",
+    "lucide-react": "^1.47.0",
     "pixi.js": "^8.19.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -30,6 +37,7 @@
     "untitled-pixi-live2d-engine": "^1.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@playwright/test": "^1.60.0",
     "@tauri-apps/cli": "^2",
     "@types/node": "^25.9.2",
@@ -37,14 +45,19 @@
     "@types/react-dom": "^19.1.6",
     "@typescript-eslint/eslint-plugin": "^8.60.1",
     "@typescript-eslint/parser": "^8.60.1",
-    "@vitejs/plugin-react": "^4.6.0",
+    "@vitejs/plugin-react": "^6.0.2",
     "eslint": "^9.39.4",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "prettier": "^3.8.3",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
+    "typescript-eslint": "^8.70.1",
+    "vite": "^8.0.16",
     "vitest": "^4.1.7"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true,
+    "fsevents@2.3.2": true
   }
 }

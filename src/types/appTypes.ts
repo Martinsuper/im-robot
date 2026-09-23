@@ -2,6 +2,7 @@ export interface AiSettings {
   provider: string;
   baseUrl: string;
   model: string;
+  speechModel: string;
   temperature: number;
   timeoutSeconds: number;
 }
@@ -26,6 +27,24 @@ export interface AppSettings {
 
 export interface ModelInfo {
   id: string;
+}
+
+export interface SpeechModelStatus {
+  id: string;
+  name: string;
+  fileName: string;
+  downloadUrl: string;
+  downloaded: boolean;
+  byteSize: number;
+  path?: string;
+}
+
+export interface SpeechModelDownloadProgress {
+  modelId: string;
+  downloadedBytes: number;
+  totalBytes?: number;
+  percent?: number;
+  completed: boolean;
 }
 
 export interface UpdateStatus {
@@ -80,6 +99,27 @@ export interface Reminder {
   repeat: ReminderRepeat;
 }
 
+export type MemoCategory = "task" | "idea" | "learning" | "work" | "life" | "reference" | "other";
+
+export interface Memo {
+  id: string;
+  title: string;
+  content: string;
+  category: MemoCategory;
+  summary: string;
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface MemoSummaryGroup {
+  category: MemoCategory;
+  count: number;
+  latestUpdatedAt: number;
+  summary: string;
+  topTags: string[];
+}
+
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -101,7 +141,7 @@ export interface InstalledPlugin {
 
 export type AttachmentAction = "summarize" | "translate" | "explain";
 export type Theme = "sage" | "blue" | "peach";
-export type PanelTab = "companion" | "settings" | "reminders" | "calendar" | "history" | "memory" | "about";
+export type PanelTab = "companion" | "settings" | "reminders" | "calendar" | "memos" | "history" | "memory" | "about";
 export type ReminderRepeat = "none" | "daily" | "weekly" | "weekdays";
 
 export interface OnboardingStatus {

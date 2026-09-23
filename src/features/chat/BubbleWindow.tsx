@@ -1,8 +1,9 @@
-import { FormEvent, isValidElement, type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { HistoryItem, InlineToolbar, MarkdownContent, WelcomeState, textForSpeech } from "./ChatPresentation";
+import { ArrowUp, Mic, Paperclip, ScanLine, Square, X } from "lucide-react";
+import { FormEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { ActionConfirmationCard, getConfirmationChoices } from "./ActionConfirmationCard";
 import { getBubbleCompanionMessage } from "./bubbleMessage";
@@ -11,218 +12,12 @@ import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { extractHtmlPreviewSource, HtmlPreviewFrame } from "./HtmlPreviewFrame";
-import ReactMarkdown from "react-markdown";
-import rehypeKatex from "rehype-katex";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
-import "katex/dist/katex.min.css";
 
-function extractMarkdownText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(extractMarkdownText).join("");
-  if (isValidElement<{ children?: ReactNode }>(node)) return extractMarkdownText(node.props.children);
-  return "";
-}
+type VoiceTranscriptionOutput = {
+  text: string;
+};
 
-function textForSpeech(text: string) {
-  return text
-    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{1F1E6}-\u{1F1FF}‍︎️⃣]/gu, "");
-}
-
-function MarkdownContent({ children }: { children: string }) {
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
-      components={{
-        a: ({ children: linkText, href }) => {
-          const isSafe = Boolean(href && /^https?:\/\//i.test(href));
-          return (
-            <a
-              href={isSafe ? href : undefined}
-              onClick={(event) => {
-                event.preventDefault();
-                if (isSafe && href) void openUrl(href);
-              }}
-              rel="noreferrer"
-            >
-              {linkText}
-            </a>
-          );
-        },
-        img: ({ alt, src }) => <img className="markdown-image" alt={alt ?? ""} src={src} />,
-        pre: ({ children: code }) => (
-          <div className="markdown-code-block">
-            <button
-              type="button"
-              onClick={() => void navigator.clipboard.writeText(extractMarkdownText(code).replace(/\n$/, ""))}
-            >
-              复制代码
-            </button>
-            <pre>{code}</pre>
-          </div>
-        ),
-      }}
-    >
-      {children}
-    </ReactMarkdown>
-  );
-}
-
-function formatTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-}
-
-function truncate(text: string, max: number): string {
-  const cleaned = text.replace(/\n+/g, " ").trim();
-  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
-}
-
-// --- Sub-components ---
-
-function InlineToolbar({
-  message,
-  isSpeaking,
-  copyFeedback,
-  htmlPreviewEnabled,
-  onCopy,
-  onSpeech,
-  onSave,
-  onUpdateHtmlPreview,
-  onClearContext,
-  onOpenPanel,
-}: {
-  message: string;
-  isSpeaking: boolean;
-  copyFeedback: boolean;
-  htmlPreviewEnabled: boolean;
-  onCopy: () => void;
-  onSpeech: () => void;
-  onSave: () => void;
-  onUpdateHtmlPreview: (enabled: boolean) => void;
-  onClearContext: () => void;
-  onOpenPanel: () => void;
-}) {
-  if (!message.trim()) return null;
-  return (
-    <div className="inline-toolbar">
-      <button
-        type="button"
-        className={`inline-toolbar__btn${copyFeedback ? " inline-toolbar__btn--feedback" : ""}`}
-        onClick={onCopy}
-        title="复制结果"
-      >
-        {copyFeedback ? "✓" : "📋"}
-      </button>
-      <button
-        type="button"
-        className={`inline-toolbar__btn${isSpeaking ? " inline-toolbar__btn--active" : ""}`}
-        onClick={onSpeech}
-        title={isSpeaking ? "停止朗读" : "朗读回复"}
-      >
-        {isSpeaking ? "🔊⏹" : "🔊"}
-      </button>
-      <button type="button" className="inline-toolbar__btn" onClick={onSave} title="保存回复">
-        💾
-      </button>
-      <details className="inline-more-menu" data-no-drag>
-        <summary className="inline-toolbar__btn" title="更多">⋯</summary>
-        <div>
-          <button
-            type="button"
-            className={htmlPreviewEnabled ? "is-active" : ""}
-            onClick={() => onUpdateHtmlPreview(!htmlPreviewEnabled)}
-          >
-            HTML 预览
-          </button>
-          <button type="button" onClick={onClearContext}>
-            清空上下文
-          </button>
-          <button type="button" onClick={onOpenPanel}>
-            打开面板
-          </button>
-        </div>
-      </details>
-    </div>
-  );
-}
-
-function HistoryItem({
-  entry,
-  isExpanded,
-  onToggle,
-}: {
-  entry: ChatHistoryEntry;
-  isExpanded: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className={`bubble-thread__history-item${isExpanded ? " bubble-thread__history-item--expanded" : ""}`}>
-      <button type="button" className="bubble-thread__history-toggle" onClick={onToggle}>
-        <span className="bubble-thread__history-arrow">{isExpanded ? "▾" : "▸"}</span>
-        <span className="bubble-thread__history-prompt">{truncate(entry.prompt, 30)}</span>
-        <span className="bubble-thread__history-time">{formatTime(entry.createdAt)}</span>
-      </button>
-      {isExpanded ? (
-        <div className="bubble-thread__history-body">
-          <div className="bubble-thread__user-bubble bubble-thread__user-bubble--history">
-            {entry.prompt}
-          </div>
-          <div className="bubble-thread__ai-card bubble-thread__ai-card--history">
-            <div className="bubble-thread__ai-sprite">
-              <PetSprite mode="idle" compact />
-            </div>
-            <div className="bubble-thread__ai-content">
-              <MarkdownContent>{entry.response}</MarkdownContent>
-            </div>
-          </div>
-          <div className="inline-toolbar">
-            <button
-              type="button"
-              className="inline-toolbar__btn"
-              onClick={() => void navigator.clipboard.writeText(entry.response)}
-              title="复制"
-            >
-              📋
-            </button>
-            <button
-              type="button"
-              className="inline-toolbar__btn"
-              onClick={() => {
-                if (!("speechSynthesis" in window)) return;
-                const spoken = textForSpeech(entry.response).trim();
-                if (!spoken) return;
-                window.speechSynthesis.cancel();
-                const utterance = new SpeechSynthesisUtterance(spoken);
-                utterance.lang = "zh-CN";
-                window.speechSynthesis.speak(utterance);
-              }}
-              title="朗读"
-            >
-              🔊
-            </button>
-          </div>
-        </div>
-      ) : (
-        <p className="bubble-thread__history-response">
-          ↳ {truncate(entry.response, 40)}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function WelcomeState({ companionName, message }: { companionName: string; message: string }) {
-  return (
-    <div className="bubble-welcome">
-      <PetSprite mode="idle" />
-      <p className="bubble-welcome__greeting">
-        {message || `你好，我是 ${companionName}。今天想一起完成什么？`}
-      </p>
-    </div>
-  );
-}
+const WHISPER_SAMPLE_RATE = 16000;
 
 // --- Main Component ---
 
@@ -239,6 +34,8 @@ export function BubbleWindow() {
   const [screenshot, setScreenshot] = useState<ScreenshotPreview>();
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
   const [speechError, setSpeechError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [contextNotice, setContextNotice] = useState("");
@@ -262,6 +59,13 @@ export function BubbleWindow() {
   const skeletonHideTimer = useRef<number | undefined>(undefined);
   const receivedFirstDelta = useRef(false);
   const threadScrollRef = useRef<HTMLDivElement>(null);
+  const promptInputRef = useRef<HTMLInputElement>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceAudioContextRef = useRef<AudioContext | null>(null);
+  const voiceProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const voiceSamplesRef = useRef<Float32Array[]>([]);
+  const voiceSampleRateRef = useRef(WHISPER_SAMPLE_RATE);
   const confirmationChoices = pendingAction ? getConfirmationChoices(pendingAction) : [];
   const skeletonLineCount = pendingPromptSummary.length > 80 ? 4 : pendingPromptSummary.length > 24 ? 3 : 2;
   const skeletonLines = Array.from({ length: skeletonLineCount }, (_, index) => {
@@ -333,6 +137,8 @@ export function BubbleWindow() {
 
   useEffect(() => {
     return () => {
+      stopVoiceRecording(false);
+      voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
       if (isTauriRuntime) void runCommand("stop_local_speech");
       clearSkeletonHideTimer();
@@ -364,7 +170,14 @@ export function BubbleWindow() {
       setScreenshot(event.payload);
     });
     const unlistenFocus = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (focused) refreshScreenshot();
+      if (focused) {
+        refreshScreenshot();
+        // 窗口获得焦点后延迟聚焦输入框，避免抢焦导致点击宠物窗口需要多次点击
+        const timer = window.setTimeout(() => {
+          promptInputRef.current?.focus();
+        }, 80);
+        return () => window.clearTimeout(timer);
+      }
     });
     return () => {
       void unlisten.then((dispose) => {
@@ -657,6 +470,143 @@ export function BubbleWindow() {
     setIsSpeaking(true);
   }
 
+  function appendSpeechText(base: string, text: string) {
+    const normalizedText = text.trim();
+    if (!normalizedText) return base;
+    if (!base.trim()) return normalizedText;
+    return `${base.trimEnd()} ${normalizedText}`;
+  }
+
+  function encodeWav(samples: Float32Array[], sampleRate: number) {
+    const sampleCount = samples.reduce((sum, chunk) => sum + chunk.length, 0);
+    const buffer = new ArrayBuffer(44 + sampleCount * 2);
+    const view = new DataView(buffer);
+    let offset = 0;
+    const writeString = (value: string) => {
+      for (let index = 0; index < value.length; index += 1) {
+        view.setUint8(offset, value.charCodeAt(index));
+        offset += 1;
+      }
+    };
+    writeString("RIFF");
+    view.setUint32(offset, 36 + sampleCount * 2, true); offset += 4;
+    writeString("WAVE");
+    writeString("fmt ");
+    view.setUint32(offset, 16, true); offset += 4;
+    view.setUint16(offset, 1, true); offset += 2;
+    view.setUint16(offset, 1, true); offset += 2;
+    view.setUint32(offset, sampleRate, true); offset += 4;
+    view.setUint32(offset, sampleRate * 2, true); offset += 4;
+    view.setUint16(offset, 2, true); offset += 2;
+    view.setUint16(offset, 16, true); offset += 2;
+    writeString("data");
+    view.setUint32(offset, sampleCount * 2, true); offset += 4;
+    for (const chunk of samples) {
+      for (const sample of chunk) {
+        const clamped = Math.max(-1, Math.min(1, sample));
+        view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+        offset += 2;
+      }
+    }
+    return new Blob([buffer], { type: "audio/wav" });
+  }
+
+  function blobToDataUrl(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error ?? new Error("无法读取录音数据。"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function stopVoiceStream() {
+    voiceProcessorRef.current?.disconnect();
+    voiceSourceRef.current?.disconnect();
+    void voiceAudioContextRef.current?.close();
+    voiceProcessorRef.current = null;
+    voiceSourceRef.current = null;
+    voiceAudioContextRef.current = null;
+    voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
+    voiceStreamRef.current = null;
+  }
+
+  function stopVoiceRecording(shouldTranscribe = true) {
+    const samples = voiceSamplesRef.current;
+    const sampleRate = voiceSampleRateRef.current;
+    voiceSamplesRef.current = [];
+    stopVoiceStream();
+    setIsListening(false);
+    if (!shouldTranscribe) return;
+    if (!samples.length) {
+      setSpeechError("没有录到语音内容。");
+      return;
+    }
+    const blob = encodeWav(samples, sampleRate);
+    void transcribeVoiceBlob(blob);
+  }
+
+  async function transcribeVoiceBlob(blob: Blob) {
+    if (blob.size <= 44) {
+      setSpeechError("没有录到语音内容。");
+      return;
+    }
+    setIsTranscribingVoice(true);
+    setSpeechError("");
+    try {
+      const audioDataUrl = await blobToDataUrl(blob);
+      const result = await runCommand<VoiceTranscriptionOutput>("transcribe_voice_input", {
+        input: { audioDataUrl },
+      });
+      setPrompt((current) => appendSpeechText(current, result.text));
+      promptInputRef.current?.focus();
+    } catch (error) {
+      setSpeechError(`语音转文字失败：${String(error)}`);
+    } finally {
+      setIsTranscribingVoice(false);
+    }
+  }
+
+  async function toggleVoiceInput() {
+    setSpeechError("");
+    if (isListening) {
+      stopVoiceRecording();
+      return;
+    }
+    if (!isTauriRuntime) {
+      setSpeechError("浏览器预览无法调用本地语音模型，请在桌面应用中使用。");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || !window.AudioContext) {
+      setSpeechError("当前环境不支持麦克风录音。");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      voiceSamplesRef.current = [];
+      voiceSampleRateRef.current = audioContext.sampleRate;
+      processor.onaudioprocess = (event) => {
+        voiceSamplesRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      };
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      voiceStreamRef.current = stream;
+      voiceAudioContextRef.current = audioContext;
+      voiceSourceRef.current = source;
+      voiceProcessorRef.current = processor;
+      setIsListening(true);
+      promptInputRef.current?.focus();
+    } catch (error) {
+      setIsListening(false);
+      stopVoiceStream();
+      setSpeechError(`无法启动录音：${String(error)}`);
+    }
+  }
+
   async function clearAttachment() {
     await runCommand("clear_text_attachment");
     setAttachment(undefined);
@@ -768,14 +718,14 @@ export function BubbleWindow() {
             onClick={() => runCommand("hide_bubble")}
             aria-label="关闭"
           >
-            ×
+            <X size={17} />
           </button>
         </div>
       </header>
 
       {/* Layer 2: Thread Area */}
       <section className="bubble-thread" ref={threadScrollRef}>
-        {showWelcome && <WelcomeState companionName={companionName} message={getBubbleCompanionMessage() || ""} />}
+        {showWelcome && <WelcomeState companionName={companionName} message={getBubbleCompanionMessage() || ""} onSuggest={(suggestion) => { setPrompt(suggestion); promptInputRef.current?.focus(); }} />}
 
         {chatHistory.length > 0 && (
           <div className="bubble-thread__history">
@@ -916,26 +866,36 @@ export function BubbleWindow() {
         <form className="prompt-form" onSubmit={submit}>
           <div className="prompt-tools" aria-label="输入工具">
             <button type="button" onClick={() => void chooseAttachment()} aria-label="选择文件" title="选择文件">
-              +
+              <Paperclip size={17} />
             </button>
             <button type="button" onClick={() => runCommand("begin_screen_capture")} aria-label="截图提问" title="截图提问">
-              □
+              <ScanLine size={17} />
+            </button>
+            <button
+              type="button"
+              className={isListening ? "is-active" : ""}
+              disabled={isTranscribingVoice}
+              onClick={() => void toggleVoiceInput()}
+              aria-label={isListening ? "停止语音输入" : isTranscribingVoice ? "正在转写语音" : "开始语音输入"}
+              title={isListening ? "停止语音输入" : isTranscribingVoice ? "正在转写语音" : "语音输入"}
+            >
+              {isListening ? <Square size={14} /> : <Mic size={17} />}
             </button>
           </div>
           <input
-            autoFocus
+            ref={promptInputRef}
             value={prompt}
             onChange={(event) => setPrompt(event.currentTarget.value)}
             placeholder={attachment || screenshot ? "可补充处理要求" : "输入问题，或描述一个任务"}
             aria-label="发送给 Piko 的问题"
           />
           {isThinking ? (
-            <button type="button" className="prompt-form__stop" onClick={cancel} title="停止生成">
-              ■
+            <button type="button" className="prompt-form__stop" onClick={cancel} title="停止生成" aria-label="停止生成">
+              <Square size={15} />
             </button>
           ) : (
-            <button type="submit" disabled={!prompt.trim() && !attachment && !screenshot}>
-              ➤
+            <button type="submit" aria-label="发送消息" disabled={!prompt.trim() && !attachment && !screenshot}>
+              <ArrowUp size={19} />
             </button>
           )}
         </form>

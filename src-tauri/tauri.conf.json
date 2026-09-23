@@ -14,6 +14,7 @@
     "windows": [
       {
         "label": "pet",
+        "url": "index.html?view=pet",
         "title": "Piko",
         "width": 260,
         "height": 300,
@@ -21,10 +22,12 @@
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "visible": false
       },
       {
         "label": "bubble",
+        "url": "index.html?view=bubble",
         "title": "Piko Quick Chat",
         "width": 480,
         "height": 420,
@@ -33,12 +36,13 @@
         "minHeight": 300,
         "decorations": false,
         "transparent": true,
-        "alwaysOnTop": false,
+        "alwaysOnTop": true,
         "skipTaskbar": true,
         "visible": false
       },
       {
         "label": "panel",
+        "url": "index.html?view=panel",
         "title": "Piko Assistant",
         "width": 400,
         "height": 700,
@@ -49,6 +53,7 @@
       },
       {
         "label": "capture",
+        "url": "index.html?view=capture",
         "title": "Piko Screenshot",
         "width": 800,
         "height": 600,
@@ -73,6 +78,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

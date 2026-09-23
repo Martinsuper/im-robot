@@ -18,13 +18,21 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
+tokio-util = "0.7"
+parking_lot = "0.12"
+tempfile = "3"
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api", "tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 keyring = "3"
-reqwest = { version = "0.13", default-features = false, features = ["charset", "http2", "json", "native-tls", "stream", "system-proxy"] }
+reqwest = { version = "0.13", default-features = false, features = ["charset", "http2", "json", "multipart", "native-tls", "stream", "system-proxy"] }
+futures-util = "0.3"
+sherpa-onnx = { version = "1.13.2", default-features = false, features = ["static"] }
+bzip2 = "0.4"
+tar = "0.4"
 tauri-plugin-notification = "^2"
 tauri-plugin-autostart = "^2"
 screenshots = "0.8.10"
@@ -34,12 +42,14 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = "0.4"
 wasmtime = "45"
 wasmtime-wasi = "45"
-rdev = "0.5.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3"
 core-graphics = "0.23"
 objc2-foundation = "0.3"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+rdev = "0.5.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [

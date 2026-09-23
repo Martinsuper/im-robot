@@ -1,3 +1,6 @@
+import { PanelHistory, formatChatHistoryTime } from "./PanelHistory";
+import { CompanionHero, PanelHeader, PanelNavigation } from "./PanelChrome";
+import { version as appVersion } from "../../../package.json";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
@@ -20,18 +23,22 @@ import type {
   ChatHistoryEntry,
   FocusSnapshot,
   InstalledPlugin,
+  Memo,
+  MemoCategory,
+  MemoSummaryGroup,
   ModelInfo,
   OnboardingStatus,
   PanelTab,
   QuietMode,
   Reminder,
   ReminderRepeat,
+  SpeechModelDownloadProgress,
+  SpeechModelStatus,
   Theme,
   UpdateStatus,
   WorkRhythmState,
 } from "../../types/appTypes";
 import {
-  PetSprite,
   clearCustomPetImagePath,
   countCalendarConflicts,
   defaultAiSettings,
@@ -42,12 +49,12 @@ import {
   defaultReminderTime,
   defaultWorkRhythmState,
   formatDuration,
+  formatBytes,
   formatCalendarRange,
   formatFocusRemaining,
   formatReminderTime,
   getAvailablePetVisualStyleOptions,
   live2dModelOptions,
-  panelTabOptions,
   petVisualStyleOptions,
   providerOptions,
   quietModeOptions,
@@ -62,54 +69,27 @@ import {
 } from "../app/appShared";
 import { isTauriRuntime, runCommand, runCommandAndRefresh } from "../app/appRuntime";
 
-type ChatHistoryFilter = "all" | "attachment" | "screenshot" | "code" | "link" | "long";
 
-const chatHistoryFilterOptions: Array<{ label: string; value: ChatHistoryFilter }> = [
+const memoCategoryLabels: Record<MemoCategory, string> = {
+  task: "任务",
+  idea: "想法",
+  learning: "学习",
+  work: "工作",
+  life: "生活",
+  reference: "资料",
+  other: "其他",
+};
+
+const memoCategoryOptions: Array<{ label: string; value: MemoCategory | "all" }> = [
   { label: "全部", value: "all" },
-  { label: "附件", value: "attachment" },
-  { label: "截图", value: "screenshot" },
-  { label: "代码", value: "code" },
-  { label: "链接", value: "link" },
-  { label: "长回复", value: "long" },
+  { label: "任务", value: "task" },
+  { label: "想法", value: "idea" },
+  { label: "学习", value: "learning" },
+  { label: "工作", value: "work" },
+  { label: "生活", value: "life" },
+  { label: "资料", value: "reference" },
+  { label: "其他", value: "other" },
 ];
-
-function getChatHistoryTags(entry: ChatHistoryEntry): ChatHistoryFilter[] {
-  const text = `${entry.prompt}\n${entry.response}`;
-  const tags: ChatHistoryFilter[] = [];
-
-  if (entry.prompt.includes("[附件")) tags.push("attachment");
-  if (entry.prompt.includes("[截图")) tags.push("screenshot");
-  if (/```|<\/?[a-z][\s\S]*>/i.test(text)) tags.push("code");
-  if (/https?:\/\//i.test(text)) tags.push("link");
-  if (entry.response.length > 600) tags.push("long");
-
-  return tags;
-}
-
-function chatHistoryFilterLabel(filter: ChatHistoryFilter) {
-  return chatHistoryFilterOptions.find((option) => option.value === filter)?.label ?? filter;
-}
-
-function formatChatHistoryTime(timestamp: number) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(timestamp * 1000);
-}
-
-function summarizeChatText(text: string, fallback: string) {
-  const normalized = text.replace(/\s+/g, " ").trim() || fallback;
-  return normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
-}
-
-function chatHistoryMatchesSearch(entry: ChatHistoryEntry, search: string) {
-  const keyword = search.trim().toLocaleLowerCase();
-  if (!keyword) return true;
-
-  return `${entry.prompt}\n${entry.response}`.toLocaleLowerCase().includes(keyword);
-}
 
 export function PanelWindow() {
   const mountedRef = useRef(true);
@@ -146,15 +126,23 @@ export function PanelWindow() {
   const [apiKey, setApiKey] = useState("");
   const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
   const [isTesting, setIsTesting] = useState(false);
+  const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
+  const [speechModelProgress, setSpeechModelProgress] = useState<Record<string, SpeechModelDownloadProgress>>({});
+  const [downloadingSpeechModelId, setDownloadingSpeechModelId] = useState("");
+  const [speechModelNotice, setSpeechModelNotice] = useState("");
   const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
-  const [selectedHistoryId, setSelectedHistoryId] = useState("");
-  const [historyFilter, setHistoryFilter] = useState<ChatHistoryFilter>("all");
-  const [historySearch, setHistorySearch] = useState("");
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [reminderTitle, setReminderTitle] = useState("");
   const [reminderDueAt, setReminderDueAt] = useState(defaultReminderTime);
   const [reminderRepeat, setReminderRepeat] = useState<ReminderRepeat>("none");
   const [reminderError, setReminderError] = useState("");
+  const [memos, setMemos] = useState<Memo[]>([]);
+  const [memoSummaries, setMemoSummaries] = useState<MemoSummaryGroup[]>([]);
+  const [memoTitle, setMemoTitle] = useState("");
+  const [memoContent, setMemoContent] = useState("");
+  const [memoCategoryFilter, setMemoCategoryFilter] = useState<MemoCategory | "all">("all");
+  const [editingMemoId, setEditingMemoId] = useState("");
+  const [memoError, setMemoError] = useState("");
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [calendarTitle, setCalendarTitle] = useState("");
   const [calendarStartAt, setCalendarStartAt] = useState(defaultCalendarStartTime);
@@ -189,20 +177,22 @@ export function PanelWindow() {
     [connectionStatus],
   );
   const panelSectionClass = (tab: PanelTab, base = "panel-card") =>
-    `${base}${panelTab === tab ? "" : " is-hidden"}`;
-  const filteredChatHistory = useMemo(
-    () => {
-      return chatHistory.filter((entry) => {
-        const matchesFilter = historyFilter === "all" || getChatHistoryTags(entry).includes(historyFilter);
-        return matchesFilter && chatHistoryMatchesSearch(entry, historySearch);
-      });
-    },
-    [chatHistory, historyFilter, historySearch],
+    `${base} panel-section panel-section--${tab}${panelTab === tab ? "" : " is-hidden"}`;
+  const lastInteractionLabel = interactionStats.lastInteractionAt
+    ? new Intl.DateTimeFormat("zh-CN", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(interactionStats.lastInteractionAt)
+    : "暂无";
+  const filteredMemos = useMemo(
+    () =>
+      memoCategoryFilter === "all"
+        ? memos
+        : memos.filter((memo) => memo.category === memoCategoryFilter),
+    [memoCategoryFilter, memos],
   );
-  const selectedHistoryEntry = useMemo(() => {
-    if (!filteredChatHistory.length) return undefined;
-    return filteredChatHistory.find((entry) => entry.id === selectedHistoryId) ?? filteredChatHistory[0];
-  }, [filteredChatHistory, selectedHistoryId]);
 
   async function loadChatHistory() {
     const items = await runCommand<ChatHistoryEntry[]>("list_chat_history", undefined, []);
@@ -212,6 +202,16 @@ export function PanelWindow() {
   async function loadReminders() {
     const items = await runCommand<Reminder[]>("list_reminders", undefined, []);
     setReminders(items);
+  }
+
+  async function loadMemos() {
+    const items = await runCommand<Memo[]>("list_memos", undefined, []);
+    setMemos(items);
+  }
+
+  async function loadMemoSummaries() {
+    const items = await runCommand<MemoSummaryGroup[]>("summarize_memos", undefined, []);
+    setMemoSummaries(items);
   }
 
   async function loadCalendarEvents() {
@@ -264,6 +264,20 @@ export function PanelWindow() {
     return runCommandAndRefresh<CalendarEvent>("create_calendar_event", { input }, [loadCalendarEvents]);
   }
 
+  async function loadSpeechModels() {
+    const models = await runCommand<SpeechModelStatus[]>("get_speech_model_status", undefined, [
+      {
+        id: "base",
+        name: "Whisper Base",
+        fileName: "ggml-base.bin",
+        downloadUrl: "",
+        downloaded: false,
+        byteSize: 0,
+      },
+    ]);
+    setSpeechModels(models);
+  }
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -289,9 +303,12 @@ export function PanelWindow() {
     });
     void loadChatHistory();
     void loadReminders();
+    void loadMemos();
+    void loadMemoSummaries();
     void loadCalendarEvents();
     void loadCalendarSyncStatus();
     void loadWorkRhythmState();
+    void loadSpeechModels();
     void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, []).then(setExternalPlugins);
     void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
     void runCommand<OnboardingStatus>("get_onboarding_status", undefined, {
@@ -313,6 +330,10 @@ export function PanelWindow() {
     const unlisten = listen("reminders-updated", () => {
       void loadReminders();
     });
+    const unlistenMemos = listen("memos-updated", () => {
+      void loadMemos();
+      void loadMemoSummaries();
+    });
     const unlistenHistory = listen("chat-history-updated", () => {
       void loadChatHistory();
     });
@@ -331,6 +352,19 @@ export function PanelWindow() {
     const unlistenFocus = listen<FocusSnapshot>("focus-updated", (event) => {
       setFocusState(event.payload);
     });
+    const unlistenSpeechModelProgress = listen<SpeechModelDownloadProgress>(
+      "speech-model-download-progress",
+      (event) => {
+        setSpeechModelProgress((current) => ({
+          ...current,
+          [event.payload.modelId]: event.payload,
+        }));
+        if (event.payload.completed) {
+          setDownloadingSpeechModelId("");
+          void loadSpeechModels();
+        }
+      },
+    );
     const unlistenSettings = listen<AppSettings>("settings-updated", (event) => {
       setQuietMode(event.payload.quietMode);
       setAiSettings(event.payload.ai);
@@ -345,9 +379,12 @@ export function PanelWindow() {
       setBreakReminderQuietHoursEnd(event.payload.breakReminderQuietHoursEnd);
       setHtmlPreviewEnabled(event.payload.htmlPreviewEnabled);
     });
-    const refreshFocus = window.setInterval(() => {
-      void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
-    }, 1000);
+    const refreshOnVisible = () => {
+      if (document.visibilityState === "visible") {
+        void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
+      }
+    };
+    document.addEventListener("visibilitychange", refreshOnVisible);
     const refreshInteraction = () => {
       setInteractionStats(loadInteractionStats());
       setGrowthSnapshot(loadGrowthSnapshot());
@@ -358,31 +395,24 @@ export function PanelWindow() {
     window.addEventListener("storage", refreshFromStorage);
     return () => {
       void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
+        dispose();
       });
       void unlistenHistory.then((dispose) => dispose());
+      void unlistenMemos.then((dispose) => dispose());
       void unlistenCalendar.then((dispose) => dispose());
       void unlistenCalendarSync.then((dispose) => dispose());
       void unlistenWorkRhythm.then((dispose) => dispose());
       void unlistenTyping.then((dispose) => dispose());
       void unlistenFocus.then((dispose) => dispose());
+      void unlistenSpeechModelProgress.then((dispose) => dispose());
       void unlistenSettings.then((dispose) => dispose());
       void unlistenInteraction.then((dispose) => dispose());
       void unlistenGrowth.then((dispose) => dispose());
       window.removeEventListener("storage", refreshFromStorage);
-      window.clearInterval(refreshFocus);
+      document.removeEventListener("visibilitychange", refreshOnVisible);
     };
   }, []);
 
-  useEffect(() => {
-    if (!filteredChatHistory.length) {
-      setSelectedHistoryId("");
-      return;
-    }
-    if (!filteredChatHistory.some((entry) => entry.id === selectedHistoryId)) {
-      setSelectedHistoryId(filteredChatHistory[0].id);
-    }
-  }, [filteredChatHistory, selectedHistoryId]);
 
   async function refreshOnboardingStatus() {
     const status = await runCommand<OnboardingStatus>("get_onboarding_status", undefined, {
@@ -426,6 +456,23 @@ export function PanelWindow() {
     setAiSettings(settings.ai);
     setApiKey("");
     return settings;
+  }
+
+  async function downloadSpeechModel(modelId: string) {
+    setSpeechModelNotice("");
+    setDownloadingSpeechModelId(modelId);
+    try {
+      const model = await runCommand<SpeechModelStatus>("download_speech_model", {
+        input: { modelId },
+      });
+      setSpeechModels((current) => current.map((item) => (item.id === model.id ? model : item)));
+      setSpeechModelNotice(`${model.name} 已可用`);
+    } catch (error) {
+      setSpeechModelNotice(String(error));
+    } finally {
+      setDownloadingSpeechModelId("");
+      void loadSpeechModels();
+    }
   }
 
   async function testConnection() {
@@ -480,6 +527,75 @@ export function PanelWindow() {
       await runCommandAndRefresh("delete_reminder", { id }, [loadReminders]);
     } catch (error) {
       setReminderError(String(error));
+    }
+  }
+
+  async function saveMemo(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!memoTitle.trim() || !memoContent.trim()) return;
+
+    setMemoError("");
+    try {
+      if (!isTauriRuntime) {
+        const now = Math.floor(Date.now() / 1000);
+        const memo: Memo = {
+          id: editingMemoId || crypto.randomUUID(),
+          title: memoTitle.trim(),
+          content: memoContent.trim(),
+          category: "other",
+          summary: memoContent.trim().slice(0, 96),
+          tags: ["其他"],
+          createdAt: now,
+          updatedAt: now,
+        };
+        setMemos((current) => {
+          const next = editingMemoId
+            ? current.map((item) => (item.id === memo.id ? memo : item))
+            : [memo, ...current];
+          return next.sort((left, right) => right.updatedAt - left.updatedAt);
+        });
+        setMemoTitle("");
+        setMemoContent("");
+        setEditingMemoId("");
+        return;
+      }
+      const args = { input: { title: memoTitle, content: memoContent } };
+      if (editingMemoId) {
+        await runCommandAndRefresh<Memo>("update_memo", { id: editingMemoId, ...args }, [loadMemos, loadMemoSummaries]);
+      } else {
+        await runCommandAndRefresh<Memo>("create_memo", args, [loadMemos, loadMemoSummaries]);
+      }
+      setMemoTitle("");
+      setMemoContent("");
+      setEditingMemoId("");
+    } catch (error) {
+      setMemoError(String(error));
+    }
+  }
+
+  function editMemo(memo: Memo) {
+    setEditingMemoId(memo.id);
+    setMemoTitle(memo.title);
+    setMemoContent(memo.content);
+    setPanelTab("memos");
+  }
+
+  function cancelMemoEdit() {
+    setEditingMemoId("");
+    setMemoTitle("");
+    setMemoContent("");
+    setMemoError("");
+  }
+
+  async function deleteMemo(id: string) {
+    try {
+      if (!isTauriRuntime) {
+        setMemos((current) => current.filter((memo) => memo.id !== id));
+        return;
+      }
+      await runCommandAndRefresh("delete_memo", { id }, [loadMemos, loadMemoSummaries]);
+    } catch (error) {
+      setMemoError(String(error));
     }
   }
 
@@ -724,45 +840,31 @@ export function PanelWindow() {
 
   return (
     <main className={`panel-shell panel-shell--${theme}`}>
-      <header className="panel-header">
+      <PanelHeader tab={panelTab} companionName={companionName} />
+      <PanelNavigation tab={panelTab} onChange={setPanelTab} />
+      <div className="panel-workspace">
+      <section className={`panel-overview panel-overview--${panelTab}`} aria-label="面板总览">
+        <div className="panel-overview__status">
+          <span>AI 对话</span>
+          <strong>{connectionStatus}</strong>
+        </div>
         <div>
-          <p className="eyebrow">PIKO · DESKTOP COMPANION</p>
-          <h1>伙伴图鉴</h1>
-          <p>一个安静待在桌面上，也会认真帮忙的小伙伴。</p>
+          <span>今日专注</span>
+          <strong>{focusState.todayMinutes} 分钟</strong>
         </div>
-        <span className="status-pill">在线</span>
-      </header>
-
-      <nav className="panel-tabs" aria-label="面板导航">
-        {panelTabOptions.map(({ label, value }) => (
-          <button
-            className={panelTab === value ? "is-active" : ""}
-            key={value}
-            type="button"
-            onClick={() => setPanelTab(value)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
-
-      <section className={panelSectionClass("companion", "companion-card")}>
-        <div className="companion-card__portrait">
-          <PetSprite mode="idle" emotion="happy" reaction="none" />
+        <div>
+          <span>亲密度</span>
+          <strong>{Math.round(interactionStats.intimacy)}</strong>
         </div>
-        <div className="companion-card__copy">
-          <p className="eyebrow">NO. 001 · DESKTOP SPIRIT</p>
-          <h2>{companionName}</h2>
-          <p>治愈型桌面精灵。擅长陪伴、对话和处理专注任务。</p>
-          <div className="trait-list">
-            <span>{petVisualStyleLabel}</span>
-            {petVisualStyle === "character" ? <span>{live2dModelLabel}</span> : null}
-            <span>AI 助手</span>
-          </div>
+        <div>
+          <span>最近互动</span>
+          <strong>{lastInteractionLabel}</strong>
         </div>
       </section>
 
-      <section className={panelSectionClass("companion")}>
+      {panelTab === "companion" && <CompanionHero companionName={companionName} styleLabel={petVisualStyleLabel} modelLabel={petVisualStyle === "live2d" ? live2dModelLabel : null} onReminders={() => setPanelTab("reminders")} />}
+
+      <details className={panelSectionClass("companion", "panel-card companion-metrics-card")}><summary>一起成长的记录 <span>Lv. {growthSnapshot.level} · {Math.round(interactionStats.intimacy)} 亲密</span></summary><div className="companion-metrics-detail">
         <div className="section-heading">
           <div>
             <p className="eyebrow">INTERACTION</p>
@@ -803,18 +905,13 @@ export function PanelWindow() {
           </div>
           <div>
             <span>最近互动</span>
-            <strong>{interactionStats.lastInteractionAt ? new Intl.DateTimeFormat("zh-CN", {
-              month: "numeric",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            }).format(interactionStats.lastInteractionAt) : "暂无"}</strong>
+            <strong>{lastInteractionLabel}</strong>
           </div>
         </div>
         <p className="empty-state">
           累计 {growthSnapshot.totalXp.toLocaleString("zh-CN")} 经验 · {growthSnapshot.completedTasks} 个任务进度 · {growthSnapshot.unlockedAchievements} 项成就
         </p>
-      </section>
+      </div></details>
 
       <section className={panelSectionClass("about")}>
         <p className="eyebrow">PRIVACY & PERMISSIONS</p>
@@ -859,7 +956,7 @@ export function PanelWindow() {
             </button>
           </div>
         </div>
-        <p className="empty-state">Piko Desktop Companion · v0.1.0</p>
+        <p className="empty-state">Piko Desktop Companion · v{appVersion}</p>
         {updateStatus && <p className="connection-status">{updateStatus}</p>}
         {updateUrl && (
           <button className="release-link" type="button" onClick={() => void openUrl(updateUrl)}>
@@ -873,7 +970,7 @@ export function PanelWindow() {
         )}
       </section>
 
-      <section className={panelSectionClass("companion")}>
+      <section className={panelSectionClass("companion", "panel-card companion-status-card")}>
         <div className="section-heading">
           <div>
             <p className="eyebrow">STATUS</p>
@@ -1130,6 +1227,44 @@ export function PanelWindow() {
               placeholder={aiSettings.provider === "lmstudio" ? "可留空，LM Studio 自动使用当前加载模型" : "gemma4:e4b"}
             />
           </label>
+          {speechModels.length > 0 && (
+            <div className="speech-model-list">
+              {speechModels.map((model) => {
+                const progress = speechModelProgress[model.id];
+                const percent = progress?.percent === undefined ? undefined : Math.round(progress.percent * 100);
+                const isDownloading = downloadingSpeechModelId === model.id;
+                return (
+                  <div className="speech-model-item" key={model.id}>
+                    <div>
+                      <strong>
+                        {model.name}
+                        {model.id === "sense-voice" ? (
+                          <span className="speech-model-item__badge">中文优化</span>
+                        ) : null}
+                      </strong>
+                      <span>
+                        {model.downloaded ? `${formatBytes(model.byteSize)} · 已下载` : "未下载"}
+                        {isDownloading && percent !== undefined ? ` · ${percent}%` : ""}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={model.downloaded || Boolean(downloadingSpeechModelId)}
+                      onClick={() => void downloadSpeechModel(model.id)}
+                    >
+                      {model.downloaded ? "已下载" : isDownloading ? "下载中..." : "下载"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {speechModels.some((m) => m.id === "sense-voice" && !m.downloaded) && (
+            <p className="empty-state">
+              「SenseVoice 中文优化」—— 阿里 FunAudioLLM 出品，专为中文设计，字错率比 Whisper 低一半以上，且几乎不出繁体字。
+            </p>
+          )}
+          {speechModelNotice && <p className="reminder-error">{speechModelNotice}</p>}
           <label>
             <span>API Key</span>
             <input
@@ -1341,111 +1476,113 @@ export function PanelWindow() {
         )}
       </section>
 
-      <section className={panelSectionClass("history")}>
-        <div className="focus-summary">
-          <span>今日专注</span>
-          <strong>{focusState.todayMinutes} 分钟</strong>
-        </div>
+      <section className={panelSectionClass("memos")}>
         <div className="section-heading">
           <div>
-            <p className="eyebrow">CHAT HISTORY</p>
-            <h2>最近对话</h2>
+            <p className="eyebrow">MEMOS</p>
+            <h2>备忘录</h2>
           </div>
-          <button type="button" disabled={!chatHistory.length} onClick={() => void clearChatHistory()}>
-            清除历史
-          </button>
+          <select
+            className="memo-filter-select"
+            value={memoCategoryFilter}
+            onChange={(event) => setMemoCategoryFilter(event.currentTarget.value as MemoCategory | "all")}
+            aria-label="备忘录分类筛选"
+          >
+            {memoCategoryOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
-        {chatHistory.length ? (
-          <div className="chat-history-browser">
-            <div className="chat-history-search">
-              <input
-                value={historySearch}
-                onChange={(event) => setHistorySearch(event.currentTarget.value)}
-                placeholder="搜索历史对话"
-                aria-label="搜索历史对话"
-              />
-              {historySearch.trim() && (
-                <button type="button" onClick={() => setHistorySearch("")}>
-                  清空
-                </button>
-              )}
-            </div>
-            <div className="history-filter-bar" aria-label="历史筛选">
-              {chatHistoryFilterOptions.map((option) => {
-                const count =
-                  option.value === "all"
-                    ? chatHistory.filter((entry) => chatHistoryMatchesSearch(entry, historySearch)).length
-                    : chatHistory.filter(
-                        (entry) =>
-                          getChatHistoryTags(entry).includes(option.value) &&
-                          chatHistoryMatchesSearch(entry, historySearch),
-                      ).length;
-                return (
-                  <button
-                    className={historyFilter === option.value ? "is-active" : ""}
-                    disabled={count === 0}
-                    key={option.value}
-                    type="button"
-                    onClick={() => setHistoryFilter(option.value)}
-                  >
-                    {option.label}
-                    <span>{count}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {filteredChatHistory.length ? (
-              <div className="chat-history-layout">
-                <ul className="history-list chat-history-list" aria-label="最近对话列表">
-                  {filteredChatHistory.map((entry) => {
-                    const tags = getChatHistoryTags(entry);
-                    return (
-                      <li className={entry.id === selectedHistoryEntry?.id ? "is-active" : ""} key={entry.id}>
-                        <button type="button" onClick={() => setSelectedHistoryId(entry.id)}>
-                          <span className="chat-history-list__time">{formatChatHistoryTime(entry.createdAt)}</span>
-                          <strong>{summarizeChatText(entry.prompt, "未命名对话")}</strong>
-                          <span>{summarizeChatText(entry.response, "没有返回文本")}</span>
-                          {tags.length ? (
-                            <div className="chat-history-tags">
-                              {tags.map((tag) => (
-                                <span key={tag}>{chatHistoryFilterLabel(tag)}</span>
-                              ))}
-                            </div>
-                          ) : null}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-                {selectedHistoryEntry && (
-                  <article className="chat-history-detail">
-                    <div className="chat-history-detail__meta">
-                      <span>{formatChatHistoryTime(selectedHistoryEntry.createdAt)}</span>
-                      <span>{selectedHistoryEntry.response.length.toLocaleString("zh-CN")} 字</span>
-                    </div>
-                    <div>
-                      <p className="eyebrow">PROMPT</p>
-                      <p>{selectedHistoryEntry.prompt}</p>
-                    </div>
-                    <div>
-                      <p className="eyebrow">RESPONSE</p>
-                      <p>{selectedHistoryEntry.response || "没有返回文本"}</p>
-                    </div>
-                  </article>
-                )}
-              </div>
-            ) : (
-              <p className="empty-state">当前搜索或筛选下没有对话。</p>
+        <form className="memo-form" onSubmit={saveMemo}>
+          <input
+            value={memoTitle}
+            onChange={(event) => setMemoTitle(event.currentTarget.value)}
+            maxLength={120}
+            placeholder="标题，例如：下周版本复盘"
+            aria-label="备忘录标题"
+          />
+          <textarea
+            value={memoContent}
+            onChange={(event) => setMemoContent(event.currentTarget.value)}
+            maxLength={8000}
+            rows={5}
+            placeholder="写下内容，Piko 会自动分类、提炼摘要和标签"
+            aria-label="备忘录内容"
+          />
+          <div className="memo-form__actions">
+            {editingMemoId && (
+              <button type="button" className="is-secondary" onClick={cancelMemoEdit}>
+                取消编辑
+              </button>
             )}
+            <button type="submit" disabled={!memoTitle.trim() || !memoContent.trim()}>
+              {editingMemoId ? "保存" : "添加"}
+            </button>
+          </div>
+        </form>
+        {memoError && <p className="reminder-error">{memoError}</p>}
+        {memoSummaries.length ? (
+          <div className="memo-summary-grid">
+            {memoSummaries.map((group) => (
+              <button
+                type="button"
+                key={group.category}
+                className={memoCategoryFilter === group.category ? "is-active" : ""}
+                onClick={() => setMemoCategoryFilter(group.category)}
+              >
+                <span>{memoCategoryLabels[group.category]}</span>
+                <strong>{group.count}</strong>
+                <small>{group.summary}</small>
+              </button>
+            ))}
           </div>
         ) : (
-          <p className="empty-state">暂无对话历史。</p>
+          <p className="empty-state">新增备忘后会在这里自动汇总分类。</p>
+        )}
+        {filteredMemos.length ? (
+          <div className="memo-list">
+            {filteredMemos.map((memo) => (
+              <article key={memo.id} className="memo-card">
+                <header>
+                  <span>{memoCategoryLabels[memo.category]}</span>
+                  <time>{formatChatHistoryTime(memo.updatedAt)}</time>
+                </header>
+                <h3>{memo.title}</h3>
+                <p>{memo.summary}</p>
+                {memo.tags.length ? (
+                  <div className="memo-tags">
+                    {memo.tags.map((tag) => (
+                      <span key={tag}>{tag}</span>
+                    ))}
+                  </div>
+                ) : null}
+                <footer>
+                  <button type="button" onClick={() => editMemo(memo)}>
+                    编辑
+                  </button>
+                  <button type="button" className="is-danger" onClick={() => void deleteMemo(memo.id)}>
+                    删除
+                  </button>
+                </footer>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-state">
+            {memos.length ? "当前分类下没有备忘录。" : "暂无备忘录。"}
+          </p>
         )}
       </section>
+
+      {panelTab === "history" && <PanelHistory chatHistory={chatHistory} focusMinutes={focusState.todayMinutes} onClear={clearHistory} />}
+
 
       <section className={panelSectionClass("memory")}>
         <MemoryCenter />
       </section>
+      </div>
 
     </main>
   );

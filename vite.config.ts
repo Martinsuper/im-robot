@@ -6,7 +6,46 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react()],
+  base: "./",
+  plugins: [
+    react(),
+    {
+      name: "tauri-index-html-compat",
+      transformIndexHtml(html) {
+        return html.replace(/\s+crossorigin(?:="[^"]*")?/g, "");
+      },
+    },
+  ],
+  build: {
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("react") || id.includes("scheduler")) return "vendor-react";
+          if (id.includes("pixi.js") || id.includes("@pixi/")) return "vendor-pixi";
+          if (id.includes("untitled-pixi-live2d-engine") || id.includes("@hazart-pkg/live2d-core")) {
+            return "vendor-live2d";
+          }
+          if (
+            id.includes("react-markdown") ||
+            id.includes("remark-") ||
+            id.includes("rehype-") ||
+            id.includes("micromark") ||
+            id.includes("katex") ||
+            id.includes("hast-") ||
+            id.includes("mdast-") ||
+            id.includes("unified") ||
+            id.includes("vfile")
+          ) {
+            return "vendor-markdown";
+          }
+          if (id.includes("@tauri-apps/")) return "vendor-tauri";
+          return "vendor";
+        },
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

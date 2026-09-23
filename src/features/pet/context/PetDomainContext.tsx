@@ -184,9 +184,10 @@ export function PetDomainProvider({ children }: PetDomainProviderProps) {
   // 初始化 behaviorSystem（在 refs 中，因为需要在 effect 中启动/停止）
   const behaviorSystem = useMemo(() => {
     const system = new BehaviorSystem(personalityManager);
-    behaviorSystemRef.current = system;
     return system;
   }, [personalityManager]);
+
+  useEffect(() => { behaviorSystemRef.current = behaviorSystem; }, [behaviorSystem]);
 
   // AI revision 计数（用于触发重新解析）
   const [, setAiRevision] = useState(0);

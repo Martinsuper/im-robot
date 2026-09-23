@@ -1,3 +1,4 @@
+use crate::storage;
 /// Data import/export module.
 ///
 /// Supports exporting and importing: chat history, reminders, calendar events,
@@ -55,8 +56,14 @@ pub struct SanitizedSettings {
     pub ai_provider: String,
     pub ai_base_url: String,
     pub ai_model: String,
+    #[serde(default = "default_ai_speech_model")]
+    pub ai_speech_model: String,
     pub ai_temperature: f32,
     pub ai_timeout_seconds: u64,
+}
+
+fn default_ai_speech_model() -> String {
+    "base".to_string()
 }
 
 impl From<&AppSettings> for SanitizedSettings {
@@ -69,6 +76,7 @@ impl From<&AppSettings> for SanitizedSettings {
             ai_provider: settings.ai.provider.clone(),
             ai_base_url: settings.ai.base_url.clone(),
             ai_model: settings.ai.model.clone(),
+            ai_speech_model: settings.ai.speech_model.clone(),
             ai_temperature: settings.ai.temperature,
             ai_timeout_seconds: settings.ai.timeout_seconds,
         }
@@ -111,9 +119,13 @@ pub fn build_export_data(app: &AppHandle) -> ExportData {
 
 /// Export data to a JSON file.
 pub fn export_to_file(app: &AppHandle, path: &Path) -> Result<(), String> {
+    let _transaction = storage::transaction();
     let data = build_export_data(app);
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())
+    storage::write(
+        path,
+        &serde_json::from_str::<serde_json::Value>(&json).map_err(|e| e.to_string())?,
+    )
 }
 
 /// Preview import data without modifying anything.
@@ -145,6 +157,7 @@ pub fn preview_import(path: &Path) -> Result<ImportPreview, String> {
 /// - New items are appended
 /// - Settings are merged (only non-sensitive fields)
 pub fn import_from_file(app: &AppHandle, path: &Path) -> Result<ImportResult, String> {
+    let _transaction = storage::transaction();
     let json = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let data: ExportData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
 
@@ -156,27 +169,27 @@ pub fn import_from_file(app: &AppHandle, path: &Path) -> Result<ImportResult, St
 
     // Merge chats
     if !data.chats.is_empty() {
-        imported.chats_imported = merge_chat_history(app, &data.chats);
+        imported.chats_imported = merge_chat_history(app, &data.chats)?;
     }
 
     // Merge reminders
     if !data.reminders.is_empty() {
-        imported.reminders_imported = merge_reminders(app, &data.reminders);
+        imported.reminders_imported = merge_reminders(app, &data.reminders)?;
     }
 
     // Merge calendar
     if !data.calendar.is_empty() {
-        imported.calendar_imported = merge_calendar(app, &data.calendar);
+        imported.calendar_imported = merge_calendar(app, &data.calendar)?;
     }
 
     // Merge focus
     if !data.focus.is_empty() {
-        imported.focus_imported = merge_focus(app, &data.focus);
+        imported.focus_imported = merge_focus(app, &data.focus)?;
     }
 
     // Merge settings
     if let Some(settings) = &data.settings {
-        merge_settings(app, settings);
+        merge_settings(app, settings)?;
         imported.settings_imported = true;
     }
 
@@ -197,29 +210,25 @@ pub struct ImportResult {
 
 fn read_chat_history_for_export(app: &AppHandle) -> Vec<ChatHistoryEntry> {
     chat_history_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .map(|path| storage::read_or_default(&path))
         .unwrap_or_default()
 }
 
 fn read_reminders_for_export(app: &AppHandle) -> Vec<Reminder> {
     reminders_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .map(|path| storage::read_or_default(&path))
         .unwrap_or_default()
 }
 
 fn read_calendar_for_export(app: &AppHandle) -> Vec<CalendarEvent> {
     calendar_events_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .map(|path| storage::read_or_default(&path))
         .unwrap_or_default()
 }
 
 fn read_focus_for_export(app: &AppHandle) -> Vec<FocusRecord> {
     focus_records_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .map(|path| storage::read_or_default(&path))
         .unwrap_or_default()
 }
 
@@ -269,7 +278,8 @@ fn app_settings_path(app: &AppHandle) -> Option<std::path::PathBuf> {
 
 // --- Merge functions ---
 
-fn merge_chat_history(app: &AppHandle, incoming: &[ChatHistoryEntry]) -> usize {
+fn merge_chat_history(app: &AppHandle, incoming: &[ChatHistoryEntry]) -> Result<usize, String> {
+    let _transaction = storage::transaction();
     const MAX_CHAT_HISTORY: usize = 50;
     let existing_ids = read_chat_history_for_export(app)
         .iter()
@@ -287,12 +297,13 @@ fn merge_chat_history(app: &AppHandle, incoming: &[ChatHistoryEntry]) -> usize {
     }
 
     if count > 0 {
-        let _ = persist_chat_history(app, &existing);
+        persist_chat_history(app, &existing)?;
     }
-    count
+    Ok(count)
 }
 
-fn merge_reminders(app: &AppHandle, incoming: &[Reminder]) -> usize {
+fn merge_reminders(app: &AppHandle, incoming: &[Reminder]) -> Result<usize, String> {
+    let _transaction = storage::transaction();
     let existing_ids = read_reminders_for_export(app)
         .iter()
         .map(|r| r.id.clone())
@@ -309,12 +320,13 @@ fn merge_reminders(app: &AppHandle, incoming: &[Reminder]) -> usize {
     }
 
     if count > 0 {
-        let _ = persist_reminders(app, &existing);
+        persist_reminders(app, &existing)?;
     }
-    count
+    Ok(count)
 }
 
-fn merge_calendar(app: &AppHandle, incoming: &[CalendarEvent]) -> usize {
+fn merge_calendar(app: &AppHandle, incoming: &[CalendarEvent]) -> Result<usize, String> {
+    let _transaction = storage::transaction();
     let existing_ids = read_calendar_for_export(app)
         .iter()
         .map(|e| e.id.clone())
@@ -331,12 +343,13 @@ fn merge_calendar(app: &AppHandle, incoming: &[CalendarEvent]) -> usize {
     }
 
     if count > 0 {
-        let _ = persist_calendar_events(app, &existing);
+        persist_calendar_events(app, &existing)?;
     }
-    count
+    Ok(count)
 }
 
-fn merge_focus(app: &AppHandle, incoming: &[FocusRecord]) -> usize {
+fn merge_focus(app: &AppHandle, incoming: &[FocusRecord]) -> Result<usize, String> {
+    let _transaction = storage::transaction();
     let existing_ids = read_focus_for_export(app)
         .iter()
         .map(|r| r.completed_at)
@@ -353,70 +366,50 @@ fn merge_focus(app: &AppHandle, incoming: &[FocusRecord]) -> usize {
     }
 
     if count > 0 {
-        let _ = persist_focus_records(app, &existing);
+        persist_focus_records(app, &existing)?;
     }
-    count
+    Ok(count)
 }
 
-fn merge_settings(app: &AppHandle, incoming: &SanitizedSettings) {
-    if let Some(path) = app_settings_path(app) {
-        if let Ok(json) = fs::read_to_string(&path) {
-            if let Ok(mut settings) = serde_json::from_str::<AppSettings>(&json) {
-                // Merge non-sensitive fields
-                settings.quiet_mode = incoming.quiet_mode.clone();
-                settings.companion_name = incoming.companion_name.clone();
-                settings.theme = incoming.theme.clone();
-                settings.sensing_paused = incoming.sensing_paused;
-                settings.ai.provider = incoming.ai_provider.clone();
-                settings.ai.base_url = incoming.ai_base_url.clone();
-                settings.ai.model = incoming.ai_model.clone();
-                settings.ai.temperature = incoming.ai_temperature;
-                settings.ai.timeout_seconds = incoming.ai_timeout_seconds;
-
-                let _ = fs::write(path, serde_json::to_string(&settings).unwrap_or_default());
-            }
-        }
-    }
+fn merge_settings(app: &AppHandle, incoming: &SanitizedSettings) -> Result<(), String> {
+    let _transaction = storage::transaction();
+    let path = app_settings_path(app).ok_or("无法获取设置路径")?;
+    let mut settings: AppSettings = storage::read(&path)?;
+    settings.quiet_mode = incoming.quiet_mode.clone();
+    settings.companion_name = incoming.companion_name.clone();
+    settings.theme = incoming.theme.clone();
+    settings.sensing_paused = incoming.sensing_paused;
+    settings.ai.provider = incoming.ai_provider.clone();
+    settings.ai.base_url = incoming.ai_base_url.clone();
+    settings.ai.model = incoming.ai_model.clone();
+    settings.ai.speech_model = incoming.ai_speech_model.clone();
+    settings.ai.temperature = incoming.ai_temperature;
+    settings.ai.timeout_seconds = incoming.ai_timeout_seconds;
+    storage::write(&path, &settings)
 }
 
 // --- Persist helpers (local copies to avoid dependency on lib.rs) ---
 
 fn persist_chat_history(app: &AppHandle, history: &[ChatHistoryEntry]) -> Result<(), String> {
+    let _transaction = storage::transaction();
     let path = chat_history_path(app).ok_or_else(|| "无法获取历史记录路径".to_string())?;
-    let dir = path
-        .parent()
-        .ok_or_else(|| "无法获取历史记录目录".to_string())?;
-    let json = serde_json::to_string(history).map_err(|e| e.to_string())?;
-    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())
+    storage::write(&path, history)
 }
 
 fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), String> {
+    let _transaction = storage::transaction();
     let path = reminders_path(app).ok_or_else(|| "无法获取提醒记录路径".to_string())?;
-    let dir = path
-        .parent()
-        .ok_or_else(|| "无法获取提醒记录目录".to_string())?;
-    let json = serde_json::to_string(reminders).map_err(|e| e.to_string())?;
-    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())
+    storage::write(&path, reminders)
 }
 
 fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<(), String> {
+    let _transaction = storage::transaction();
     let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
-    let dir = path
-        .parent()
-        .ok_or_else(|| "无法获取日程记录目录".to_string())?;
-    let json = serde_json::to_string(events).map_err(|e| e.to_string())?;
-    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())
+    storage::write(&path, events)
 }
 
 fn persist_focus_records(app: &AppHandle, records: &[FocusRecord]) -> Result<(), String> {
+    let _transaction = storage::transaction();
     let path = focus_records_path(app).ok_or_else(|| "无法获取专注记录路径".to_string())?;
-    let dir = path
-        .parent()
-        .ok_or_else(|| "无法获取专注记录目录".to_string())?;
-    let json = serde_json::to_string(records).map_err(|e| e.to_string())?;
-    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())
+    storage::write(&path, records)
 }
