@@ -77,7 +77,7 @@ export function PanelHistory({ chatHistory, focusMinutes, onClear }: { chatHisto
             <p className="eyebrow">CHAT HISTORY</p>
             <h2>最近对话</h2>
           </div>
-          <button type="button" disabled={!chatHistory.length} onClick={() => void clearChatHistory()}>
+          <button type="button" disabled={!chatHistory.length} onClick={() => void onClear()}>
             清除历史
           </button>
         </div>

@@ -862,7 +862,7 @@ export function PanelWindow() {
         </div>
       </section>
 
-      {panelTab === "companion" && <CompanionHero companionName={companionName} styleLabel={petVisualStyleLabel} modelLabel={petVisualStyle === "live2d" ? live2dModelLabel : null} onReminders={() => setPanelTab("reminders")} />}
+      {panelTab === "companion" && <CompanionHero companionName={companionName} styleLabel={petVisualStyleLabel} modelLabel={petVisualStyle === "character" ? live2dModelLabel : null} onReminders={() => setPanelTab("reminders")} />}
 
       <details className={panelSectionClass("companion", "panel-card companion-metrics-card")}><summary>一起成长的记录 <span>Lv. {growthSnapshot.level} · {Math.round(interactionStats.intimacy)} 亲密</span></summary><div className="companion-metrics-detail">
         <div className="section-heading">
@@ -1576,7 +1576,7 @@ export function PanelWindow() {
         )}
       </section>
 
-      {panelTab === "history" && <PanelHistory chatHistory={chatHistory} focusMinutes={focusState.todayMinutes} onClear={clearHistory} />}
+      {panelTab === "history" && <PanelHistory chatHistory={chatHistory} focusMinutes={focusState.todayMinutes} onClear={clearChatHistory} />}
 
 
       <section className={panelSectionClass("memory")}>

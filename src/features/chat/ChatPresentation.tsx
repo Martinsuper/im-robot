@@ -18,6 +18,9 @@ export function extractMarkdownText(node: ReactNode): string {
 
 export function textForSpeech(text: string) {
   return text
+    // Why: 朗读前剥掉 emoji。字符类里确实包含 ZWJ / 变体选择符等组合序列，
+    // 这是有意的（要逐个码点剔除），不是漏写 u 标志导致的误解，故关闭该规则。
+    // eslint-disable-next-line no-misleading-character-class
     .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{1F1E6}-\u{1F1FF}\u200D\uFE0E\uFE0F\u20E3]/gu, "");
 }
 
