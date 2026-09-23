@@ -1118,6 +1118,16 @@ export function PanelWindow() {
           {petVisualStyle === "character" ? (
             <label>
               <span>Live2D 模型</span>
+              {/*
+               * TODO(R3/R5): 这个下拉框目前是空操作。
+               * petVisualStyle === "character" 实际渲染的是 LiveCharacterPet（静态精灵图
+               * /pets/piko-character-sheet.png，没有模型概念），唯一会读 live2dModelId
+               * 的 Live2DCharacterPet 已无人引用（grep -rn Live2DCharacterPet src 零命中）。
+               * 所以选 Hiyori/Wanko 只会写进 localStorage，视觉上无任何变化，
+               * 同时 public/live2d 的 24MB 资产从不加载。
+               * 待决：重新接回 Live2D，或删掉本选择器 + 资产（见
+               * .sdlc/01-prd/09-R0执行清单.md 的 NEW-13）。
+               */}
               <select
                 value={live2dModelId}
                 onChange={(event) => setLive2DModelId(event.currentTarget.value as typeof live2dModelId)}
