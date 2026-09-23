@@ -18,7 +18,10 @@ export function loadInteractionStats(): InteractionStats {
       ...parsed,
       lastInteractionAt: typeof parsed.lastInteractionAt === "number" ? parsed.lastInteractionAt : null,
     };
-  } catch {
+  } catch (error) {
+    // 降级为默认值，不打扰用户：localStorage 每次进入页面都会读，
+    // 失败（隐私模式 / 配额 / 脏数据）时弹窗会持续骚扰，且用户无能为力。
+    console.warn("[interactionStorage] 读取失败", error);
     return { ...DEFAULT_INTERACTION_STATS };
   }
 }
@@ -28,8 +31,10 @@ export function saveInteractionStats(stats: InteractionStats): void {
   try {
     window.localStorage.setItem(INTERACTION_STATS_KEY, JSON.stringify(stats));
     window.dispatchEvent(new CustomEvent<InteractionStats>("piko-interaction-stats-changed", { detail: stats }));
-  } catch {
-    // 忽略存储失败，交互不应被本地持久化错误阻断
+  } catch (error) {
+    // 忽略存储失败，交互不应被本地持久化错误阻断。
+    // 降级为「本次不持久化」，不打扰用户：每次交互都会写一次，弹窗会刷屏。
+    console.warn("[interactionStorage] 写入失败", error);
   }
 }
 

@@ -15,6 +15,9 @@ import {
 import { MemoryCard } from "./MemoryCard";
 import { MemoryDetail } from "./MemoryDetail";
 import { runCommandAndRefresh } from "../app/appRuntime";
+import { toUserMessage } from "../../lib/errors";
+import { EmptyState, ErrorState } from "../../components/feedback/States";
+import { useToast } from "../../components/feedback/toastStore";
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
@@ -45,6 +48,8 @@ export function MemoryCenter() {
   // Sub-tab for advanced views
   const [subView, setSubView] = useState<"memories" | "pending" | "reflections">("memories");
 
+  const toast = useToast();
+
   async function loadMemories() {
     const input: ListMemoriesInput = {
       status: "active",
@@ -55,8 +60,9 @@ export function MemoryCenter() {
       const items = await runCommand<MemoryItem[]>("list_memories", { input });
       setMemories(items);
       setError("");
-    } catch {
-      setMemories([]);
+    } catch (error) {
+      // 不清空列表：读取失败要让用户看到「加载失败」，而不是伪装成「没有记录」。
+      setError(toUserMessage(error, "记录加载失败，请重试。"));
     }
   }
 
@@ -65,8 +71,9 @@ export function MemoryCenter() {
       const items = await runCommand<MemoryItem[]>("get_recent_memories", { limit: 20 });
       setMemories(items);
       setError("");
-    } catch {
-      setMemories([]);
+    } catch (error) {
+      // 同上：失败不清空，保留上一次成功的结果并报错。
+      setError(toUserMessage(error, "记录加载失败，请重试。"));
     }
   }
 
@@ -74,8 +81,9 @@ export function MemoryCenter() {
     try {
       const items = await runCommand<MemoryCandidate[]>("get_pending_candidates", {});
       setPendingCandidates(items);
-    } catch {
-      setPendingCandidates([]);
+    } catch (error) {
+      // 同上：失败不清空，避免把「加载失败」显示成「没有待确认」。
+      setError(toUserMessage(error, "待确认列表加载失败，请重试。"));
     }
   }
 
@@ -85,8 +93,9 @@ export function MemoryCenter() {
         limit: 5,
       });
       setSummaries(items);
-    } catch {
-      setSummaries([]);
+    } catch (error) {
+      // 同上：失败不清空，避免把「加载失败」显示成「还没有反思总结」。
+      setError(toUserMessage(error, "反思总结加载失败，请重试。"));
     }
   }
 
@@ -121,8 +130,9 @@ export function MemoryCenter() {
       const items = await runCommand<MemoryItem[]>("search_memories", { input });
       setMemories(items);
       setError("");
-    } catch {
-      setMemories([]);
+    } catch (error) {
+      // 同上：搜索失败不清空结果，保留上一次成功的结果并报错。
+      setError(toUserMessage(error, "搜索失败，请重试。"));
     } finally {
       setIsSearching(false);
     }
@@ -156,24 +166,24 @@ export function MemoryCenter() {
     try {
       await runCommandAndRefresh("delete_memory", { id }, [reloadVisibleMemories]);
       setError("");
-    } catch {
-      setError("删除失败");
+    } catch (error) {
+      toast.error(toUserMessage(error, "删除失败"));
     }
   }
 
   async function handlePin(id: string) {
     try {
       await runCommand("pin_memory", { id });
-    } catch {
-      setError("置顶失败");
+    } catch (error) {
+      toast.error(toUserMessage(error, "置顶失败"));
     }
   }
 
   async function handleUnpin(id: string) {
     try {
       await runCommand("unpin_memory", { id });
-    } catch {
-      setError("取消置顶失败");
+    } catch (error) {
+      toast.error(toUserMessage(error, "取消置顶失败"));
     }
   }
 
@@ -186,8 +196,8 @@ export function MemoryCenter() {
     try {
       await runCommand("feedback_memory", { input });
       setError("");
-    } catch {
-      setError("反馈提交失败");
+    } catch (error) {
+      toast.error(toUserMessage(error, "反馈提交失败"));
     }
   }
 
@@ -198,8 +208,8 @@ export function MemoryCenter() {
     try {
       await runCommandAndRefresh("clear_memories", {}, [reloadVisibleMemories]);
       setError("");
-    } catch {
-      setError("清除失败");
+    } catch (error) {
+      toast.error(toUserMessage(error, "清除失败"));
     } finally {
       setIsClearing(false);
     }
@@ -211,8 +221,8 @@ export function MemoryCenter() {
       await runCommand("reflect_memory_now", {});
       await Promise.all([loadSummaries(), loadMemories()]);
       setError("");
-    } catch {
-      setError("反思失败");
+    } catch (error) {
+      toast.error(toUserMessage(error, "反思失败"));
     } finally {
       setIsReflecting(false);
     }
@@ -223,8 +233,8 @@ export function MemoryCenter() {
       await runCommandAndRefresh("apply_memory_candidates", {
         input: { candidateId, confirmed: true },
       }, [loadPending, loadMemories]);
-    } catch {
-      setError("确认失败");
+    } catch (error) {
+      toast.error(toUserMessage(error, "确认失败"));
     }
   }
 
@@ -232,8 +242,8 @@ export function MemoryCenter() {
     try {
       await runCommand("reject_memory_candidate", { candidateId });
       await loadPending();
-    } catch {
-      setError("拒绝失败");
+    } catch (error) {
+      toast.error(toUserMessage(error, "拒绝失败"));
     }
   }
 
@@ -242,9 +252,9 @@ export function MemoryCenter() {
       const data = await runCommand<MemoryExport>("export_memories", {});
       const json = JSON.stringify(data, null, 2);
       await navigator.clipboard.writeText(json);
-      setError("已复制记忆导出到剪贴板");
-    } catch {
-      setError("导出失败");
+      toast.success("已复制记忆导出到剪贴板");
+    } catch (error) {
+      toast.error(toUserMessage(error, "导出失败"));
     }
   }
 
@@ -380,14 +390,26 @@ export function MemoryCenter() {
             )}
           </div>
 
-          {error && <p className="memory-error">{error}</p>}
+          {error && (
+            <ErrorState
+              message={error}
+              onRetry={() => {
+                setError("");
+                void reloadVisibleMemories();
+              }}
+              onDismiss={() => setError("")}
+            />
+          )}
 
-          {memories.length === 0 ? (
-            <p className="empty-state">
-              {view === "search"
-                ? `没有找到与"${searchQuery}"相关的记忆。`
-                : "还没有记忆。Piko 会在和你互动时逐渐记住重要的事。"}
-            </p>
+          {!error && memories.length === 0 ? (
+            <EmptyState
+              title={view === "search" ? "没有匹配的记忆" : "还没有记忆"}
+              description={
+                view === "search"
+                  ? `没有找到与"${searchQuery}"相关的记忆，换个关键词试试。`
+                  : "Piko 会在和你互动时逐渐记住重要的事。"
+              }
+            />
           ) : (
             <div className="memory-list">
               {memories.map((memory) => (
@@ -408,8 +430,22 @@ export function MemoryCenter() {
 
       {subView === "pending" && (
         <>
-          {pendingCandidates.length === 0 ? (
-            <p className="empty-state">没有待确认的记忆推断。</p>
+          {error && (
+            <ErrorState
+              message={error}
+              onRetry={() => {
+                setError("");
+                void loadPending();
+              }}
+              onDismiss={() => setError("")}
+            />
+          )}
+
+          {!error && pendingCandidates.length === 0 ? (
+            <EmptyState
+              title="没有待确认的记忆推断"
+              description="Piko 推断出的候选记忆会出现在这里，由你决定是否记住。"
+            />
           ) : (
             <div className="memory-list">
               {pendingCandidates.map((cand) => (
@@ -447,8 +483,22 @@ export function MemoryCenter() {
 
       {subView === "reflections" && (
         <>
-          {summaries.length === 0 ? (
-            <p className="empty-state">还没有反思总结。点击“反思”按钮运行第一次反思。</p>
+          {error && (
+            <ErrorState
+              message={error}
+              onRetry={() => {
+                setError("");
+                void loadSummaries();
+              }}
+              onDismiss={() => setError("")}
+            />
+          )}
+
+          {!error && summaries.length === 0 ? (
+            <EmptyState
+              title="还没有反思总结"
+              description="点击「反思」按钮运行第一次反思。"
+            />
           ) : (
             <div className="reflection-list">
               {summaries.map((s) => (

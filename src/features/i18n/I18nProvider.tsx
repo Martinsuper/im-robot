@@ -24,7 +24,7 @@ function getStoredLocale(): Locale {
   try {
     const stored = localStorage.getItem('piko-locale');
     if (stored && stored in localeMap) return stored as Locale;
-  } catch { /* ignore */ }
+  } catch { /* i18n fallback：语言包缺失时降级为默认语言 */ }
   return getSystemLocale();
 }
 
@@ -65,7 +65,7 @@ export function I18nProvider({ children }: I18nProviderProps) {
     setLocaleState(newLocale);
     try {
       localStorage.setItem('piko-locale', newLocale);
-    } catch { /* ignore */ }
+    } catch { /* i18n fallback：语言包缺失时降级为默认语言 */ }
   }, []);
 
   return (
@@ -88,6 +88,7 @@ export function detectSystemLocaleChange(): boolean {
   try {
     return localStorage.getItem('piko-locale') === null;
   } catch {
+    /* i18n fallback：语言包缺失时降级为默认语言 */
     return true;
   }
 }

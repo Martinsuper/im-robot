@@ -24,7 +24,10 @@ export function loadPersonalityState(fallback: PersonalityDimensions = DEFAULT_P
     if (!raw) return { ...fallback };
     const parsed = JSON.parse(raw) as unknown;
     return isPersonalityDimensions(parsed) ? parsed : { ...fallback };
-  } catch {
+  } catch (error) {
+    // 降级为默认性格，不打扰用户：性格维度每次挂载都读一次，
+    // 失败时弹窗会持续骚扰，而默认值本身即可正常工作。
+    console.warn("[personalityRuntime] 读取失败", error);
     return { ...fallback };
   }
 }
@@ -34,8 +37,10 @@ export function savePersonalityState(state: PersonalityDimensions): void {
   try {
     window.localStorage.setItem(PERSONALITY_STORAGE_KEY, JSON.stringify(state));
     window.dispatchEvent(new CustomEvent<PersonalityDimensions>("piko-personality-state-changed", { detail: state }));
-  } catch {
-    // ignore persistence failures
+  } catch (error) {
+    // ignore persistence failures。
+    // 降级为「本次不持久化」，不打扰用户：每次交互都会写一次，弹窗会刷屏。
+    console.warn("[personalityRuntime] 写入失败", error);
   }
 }
 
@@ -44,8 +49,10 @@ export function clearPersonalityState(): void {
   try {
     window.localStorage.removeItem(PERSONALITY_STORAGE_KEY);
     window.dispatchEvent(new CustomEvent<PersonalityDimensions>("piko-personality-state-changed", { detail: DEFAULT_PERSONALITY }));
-  } catch {
-    // ignore persistence failures
+  } catch (error) {
+    // ignore persistence failures。
+    // 仅在重置设置时触发一次，失败也不影响内存中的默认性格，无需打扰用户。
+    console.warn("[personalityRuntime] 清除失败", error);
   }
 }
 

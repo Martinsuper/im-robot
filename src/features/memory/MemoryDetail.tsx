@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { toUserMessage } from "../../lib/errors";
+import { useToast } from "../../components/feedback/toastStore";
 import {
   MemoryItem,
   MemoryRelation,
@@ -38,6 +40,7 @@ export function MemoryDetail({
   onDeleted: () => void | Promise<void>;
   onUpdated?: (memory: MemoryItem) => void;
 }) {
+  const toast = useToast();
   const [relations, setRelations] = useState<MemoryRelation[]>([]);
   const [editTitle, setEditTitle] = useState(memory.title);
   const [editContent, setEditContent] = useState(memory.content);
@@ -62,8 +65,8 @@ export function MemoryDetail({
       setEditContent(updated.content);
       onUpdated?.(updated);
       setIsEditing(false);
-    } catch {
-      // ignore
+    } catch (error) {
+      toast.error(toUserMessage(error, "保存失败"));
     }
   }
 
@@ -73,8 +76,8 @@ export function MemoryDetail({
       await runCommand("delete_memory", { id: memory.id });
       await onDeleted();
       onClose();
-    } catch {
-      // ignore
+    } catch (error) {
+      toast.error(toUserMessage(error, "删除失败"));
     }
   }
 
@@ -88,8 +91,10 @@ export function MemoryDetail({
       });
       onUpdated?.(updated);
       await onDeleted();
-    } catch {
-      // ignore
+    } catch (error) {
+      toast.error(
+        toUserMessage(error, memory.isPinned ? "取消置顶失败" : "置顶失败"),
+      );
     }
   }
 

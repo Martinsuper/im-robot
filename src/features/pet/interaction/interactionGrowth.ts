@@ -36,7 +36,10 @@ export function loadGrowthState(): PetGrowth {
     const raw = window.localStorage.getItem(GROWTH_STORAGE_KEY);
     if (!raw) return createDefaultGrowth();
     return { ...createDefaultGrowth(), ...JSON.parse(raw) } as PetGrowth;
-  } catch {
+  } catch (error) {
+    // 降级为默认值，不打扰用户：成长状态每次挂载都读一次，
+    // 失败时弹窗会持续骚扰，且只是丢失进度展示，不影响核心功能。
+    console.warn("[interactionGrowth] 读取失败", error);
     return createDefaultGrowth();
   }
 }
@@ -46,8 +49,10 @@ export function saveGrowthState(state: PetGrowth): void {
   try {
     window.localStorage.setItem(GROWTH_STORAGE_KEY, JSON.stringify(state));
     window.dispatchEvent(new CustomEvent<PetGrowth>("piko-growth-state-changed", { detail: state }));
-  } catch {
-    // ignore persistence failures
+  } catch (error) {
+    // ignore persistence failures。
+    // 降级为「本次不持久化」，不打扰用户：每次交互都会写一次，弹窗会刷屏。
+    console.warn("[interactionGrowth] 写入失败", error);
   }
 }
 

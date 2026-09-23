@@ -300,7 +300,10 @@ export function LiveCharacterPet({
       if (!alive) return;
       try {
         imageRef.current = buildCutoutCanvas(image);
-      } catch {
+      } catch (error) {
+        // 降级为无 cutout 的原图：cutout 只是给精灵做去背描边，
+        // 失败不影响形象主体，直接用原图继续渲染，不打断形象加载。
+        console.warn("[LiveCharacterPet] buildCutoutCanvas 失败，降级为原图", error);
         imageRef.current = image;
       }
       setReady(true);

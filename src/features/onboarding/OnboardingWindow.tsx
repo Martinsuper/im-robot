@@ -1,6 +1,8 @@
 import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from '../i18n/I18nProvider';
+import { toUserMessage } from '../../lib/errors';
+import { useToast } from '../../components/feedback/toastStore';
 
 type OnboardingStep = 'name' | 'ai' | 'complete';
 
@@ -25,6 +27,7 @@ const PROVIDERS: ProviderOption[] = [
 
 export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
   const { t } = useTranslation();
+  const toast = useToast();
   const [step, setStep] = useState<OnboardingStep>('name');
   const [companionName, setCompanionName] = useState('Piko');
   const [selectedProvider, setSelectedProvider] = useState('openai-compatible');
@@ -60,8 +63,9 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
       });
       await invoke('list_models');
       setTestResult('success');
-    } catch {
+    } catch (error) {
       setTestResult('error');
+      toast.error(toUserMessage(error, '连接测试失败。'));
     } finally {
       setTesting(false);
     }
