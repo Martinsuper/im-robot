@@ -34,6 +34,7 @@ use chat::*;
 mod debounce;
 pub mod memory;
 mod reminder_schedule;
+mod schedule;
 mod storage;
 pub mod sync;
 pub mod typing_activity;
@@ -1169,6 +1170,20 @@ fn calendar_events_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|directory| directory.join("calendar-events.json"))
 }
 
+fn schedule_items_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("schedule-items.json"))
+}
+
+fn schedule_migration_marker_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("schedule-migration.json"))
+}
+
 fn external_plugins_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
@@ -1251,6 +1266,39 @@ fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<
 
 fn persist_calendar_events_to_path(path: &Path, events: &[CalendarEvent]) -> Result<(), String> {
     storage::write(path, events)
+}
+
+/// R1：把旧的 reminders.json / calendar-events.json 迁移进统一的 schedule-items.json。
+///
+/// 幂等；不删除旧文件；旧文件损坏时中止且不写完成标记。详见 `schedule` 模块文档。
+fn migrate_schedule_items(app: &AppHandle) -> Result<schedule::ScheduleMigrationReport, String> {
+    let _transaction = storage::transaction();
+    let reminders = reminders_path(app).ok_or("无法获取提醒数据路径")?;
+    let events = calendar_events_path(app).ok_or("无法获取日程数据路径")?;
+    let items = schedule_items_path(app).ok_or("无法获取日程记录路径")?;
+    let marker = schedule_migration_marker_path(app).ok_or("无法获取迁移标记路径")?;
+    schedule::migrate_legacy_schedule_at(&reminders, &events, &items, &marker)
+}
+
+/// 统一时间线读取入口。首次调用会按需完成迁移。
+fn read_schedule_items(app: &AppHandle) -> Result<Vec<schedule::ScheduleItem>, String> {
+    let _transaction = storage::transaction();
+    let items_path = schedule_items_path(app).ok_or("无法获取日程记录路径")?;
+    let marker = schedule_migration_marker_path(app).ok_or("无法获取迁移标记路径")?;
+    let version: serde_json::Value = storage::read_or_default(&marker);
+    let migrated = version
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|value| value >= schedule::SCHEMA_VERSION as u64);
+    if !migrated {
+        migrate_schedule_items(app)?;
+    }
+    storage::read(&items_path)
+}
+
+#[tauri::command]
+fn list_schedule_items(app: AppHandle) -> Result<Vec<schedule::ScheduleItem>, String> {
+    read_schedule_items(&app)
 }
 
 struct ExternalPluginPackage {
@@ -5445,6 +5493,19 @@ pub fn run() {
             app.manage(memory::CandidateCache::default());
             app.manage(typing_activity::TypingActivityState::new(app.handle()));
 
+            // R1：把提醒与日程合并到统一存储。幂等且不删除旧文件；
+            // 失败只记录日志，不能让迁移问题阻断应用启动。
+            match migrate_schedule_items(app.handle()) {
+                Ok(report) if report.already_migrated => {}
+                Ok(report) => println!(
+                    "[schedule] 迁移完成：提醒 {} 条、日程 {} 条，备份于 {}",
+                    report.reminders_imported,
+                    report.events_imported,
+                    report.backup_dir.as_deref().unwrap_or("（无旧文件，未备份）")
+                ),
+                Err(error) => eprintln!("[schedule] 迁移中止：{error}"),
+            }
+
             configure_tray(app)?;
             configure_global_shortcut(app)?;
             app.state::<PluginRegistry>()
@@ -5524,6 +5585,7 @@ pub fn run() {
             resume_focus,
             stop_focus,
             list_reminders,
+            list_schedule_items,
             create_reminder,
             delete_reminder,
             list_memos,
