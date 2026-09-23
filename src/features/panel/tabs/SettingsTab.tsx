@@ -5,8 +5,8 @@ import { version as appVersion } from "../../../../package.json";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { CompanionHero, SettingsGroup } from "../PanelChrome";
 import { EmptyState, ErrorState } from "../../../components/feedback/States";
 import { useToast, type ToastTone } from "../../../components/feedback/toastStore";
@@ -385,6 +385,27 @@ export function SettingsTab() {
   function clearCustomPetImage() {
     clearCustomPetImagePath();
     if (petVisualStyle === "custom") setPetVisualStyle("lumi");
+  }
+
+  /**
+   * 导出我的数据（05 §4.4）。
+   *
+   * `export_to_file` 会写一份包含设置 / 对话 / 提醒 / 日程 / 专注记录的 JSON。
+   * 注意它**不含 API Key**（密钥存在钥匙串里），这一点在界面上要说清楚，
+   * 否则用户会以为导出的是完整备份。
+   */
+  async function exportMyData() {
+    try {
+      const path = await save({
+        defaultPath: "piko-export.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return;
+      await runCommand("export_to_file", { filePath: path });
+      toast.show({ message: "数据已导出（不含 API Key）", tone: "success" });
+    } catch (error) {
+      toast.error(toUserMessage(error, "导出失败，请重试。"));
+    }
   }
 
   async function toggleAutostart() {
@@ -835,6 +856,20 @@ export function SettingsTab() {
               />
               <span>开机自动启动</span>
             </label>
+          </div>
+        </section>
+
+        <section className="panel-card">
+          <p className="eyebrow">DATA</p>
+          <h2>我的数据</h2>
+          <div className="settings-form">
+            <button type="button" onClick={() => void exportMyData()}>
+              导出我的数据
+            </button>
+            <p className="settings-note">
+              导出一份 JSON（设置、对话、提醒、日程、专注记录）。出于安全考虑，
+              API Key 不在其中。
+            </p>
           </div>
         </section>
       </SettingsGroup>
