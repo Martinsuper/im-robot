@@ -52,7 +52,14 @@ export function MemoryDetail({
     setIsEditing(false);
     void runCommand<MemoryRelation[]>("get_memory_relations", {
       memoryId: memory.id,
-    }).then(setRelations).catch(() => setRelations([]));
+    })
+      .then(setRelations)
+      .catch((error) => {
+        // 关联记忆是详情页的补充信息，不是主体内容：失败时保持区块隐藏即可，
+        // 但必须留下日志，否则「查不到关联」会被误当成「没有关联」。
+        console.warn("[MemoryDetail] 关联记忆加载失败，降级为不展示关联", error);
+        setRelations([]);
+      });
   }, [memory.id, memory.title, memory.content]);
 
   async function handleSave() {

@@ -31,7 +31,10 @@ export function MemoryCenter() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
-  const [error, setError] = useState("");
+  // 三个子视图各自持有错误状态：原先共用一个，切到别的子视图会看到上一个视图的报错。
+  const [listError, setListError] = useState("");
+  const [pendingError, setPendingError] = useState("");
+  const [summariesError, setSummariesError] = useState("");
   const [view, setView] = useState<"list" | "search" | "recent">("list");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -59,10 +62,10 @@ export function MemoryCenter() {
     try {
       const items = await runCommand<MemoryItem[]>("list_memories", { input });
       setMemories(items);
-      setError("");
+      setListError("");
     } catch (error) {
       // 不清空列表：读取失败要让用户看到「加载失败」，而不是伪装成「没有记录」。
-      setError(toUserMessage(error, "记录加载失败，请重试。"));
+      setListError(toUserMessage(error, "记录加载失败，请重试。"));
     }
   }
 
@@ -70,10 +73,10 @@ export function MemoryCenter() {
     try {
       const items = await runCommand<MemoryItem[]>("get_recent_memories", { limit: 20 });
       setMemories(items);
-      setError("");
+      setListError("");
     } catch (error) {
       // 同上：失败不清空，保留上一次成功的结果并报错。
-      setError(toUserMessage(error, "记录加载失败，请重试。"));
+      setListError(toUserMessage(error, "记录加载失败，请重试。"));
     }
   }
 
@@ -81,9 +84,10 @@ export function MemoryCenter() {
     try {
       const items = await runCommand<MemoryCandidate[]>("get_pending_candidates", {});
       setPendingCandidates(items);
+      setPendingError("");
     } catch (error) {
       // 同上：失败不清空，避免把「加载失败」显示成「没有待确认」。
-      setError(toUserMessage(error, "待确认列表加载失败，请重试。"));
+      setPendingError(toUserMessage(error, "待确认列表加载失败，请重试。"));
     }
   }
 
@@ -93,9 +97,10 @@ export function MemoryCenter() {
         limit: 5,
       });
       setSummaries(items);
+      setSummariesError("");
     } catch (error) {
       // 同上：失败不清空，避免把「加载失败」显示成「还没有反思总结」。
-      setError(toUserMessage(error, "反思总结加载失败，请重试。"));
+      setSummariesError(toUserMessage(error, "反思总结加载失败，请重试。"));
     }
   }
 
@@ -129,10 +134,10 @@ export function MemoryCenter() {
     try {
       const items = await runCommand<MemoryItem[]>("search_memories", { input });
       setMemories(items);
-      setError("");
+      setListError("");
     } catch (error) {
       // 同上：搜索失败不清空结果，保留上一次成功的结果并报错。
-      setError(toUserMessage(error, "搜索失败，请重试。"));
+      setListError(toUserMessage(error, "搜索失败，请重试。"));
     } finally {
       setIsSearching(false);
     }
@@ -165,7 +170,7 @@ export function MemoryCenter() {
   async function handleDelete(id: string) {
     try {
       await runCommandAndRefresh("delete_memory", { id }, [reloadVisibleMemories]);
-      setError("");
+      setListError("");
     } catch (error) {
       toast.error(toUserMessage(error, "删除失败"));
     }
@@ -195,7 +200,7 @@ export function MemoryCenter() {
     };
     try {
       await runCommand("feedback_memory", { input });
-      setError("");
+      setListError("");
     } catch (error) {
       toast.error(toUserMessage(error, "反馈提交失败"));
     }
@@ -207,7 +212,7 @@ export function MemoryCenter() {
     setIsClearing(true);
     try {
       await runCommandAndRefresh("clear_memories", {}, [reloadVisibleMemories]);
-      setError("");
+      setListError("");
     } catch (error) {
       toast.error(toUserMessage(error, "清除失败"));
     } finally {
@@ -220,7 +225,7 @@ export function MemoryCenter() {
     try {
       await runCommand("reflect_memory_now", {});
       await Promise.all([loadSummaries(), loadMemories()]);
-      setError("");
+      setListError("");
     } catch (error) {
       toast.error(toUserMessage(error, "反思失败"));
     } finally {
@@ -390,18 +395,18 @@ export function MemoryCenter() {
             )}
           </div>
 
-          {error && (
+          {listError && (
             <ErrorState
-              message={error}
+              message={listError}
               onRetry={() => {
-                setError("");
+                setListError("");
                 void reloadVisibleMemories();
               }}
-              onDismiss={() => setError("")}
+              onDismiss={() => setListError("")}
             />
           )}
 
-          {!error && memories.length === 0 ? (
+          {!listError && memories.length === 0 ? (
             <EmptyState
               title={view === "search" ? "没有匹配的记忆" : "还没有记忆"}
               description={
@@ -430,18 +435,18 @@ export function MemoryCenter() {
 
       {subView === "pending" && (
         <>
-          {error && (
+          {pendingError && (
             <ErrorState
-              message={error}
+              message={pendingError}
               onRetry={() => {
-                setError("");
+                setPendingError("");
                 void loadPending();
               }}
-              onDismiss={() => setError("")}
+              onDismiss={() => setPendingError("")}
             />
           )}
 
-          {!error && pendingCandidates.length === 0 ? (
+          {!pendingError && pendingCandidates.length === 0 ? (
             <EmptyState
               title="没有待确认的记忆推断"
               description="Piko 推断出的候选记忆会出现在这里，由你决定是否记住。"
@@ -483,18 +488,18 @@ export function MemoryCenter() {
 
       {subView === "reflections" && (
         <>
-          {error && (
+          {summariesError && (
             <ErrorState
-              message={error}
+              message={summariesError}
               onRetry={() => {
-                setError("");
+                setSummariesError("");
                 void loadSummaries();
               }}
-              onDismiss={() => setError("")}
+              onDismiss={() => setSummariesError("")}
             />
           )}
 
-          {!error && summaries.length === 0 ? (
+          {!summariesError && summaries.length === 0 ? (
             <EmptyState
               title="还没有反思总结"
               description="点击「反思」按钮运行第一次反思。"
