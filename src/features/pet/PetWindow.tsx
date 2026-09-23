@@ -1,10 +1,8 @@
-import { Coffee, LayoutGrid, MessageCircle } from "lucide-react";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { AppSettings, PetVisualEvent, QuietMode, Theme } from "../../types/appTypes";
 import {
   PetSprite,
   defaultAppSettings,
-  useCurrentTime,
   usePetVisualStyle,
 } from "../app/appShared";
 import { runCommand } from "../app/appRuntime";
@@ -72,7 +70,6 @@ function PetWindowContent() {
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [sensingPaused, setSensingPaused] = useState(false);
   const [theme, setTheme] = useState<Theme>("sage");
-  const currentTime = useCurrentTime();
   const isResting = petState.mode === "resting";
   const resetTimer = useRef<number | undefined>(undefined);
   const [mouseDelta, setMouseDelta] = useState({ x: 0, y: 0 });
@@ -522,7 +519,7 @@ function PetWindowContent() {
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          void runCommand("toggle_panel");
+          void runCommand("show_pet_context_menu");
         }}
       >
         <PetSprite
@@ -531,15 +528,7 @@ function PetWindowContent() {
           reaction={petState.reaction}
           mouseDelta={mouseDelta}
         />
-        <time className="pet-clock" aria-label={`当前时间 ${currentTime}`}>
-          {currentTime}
-        </time>
       </div>
-      <nav className="pet-actions" aria-label="伙伴快捷操作" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}>
-        <button type="button" aria-label="对话" title="对话" onClick={() => void runCommand("show_bubble")}><MessageCircle size={16} /></button>
-        <button type="button" aria-label="休息" title="休息五分钟" onClick={() => void runCommand("start_break", { minutes: 5 })}><Coffee size={16} /></button>
-        <button type="button" aria-label="面板" title="打开面板" onClick={() => void runCommand("open_panel")}><LayoutGrid size={16} /></button>
-      </nav>
     </main>
   );
 }

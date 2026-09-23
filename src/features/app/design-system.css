@@ -97,10 +97,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .bubble-thread__ai-content { font-size: 13px; line-height: 1.75; }
 .inline-toolbar__btn { min-width: 30px; min-height: 30px; }
 .pet-stage { position: relative; }
-.pet-actions { position: absolute; z-index: 5; bottom: 7px; left: 50%; transform: translateX(-50%); display: flex; gap: 3px; padding: 4px; border: 1px solid #dfe5dc; border-radius: 30px; background: rgba(255,254,250,.95); box-shadow: 0 3px 12px #243f2c12; }
-.pet-actions button { display: flex; align-items: center; justify-content: center; width: 31px; height: 29px; border: 0; border-radius: 50%; color: var(--piko-accent); background: transparent; }
-.pet-actions button:hover { background: var(--piko-soft); }
-.pet-clock { color: var(--piko-muted); font-size: 11px; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) {
   .panel-shell { padding: 20px 18px 14px; gap: 16px; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
   .panel-brand { margin-bottom: 20px; }

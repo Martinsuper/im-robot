@@ -15,10 +15,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{ContextMenu, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
-    State, WindowEvent,
+    State, Webview, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -552,6 +552,10 @@ struct FocusTimer(Mutex<Option<ActiveFocus>>);
 
 #[derive(Default)]
 struct IdleDetection(Mutex<bool>);
+
+/// 精灵窗口右键菜单：持有 Menu 实例，避免菜单弹出后被 Drop。
+#[derive(Default)]
+struct PetContextMenu(Mutex<Option<Menu<tauri::Wry>>>);
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2800,6 +2804,40 @@ fn hide_pet(app: AppHandle) {
     if let Some(window) = app.get_webview_window("pet") {
         let _ = window.hide();
     }
+}
+
+#[tauri::command]
+fn show_pet_context_menu(app: AppHandle) -> Result<(), String> {
+    // `Manager::get_window` 需要 tauri 的 unstable feature；
+    // WebviewWindow 只 AsRef<Webview>，从 Webview::window() 拿到宿主 Window。
+    let window = app
+        .get_webview_window("pet")
+        .as_ref()
+        .map(|webview_window| AsRef::<Webview<_>>::as_ref(webview_window).window())
+        .ok_or_else(|| "宠物窗口不存在".to_string())?;
+
+    let chat_item = MenuItem::with_id(&app, "pet_ctx_chat", "对话", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let break_item = MenuItem::with_id(&app, "pet_ctx_break", "休息 5 分钟", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let panel_item = MenuItem::with_id(&app, "pet_ctx_panel", "打开面板", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(&app, &[&chat_item, &break_item, &panel_item])
+        .map_err(|e| e.to_string())?;
+
+    // 菜单必须在 popup 之后继续存活，否则 macOS 上会立刻消失。
+    // 注意：Manager::manage 对已存在的类型不会覆盖，所以这里用 State slot 替换。
+    let store = app.state::<PetContextMenu>();
+    {
+        let mut slot = store.0.lock().map_err(|_| "无法准备右键菜单".to_string())?;
+        *slot = Some(menu);
+    }
+    let guard = store.0.lock().map_err(|_| "无法准备右键菜单".to_string())?;
+    if let Some(menu) = guard.as_ref() {
+        menu.popup(window).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -5386,6 +5424,7 @@ pub fn run() {
         .manage(LocalTts::default())
         .manage(FocusTimer::default())
         .manage(IdleDetection::default())
+        .manage(PetContextMenu::default())
         .manage(WorkRhythmCache::default())
         .manage(WorkRhythmReminderCache::default())
         .manage(CalendarNotificationCache::default())
@@ -5434,6 +5473,15 @@ pub fn run() {
             watch_calendar_events(app.handle());
             watch_focus_timer(app.handle());
             watch_ambient_nudges(app.handle());
+            app.handle().on_menu_event(|app_handle, event| match event.id.as_ref() {
+                "pet_ctx_chat" => show_bubble(app_handle.clone()),
+                "pet_ctx_break" => {
+                    let timer = app_handle.state::<FocusTimer>();
+                    let _ = start_break(app_handle.clone(), timer, 5);
+                }
+                "pet_ctx_panel" => open_panel(app_handle.clone()),
+                _ => {}
+            });
             watch_idle_detection(app.handle());
             watch_foreground_app(app.handle());
             typing_activity::start_keyboard_monitor(app.handle());
@@ -5449,6 +5497,7 @@ pub fn run() {
             toggle_panel,
             show_pet,
             hide_pet,
+            show_pet_context_menu,
             begin_screen_capture,
             cancel_screen_capture,
             confirm_screen_capture,
