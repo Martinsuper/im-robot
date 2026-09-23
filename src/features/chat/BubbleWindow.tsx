@@ -352,7 +352,7 @@ export function BubbleWindow() {
       },
     }).catch((error) => {
       setIsThinking(false);
-      setMessage(`模型服务连接失败：${String(error)}`);
+      setMessage(`模型服务连接失败：${toUserMessage(error)}`);
     });
   }
 
@@ -637,7 +637,7 @@ export function BubbleWindow() {
       setContextNotice("已清空上下文。");
       window.setTimeout(() => setContextNotice(""), 3000);
     } catch (error) {
-      setContextNotice(String(error));
+      setContextNotice(toUserMessage(error, "清空上下文失败，请重试。"));
     }
   }
 
