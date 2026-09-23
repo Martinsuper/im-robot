@@ -1,0 +1,70 @@
+/*
+ * 折叠分组外壳（组件见 PanelChrome.tsx 的 SettingsGroup）。
+ *
+ * 放在独立文件而不是 tabs/settings.css：外壳是面板级组件，
+ * 三个 Tab 都可能用到它，样式应该跟着组件走而不是跟着某一个 Tab。
+ */
+
+.settings-group {
+  border: 1px solid var(--piko-line);
+  border-radius: var(--radius-xl, 16px);
+  background: var(--piko-fill, #fffefa);
+  padding: 0 var(--space-4, 16px);
+}
+
+.settings-group > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  padding: 13px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+/* 用自绘箭头，避免各平台默认三角大小不一 */
+.settings-group > summary::-webkit-details-marker {
+  display: none;
+}
+.settings-group > summary::after {
+  content: "▸";
+  flex-shrink: 0;
+  color: var(--piko-muted);
+  font-size: 10px;
+  transition: transform 160ms ease;
+}
+.settings-group[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.settings-group__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--piko-accent);
+}
+
+.settings-group__title {
+  flex-shrink: 0;
+  color: var(--piko-ink);
+  font-size: var(--text-base, 13px);
+  font-weight: 650;
+  letter-spacing: -.2px;
+}
+
+/* 描述与标题之间必须有可见的分隔，否则会连成「伙伴名字、外观与它有多爱说话」 */
+.settings-group__description {
+  flex: 1;
+  min-width: 0;
+  padding-left: var(--space-2, 8px);
+  border-left: 1px solid var(--piko-line);
+  color: var(--piko-muted);
+  font-size: var(--text-xs, 9px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-group__body {
+  display: grid;
+  gap: var(--space-3, 12px);
+  padding: 0 0 var(--space-4, 16px);
+}

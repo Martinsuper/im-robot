@@ -120,6 +120,29 @@ export interface MemoSummaryGroup {
   topTags: string[];
 }
 
+/** 提醒与日程的统一模型（R1）。后端存储在 schedule-items.json。 */
+export type ScheduleKind = "reminder" | "event";
+
+export type ScheduleStatus = "pending" | "triggered" | "done";
+
+export interface ScheduleItem {
+  id: string;
+  kind: ScheduleKind;
+  title: string;
+  /** 时间线排序与展示的唯一时间起点：提醒取 dueAt，日程取 startAt。 */
+  startAt: number;
+  /** 仅日程有结束时间。 */
+  endAt?: number;
+  /** 仅提醒。 */
+  status?: ScheduleStatus;
+  /** 仅提醒。 */
+  repeat?: ReminderRepeat;
+  location?: string;
+  notes?: string;
+  /** 来源标记：user / migrated:xxx。用于排查，不面向用户展示。 */
+  source?: string;
+}
+
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -141,7 +164,7 @@ export interface InstalledPlugin {
 
 export type AttachmentAction = "summarize" | "translate" | "explain";
 export type Theme = "sage" | "blue" | "peach";
-export type PanelTab = "companion" | "settings" | "reminders" | "calendar" | "memos" | "history" | "memory" | "about";
+export type PanelTab = "today" | "records" | "settings";
 export type ReminderRepeat = "none" | "daily" | "weekly" | "weekdays";
 
 export interface OnboardingStatus {

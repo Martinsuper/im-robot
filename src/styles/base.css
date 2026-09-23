@@ -19,3 +19,16 @@ summary:focus-visible {
   outline: 2px solid var(--piko-accent);
   outline-offset: 3px;
 }
+
+/* 只给读屏软件的文本。用于图标按钮与「视觉隐藏但仍需可访问名」的 label。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

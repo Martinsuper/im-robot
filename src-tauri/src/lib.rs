@@ -381,7 +381,18 @@ struct Memo {
 struct MemoInput {
     title: String,
     content: String,
+    /// 用户显式选择的分类。不传则由 `infer_memo_category` 推断。
+    ///
+    /// 之前这个字段不存在，于是界面上「记录」Tab 的分类下拉是一个**空操作**：
+    /// 选了也不会生效，但用户以为生效了（00 §5.5「可见即可解释」）。
+    #[serde(default)]
+    category: Option<String>,
 }
+
+/// 允许的记录分类，与 `summarize_memos` 的分组顺序、前端选项保持一致。
+const MEMO_CATEGORIES: [&str; 7] = [
+    "task", "idea", "learning", "work", "life", "reference", "other",
+];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1343,7 +1354,12 @@ pub(crate) fn persist_schedule_items(
     items: &[schedule::ScheduleItem],
 ) -> Result<(), String> {
     let path = schedule_items_path(app).ok_or("无法获取日程记录路径")?;
-    storage::write(&path, items)
+    storage::write(&path, items)?;
+    // 提醒与日程现在同源（schedule-items.json），所以广播也统一成一个事件。
+    // 旧命令仍会各自发 reminders-updated / calendar-events-updated，保留是为了
+    // 不打断尚未迁移的监听方，等 R1 收尾时清掉。
+    let _ = app.emit("schedule-updated", ());
+    Ok(())
 }
 
 /// 统一时间线视图：按时间排序后返回，供「今天」使用。
@@ -1352,6 +1368,27 @@ fn list_schedule_items(app: AppHandle) -> Result<Vec<schedule::ScheduleItem>, St
     let mut items = read_schedule_items(&app)?;
     schedule::sort_schedule_items(&mut items);
     Ok(items)
+}
+
+/// 「今天」时间线上的 ✓ 完成。
+///
+/// 只对提醒有意义：日程是「某个时段安排的事」，到点就过去了，没有完成态。
+/// 对日程调用会明确报错，而不是悄悄把它标成 done 让用户以为删掉了。
+#[tauri::command]
+fn complete_schedule_item(app: AppHandle, id: String) -> Result<schedule::ScheduleItem, String> {
+    let _transaction = storage::transaction();
+    let mut items = load_schedule_items(&app, false)?;
+    let index = items
+        .iter()
+        .position(|item| item.id == id)
+        .ok_or_else(|| "这条记录已不存在，请刷新后重试".to_string())?;
+    if items[index].kind != schedule::ScheduleKind::Reminder {
+        return Err("日程没有完成状态，请直接删除或修改时间".to_string());
+    }
+    items[index].status = Some("done".to_string());
+    let updated = items[index].clone();
+    persist_schedule_items(&app, &items)?;
+    Ok(updated)
 }
 
 struct ExternalPluginPackage {
@@ -1905,7 +1942,8 @@ fn memo_input_from_value(value: &Value) -> Result<MemoInput, String> {
         .as_str()
         .ok_or_else(|| "备忘录内容不能为空".to_string())?
         .to_string();
-    Ok(MemoInput { title, content })
+    // 模型工具调用走这里；分类交给 infer_memo_category 推断。
+    Ok(MemoInput { title, content, category: None })
 }
 
 fn calendar_event_input_from_value(value: &Value) -> Result<CalendarEventInput, String> {
@@ -3430,7 +3468,19 @@ fn memo_from_input(id: String, input: MemoInput, created_at: u64) -> Result<Memo
         return Err("备忘录内容不能超过 8000 个字符".to_string());
     }
 
-    let category = infer_memo_category(title, content);
+    let category = match input.category.as_deref() {
+        Some(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                infer_memo_category(title, content)
+            } else if MEMO_CATEGORIES.contains(&value) {
+                value.to_string()
+            } else {
+                return Err(format!("不支持的记录分类：{value}"));
+            }
+        }
+        None => infer_memo_category(title, content),
+    };
     let now = unix_timestamp();
     Ok(Memo {
         id,
@@ -5651,6 +5701,7 @@ pub fn run() {
             stop_focus,
             list_reminders,
             list_schedule_items,
+            complete_schedule_item,
             create_reminder,
             delete_reminder,
             list_memos,

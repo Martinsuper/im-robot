@@ -15,25 +15,14 @@ test("bubble preview exposes text, file and screenshot entry points", async ({ p
   // 作为初始状态注入之后再补。
 });
 
-test("panel preview exposes settings and network update entry point", async ({ page }) => {
+test("panel preview renders the three-tab shell", async ({ page }) => {
   await page.goto("/?view=panel");
-  await expect(page.getByRole("button", { name: "精灵", exact: true })).toHaveClass(/is-active/);
-  await page.getByRole("button", { name: "设置" }).click();
-  await page.getByLabel("服务类型").selectOption("anthropic");
-  await expect(page.getByLabel("Base URL")).toHaveValue("https://api.anthropic.com/v1");
-  await expect(page.getByLabel("Model")).toHaveValue("claude-sonnet-4-6");
-  await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByText("权限中心")).toBeVisible();
-  await expect(page.getByRole("button", { name: "检查更新" })).toBeVisible();
-  await expect(page.getByText("截图时按需申请")).toBeVisible();
-  await page.getByRole("button", { name: "提醒" }).click();
-  await expect(page.getByLabel("重复规则")).toHaveValue("none");
-  await expect(page.getByRole("heading", { name: "专注模式" })).toBeVisible();
-  await expect(page.getByLabel("专注时长")).toHaveValue("25");
-  await page.getByRole("button", { name: "历史" }).click();
-  // 「今日专注」在面板总览（常驻，IA-7）与历史分区里各出现一次，必须限定分区，
-  // 否则 Playwright 会报 strict mode 冲突。IA-7 的移除属于 R1。
-  await expect(page.locator(".panel-section--history").getByText("今日专注")).toBeVisible();
+  const nav = page.getByRole("navigation", { name: "面板导航" });
+  await expect(nav.getByRole("button")).toHaveCount(3);
+  await expect(nav.getByRole("button", { name: "今天" })).toHaveClass(/is-active/);
+  // 各 Tab 的细节断言在 panel-tabs.spec.ts 里，这里只确认外壳可用。
+  await nav.getByRole("button", { name: "设置" }).click();
+  await expect(nav.getByRole("button", { name: "设置" })).toHaveClass(/is-active/);
 });
 
 test("capture preview exposes selection controls", async ({ page }) => {

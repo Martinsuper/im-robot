@@ -1,0 +1,289 @@
+/*
+ * 「今天」Tab（03 模块）。
+ * 只写这一屏需要的样式，全部复用 src/styles/tokens.css 的令牌与 App.css 里已有的
+ * .panel-card / .section-heading / .segmented-control。
+ */
+
+.tab {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--space-3, 12px);
+  align-content: start;
+}
+
+/* --- ① 问候 --- */
+.today-greeting h2 {
+  margin: 0 0 2px;
+  font-size: var(--text-lg, 15px);
+}
+.today-greeting p {
+  margin: 0;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+}
+
+/* --- ② / ③ / ④ 共用卡片外壳 --- */
+.today-card {
+  border: 1px solid var(--piko-line);
+  border-radius: var(--radius-xl, 16px);
+  background: var(--piko-fill, #fffefa);
+  padding: var(--space-4, 16px);
+}
+
+/* --- ② 专注 / 休息 --- */
+.today-focus__today {
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  font-variant-numeric: tabular-nums;
+}
+.today-focus__durations {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2, 8px);
+}
+.today-focus__durations button {
+  min-height: 34px;
+  border: 1px solid var(--piko-line);
+  border-radius: var(--radius-md, 10px);
+  background: transparent;
+  color: var(--piko-ink);
+  font-size: var(--text-sm, 11px);
+  font-weight: 600;
+}
+.today-focus__durations button:hover {
+  border-color: var(--piko-accent);
+  color: var(--piko-accent);
+}
+.today-focus__breaks {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-3, 12px);
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+}
+.today-focus__breaks .text-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 4px;
+}
+.today-focus__running {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  color: var(--piko-accent);
+}
+.today-focus__running strong {
+  flex: 1;
+  font-size: 26px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -1px;
+}
+.today-focus__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+}
+.today-focus__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  border: 1px solid var(--piko-line);
+  border-radius: var(--radius-md, 10px);
+  background: transparent;
+  color: var(--piko-ink);
+  font-size: var(--text-sm, 11px);
+}
+.today-focus__actions .text-action {
+  border: 0;
+}
+
+/* --- ③ 快速添加 --- */
+.today-quick-add {
+  display: grid;
+  gap: var(--space-2, 8px);
+}
+.today-quick-add input,
+.today-quick-add select {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid var(--piko-line);
+  border-radius: var(--radius-md, 10px);
+  background: transparent;
+  padding: 0 8px;
+  color: var(--piko-ink);
+  font: inherit;
+  font-size: var(--text-sm, 11px);
+}
+.today-quick-add__row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2, 8px);
+  flex-wrap: wrap;
+}
+.today-quick-add__row label {
+  display: grid;
+  gap: 3px;
+  flex: 1 1 108px;
+  min-width: 0;
+}
+.today-quick-add__row label > span {
+  color: var(--piko-muted);
+  font-size: var(--text-xs, 9px);
+}
+.today-quick-add__row .primary-action {
+  flex: 0 0 auto;
+  min-height: 32px;
+}
+
+/* --- ④ 时间线 --- */
+.today-conflict {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #9a593b;
+  font-size: var(--text-sm, 11px);
+}
+.today-loading {
+  margin: 0;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+}
+
+.timeline {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.timeline__item {
+  display: grid;
+  grid-template-columns: 62px 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  padding: 7px 4px;
+  border-radius: var(--radius-md, 10px);
+}
+.timeline__item:hover {
+  background: var(--piko-soft);
+}
+.timeline__time {
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.timeline__marker {
+  justify-self: center;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--piko-accent);
+}
+/* 日程是区间，用竖条而不是圆点——一眼能区分「一件事」与「一段时间」 */
+.timeline__item--event .timeline__marker {
+  width: 4px;
+  height: 20px;
+  border-radius: 2px;
+}
+.timeline__body {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.timeline__body strong {
+  font-size: var(--text-md, 12px);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timeline__meta {
+  color: var(--piko-muted);
+  font-size: var(--text-xs, 9px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timeline__actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.timeline__item:hover .timeline__actions,
+.timeline__item:focus-within .timeline__actions {
+  opacity: 1;
+}
+.timeline__actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+}
+.timeline__actions button:hover {
+  background: var(--piko-fill, #fffefa);
+  color: var(--piko-accent);
+}
+
+.timeline__item.is-done .timeline__body strong {
+  color: var(--piko-muted);
+  text-decoration: line-through;
+}
+.timeline__item.is-overdue .timeline__marker {
+  background: #b85a51;
+}
+.timeline__item.is-overdue .timeline__time {
+  color: #b85a51;
+}
+.timeline__item.is-conflicting .timeline__marker {
+  box-shadow: 0 0 0 3px rgba(154, 89, 59, .18);
+}
+
+/* --- ⑤ 接下来 --- */
+.today-upcoming summary {
+  cursor: pointer;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  font-weight: 600;
+}
+.timeline--upcoming {
+  margin-top: var(--space-2, 8px);
+}
+.timeline--upcoming .timeline__time {
+  width: 88px;
+}
+
+/* 自然语言识别的建议条：给出来但不自动保存 */
+.today-quick-add__suggestion {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  border: 1px dashed var(--piko-line);
+  border-radius: var(--radius-md, 10px);
+  padding: 5px 9px;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+}
+.today-quick-add__suggestion span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.today-quick-add__suggestion .text-action {
+  min-height: 22px;
+  padding: 0;
+  font-weight: 600;
+}

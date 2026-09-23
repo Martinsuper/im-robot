@@ -372,14 +372,9 @@ export const quietModeOptions: Array<{ label: string; value: QuietMode }> = [
 ];
 
 export const panelTabOptions: Array<{ label: string; value: PanelTab }> = [
-  { label: "精灵", value: "companion" },
+  { label: "今天", value: "today" },
+  { label: "记录", value: "records" },
   { label: "设置", value: "settings" },
-  { label: "提醒", value: "reminders" },
-  { label: "日程", value: "calendar" },
-  { label: "备忘", value: "memos" },
-  { label: "历史", value: "history" },
-  { label: "记忆", value: "memory" },
-  { label: "关于", value: "about" },
 ];
 
 export const reminderRepeatOptions: Array<{ label: string; value: ReminderRepeat }> = [

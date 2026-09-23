@@ -1,0 +1,117 @@
+/*
+ * 「设置」Tab（05 模块）。
+ * 只写这一屏需要的样式（分组外壳本身在 PanelChrome，控件样式在 App.css）。
+ * 全部复用 src/styles/tokens.css 的令牌。
+ */
+
+.tab--settings {
+  gap: var(--space-2, 8px);
+}
+
+/* 每个折叠分组是一个 .settings-group（外壳见 PanelChrome），内部纵向堆叠卡片。 */
+.tab--settings .settings-group__body {
+  display: grid;
+  gap: var(--space-2, 8px);
+}
+
+/* 卡片在设置里一律占满整行，不再用 App.css 里的 6/7/12 栅格。 */
+.tab--settings .panel-card,
+.tab--settings .companion-card,
+.tab--settings .companion-status-card,
+.tab--settings .companion-metrics-card {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
+/* 组内小标题。故意不用 App.css 的 h2 默认行高，设置页信息密度更高。 */
+.tab--settings .panel-card > h2 {
+  margin: 0 0 var(--space-2, 8px);
+  font-size: var(--text-base, 13px);
+  font-weight: 700;
+}
+
+/* 辅助说明。取代原先散落的 <p className="empty-state"> 说明文案。 */
+.settings-note {
+  margin: 0;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  line-height: 1.5;
+}
+
+/* 只读展示项（例如通知权限状态），比表单 label 更轻。 */
+.settings-readonly {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2, 8px);
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+}
+.settings-readonly strong {
+  color: var(--piko-ink);
+  font-size: var(--text-md, 12px);
+  font-weight: 700;
+}
+
+/* 高级组内的四小节：模型参数 / 语音 / 实验室 / 插件。 */
+.settings-subgroup {
+  border: 1px solid var(--piko-line);
+  border-radius: var(--radius-lg, 13px);
+  background: var(--piko-fill, #fffefa);
+  padding: var(--space-3, 12px);
+}
+.settings-subgroup + .settings-subgroup {
+  margin-top: var(--space-2, 8px);
+}
+.settings-subgroup > summary {
+  cursor: pointer;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  font-weight: 650;
+  list-style: none;
+}
+.settings-subgroup > summary::-webkit-details-marker {
+  display: none;
+}
+.settings-subgroup > summary::before {
+  content: "›";
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 140ms ease;
+}
+.settings-subgroup[open] > summary::before {
+  transform: rotate(90deg);
+}
+.settings-subgroup[open] > summary {
+  margin-bottom: var(--space-2, 8px);
+  color: var(--piko-ink);
+}
+.settings-subgroup > .settings-form,
+.settings-subgroup > .speech-model-list,
+.settings-subgroup > .history-list,
+.settings-subgroup > .feature-toggle-card {
+  min-width: 0;
+}
+
+/* 「伙伴」组里的折叠卡片沿用 <details>，给它一个和 subgroup 一致的开合手感。 */
+.tab--settings .companion-metrics-card > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2, 8px);
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  font-weight: 650;
+  list-style: none;
+}
+.tab--settings .companion-metrics-card > summary::-webkit-details-marker {
+  display: none;
+}
+.tab--settings .companion-metrics-card > summary span {
+  color: var(--piko-accent);
+  font-variant-numeric: tabular-nums;
+}
+.tab--settings .companion-metrics-card[open] > summary {
+  margin-bottom: var(--space-2, 8px);
+}

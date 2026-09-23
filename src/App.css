@@ -2040,45 +2040,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
   color: var(--panel-accent);
   background: var(--panel-accent-soft);
 }
-.memo-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 8px;
-}
-.memo-summary-grid button {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  border: 1px solid var(--panel-line);
-  border-radius: 13px;
-  padding: 8px;
-  color: var(--panel-muted);
-  background: rgba(255, 255, 255, .62);
-  text-align: left;
-}
-.memo-summary-grid button.is-active {
-  border-color: color-mix(in srgb, var(--panel-accent) 34%, transparent);
-  background: var(--panel-accent-soft);
-}
-.memo-summary-grid span {
-  color: var(--panel-accent);
-  font-size: 10px;
-  font-weight: 720;
-}
-.memo-summary-grid strong {
-  color: var(--panel-text);
-  font-size: 16px;
-}
-.memo-summary-grid small {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--panel-muted);
-  font-size: 9px;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
 .memo-list {
   display: grid;
   gap: 7px;
@@ -2297,9 +2258,6 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
     align-items: stretch;
   }
   .settings-form__row,
-  .memo-summary-grid {
-    grid-template-columns: 1fr;
-  }
   .companion-card {
     grid-template-columns: 92px 1fr;
     padding: 10px;
