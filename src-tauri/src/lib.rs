@@ -2935,7 +2935,19 @@ fn show_pet_context_menu(app: AppHandle) -> Result<(), String> {
     }
     let guard = store.0.lock().map_err(|_| "无法准备右键菜单".to_string())?;
     if let Some(menu) = guard.as_ref() {
-        menu.popup(window).map_err(|e| e.to_string())?;
+        // 观测点：菜单不弹时很难分辨是「右键事件没到」还是「popup 失败」，两条都留。
+        //
+        // 注意 `popup()` 在 macOS 上是**阻塞**的：它跑一个嵌套事件循环，直到菜单被关闭
+        // 才返回。已实测——把日志打在 popup 之后，它只在点击菜单项之后才出现。
+        // 因此：
+        //  - 「弹出中」必须打在 popup 之前；
+        //  - 上面那把 Mutex guard 会横跨整个菜单生命期。这里没有死锁风险，
+        //    因为菜单是模态的，期间不会有第二次调用。
+        println!("[pet-menu] 弹出右键菜单：对话 / 休息 5 分钟 / 打开面板");
+        match menu.popup(window) {
+            Ok(()) => println!("[pet-menu] 菜单已关闭"),
+            Err(error) => eprintln!("[pet-menu] 弹出右键菜单失败：{error}"),
+        }
     }
 
     Ok(())
