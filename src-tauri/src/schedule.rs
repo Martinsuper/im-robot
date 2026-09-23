@@ -404,6 +404,13 @@ mod tests {
         })
     }
 
+    /// 真实数据里系统同步过来的日程 id 长这样（见 calendar-sync-mapping.json 的 localId）。
+    /// 迁移必须原样保留它，否则系统日历的 id 映射会全部失效。
+    fn system_event_id() -> String {
+        "system-macos-40A03588-791E-4CE1-89C1-2C455F4438EA3a4o0jqp2ambjo79k7iunvlrb77q40google2ecom"
+            .to_string()
+    }
+
     #[test]
     fn merges_both_sources_into_one_sorted_timeline() {
         let fixture = Fixture::new();
@@ -456,6 +463,48 @@ mod tests {
         assert_eq!(event.location.as_deref(), Some("会议室"));
         assert!(event.status.is_none(), "日程不应有提醒状态");
         assert_eq!(event.source, "migrated:calendar-events.json");
+    }
+
+    #[test]
+    fn preserves_system_event_ids_so_calendar_sync_mapping_survives() {
+        // calendar-sync-mapping.json 以 localId（= 日程 id）为键。若迁移改写 id，
+        // 用户会看到系统日历事件被重复导入，或已同步的事件再也匹配不上。
+        let fixture = Fixture::new();
+        let id = system_event_id();
+        fixture.write_legacy(
+            json!([]),
+            json!([{ "id": id, "title": "Xiamen GDG DevFest 2018", "startAt": 1543109400,
+                     "endAt": 1543136400, "location": null, "notes": "见 meetup" }]),
+        );
+
+        fixture.migrate().unwrap();
+
+        const MAPPING: &str = r#"[{"localId":"system-macos-40A03588-791E-4CE1-89C1-2C455F4438EA3a4o0jqp2ambjo79k7iunvlrb77q40google2ecom","systemId":"40A03588:791E"}]"#;
+        let mapping: serde_json::Value = serde_json::from_str(MAPPING).unwrap();
+        let mapped_local_id = mapping[0]["localId"].as_str().unwrap();
+
+        let items = fixture.schedule_items();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, mapped_local_id, "迁移不得改写 system-* 形式的 id");
+        assert_eq!(items[0].source, "migrated:calendar-events.json");
+    }
+
+    #[test]
+    fn carries_non_default_reminder_status_across_the_migration() {
+        // 真实数据里存在 status = "triggered" 的历史提醒；默认值是 "pending"，
+        // 若投影时回落成默认值，用户会看到已提醒过的事情又变回等待中。
+        let fixture = Fixture::new();
+        fixture.write_legacy(
+            json!([{ "id": "reminder-1781220537736710000", "title": "早上打开",
+                     "dueAt": 1781226000, "status": "triggered", "repeat": "none" }]),
+            json!([]),
+        );
+        fixture.migrate().unwrap();
+
+        let projected = reminders_view(&fixture.schedule_items());
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].status, "triggered");
+        assert_eq!(projected[0].due_at, 1781226000);
     }
 
     #[test]
