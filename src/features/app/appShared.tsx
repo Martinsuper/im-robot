@@ -42,119 +42,20 @@ const robotCatFrameByMode = {
 } satisfies Record<keyof typeof petSpriteStates, number>;
 
 export type PetVisualStyle = "lumi" | "custom" | "classic" | "character";
-export type Live2DModelId =
-  | "official-hiyori"
-  | "official-haru"
-  | "official-wanko"
-  | "official-natori"
-  | "official-ren"
-  | "official-rice"
-  | "official-mark"
-  | "official-mao"
-  | "official-epsilon"
-  | "official-miara";
 
 export const petVisualStyleStorageKey = "piko-pet-visual-style";
 export const customPetImageStorageKey = "piko-custom-pet-image-path";
-export const live2dModelStorageKey = "piko-live2d-model-id";
-export const live2dOfficialMigrationStorageKey = "piko-live2d-official-model-migrated";
 export const defaultPetVisualStyle: PetVisualStyle = "classic";
-export const defaultLive2DModelId: Live2DModelId = "official-hiyori";
 
 export const petVisualStyleOptions: Array<{ label: string; value: PetVisualStyle }> = [
   { label: "机甲猫", value: "lumi" },
-  { label: "Live2D 官方模型", value: "character" },
+  { label: "Piko 角色形象", value: "character" },
   { label: "自定义图片", value: "custom" },
   { label: "Piko 经典兜底", value: "classic" },
 ];
 
-export const live2dModelOptions: Array<{
-  label: string;
-  value: Live2DModelId;
-  profileUrl: string;
-  enabled: boolean;
-  note: string;
-}> = [
-  {
-    label: "Hiyori",
-    value: "official-hiyori",
-    profileUrl: "/live2d/profiles/official-hiyori.profile.json",
-    enabled: true,
-    note: "官方 WebSamples 已内置",
-  },
-  {
-    label: "Wanko",
-    value: "official-wanko",
-    profileUrl: "/live2d/profiles/official-wanko.profile.json",
-    enabled: true,
-    note: "官方 WebSamples 已内置",
-  },
-  {
-    label: "Haru",
-    value: "official-haru",
-    profileUrl: "/live2d/profiles/official-haru.profile.json",
-    enabled: true,
-    note: "官方 WebSamples 已内置",
-  },
-  {
-    label: "Natori",
-    value: "official-natori",
-    profileUrl: "/live2d/profiles/official-natori.profile.json",
-    enabled: true,
-    note: "官方 WebSamples 已内置",
-  },
-  {
-    label: "Ren",
-    value: "official-ren",
-    profileUrl: "/live2d/profiles/official-ren.profile.json",
-    enabled: true,
-    note: "官方 WebSamples 已内置",
-  },
-  {
-    label: "Rice",
-    value: "official-rice",
-    profileUrl: "/live2d/profiles/official-rice.profile.json",
-    enabled: true,
-    note: "官方 WebSamples 已内置",
-  },
-  {
-    label: "Mark",
-    value: "official-mark",
-    profileUrl: "/live2d/profiles/official-mark.profile.json",
-    enabled: true,
-    note: "官方 WebSamples 已内置",
-  },
-  {
-    label: "Mao",
-    value: "official-mao",
-    profileUrl: "/live2d/profiles/official-mao.profile.json",
-    enabled: true,
-    note: "当前已内置",
-  },
-  {
-    label: "Epsilon",
-    value: "official-epsilon",
-    profileUrl: "/live2d/profiles/official-epsilon.profile.json",
-    enabled: false,
-    note: "需从 Live2D 官方 Sample Data 下载后启用",
-  },
-  {
-    label: "Miara",
-    value: "official-miara",
-    profileUrl: "/live2d/profiles/official-miara.profile.json",
-    enabled: false,
-    note: "需从 Live2D 官方 Sample Data 下载后启用",
-  },
-];
-
 export function getPetVisualStyle(): PetVisualStyle {
   if (typeof window === "undefined") return defaultPetVisualStyle;
-  if (window.localStorage.getItem(live2dOfficialMigrationStorageKey) !== "4") {
-    window.localStorage.setItem(live2dOfficialMigrationStorageKey, "4");
-    window.localStorage.setItem(petVisualStyleStorageKey, defaultPetVisualStyle);
-    window.localStorage.setItem(live2dModelStorageKey, defaultLive2DModelId);
-    return defaultPetVisualStyle;
-  }
   const stored = window.localStorage.getItem(petVisualStyleStorageKey);
   if (stored === "custom" && !getCustomPetImagePath()) return "classic";
   if (petVisualStyleOptions.some((option) => option.value === stored)) return stored as PetVisualStyle;
@@ -204,63 +105,6 @@ export function getNextPetVisualStyle(
   const options = getAvailablePetVisualStyleOptions(hasCustomImage);
   const index = options.findIndex((option) => option.value === style);
   return options[(index + 1) % options.length].value;
-}
-
-export function getLive2DModelId(): Live2DModelId {
-  if (typeof window === "undefined") return defaultLive2DModelId;
-  const stored = window.localStorage.getItem(live2dModelStorageKey);
-  const option = live2dModelOptions.find((item) => item.value === stored && item.enabled);
-  if (option) return option.value;
-  if (stored) window.localStorage.setItem(live2dModelStorageKey, defaultLive2DModelId);
-  return defaultLive2DModelId;
-}
-
-export function setLive2DModelId(modelId: Live2DModelId) {
-  window.localStorage.setItem(live2dModelStorageKey, modelId);
-  window.dispatchEvent(new CustomEvent<Live2DModelId>("piko-live2d-model-changed", { detail: modelId }));
-  if (isTauriRuntime) {
-    void emit("piko-live2d-model-changed", modelId);
-  }
-}
-
-export function getLive2DProfileUrl(modelId = getLive2DModelId()) {
-  return live2dModelOptions.find((option) => option.value === modelId)?.profileUrl ?? live2dModelOptions[0].profileUrl;
-}
-
-export function getNextLive2DModelId(modelId = getLive2DModelId()): Live2DModelId {
-  const options = live2dModelOptions.filter((option) => option.enabled);
-  const index = options.findIndex((option) => option.value === modelId);
-  return options[(index + 1) % options.length].value;
-}
-
-export function useLive2DModelId() {
-  const [modelId, setModelId] = useState<Live2DModelId>(getLive2DModelId);
-
-  useEffect(() => {
-    const update = () => setModelId(getLive2DModelId());
-    const updateFromEvent = (event: Event) => {
-      setModelId((event as CustomEvent<Live2DModelId>).detail ?? getLive2DModelId());
-    };
-    const updateFromTauriEvent = (event: { payload: Live2DModelId }) => {
-      setModelId(event.payload ?? getLive2DModelId());
-    };
-
-    window.addEventListener("storage", update);
-    window.addEventListener("piko-live2d-model-changed", updateFromEvent);
-    let unlistenTauri: UnlistenFn | undefined;
-    if (isTauriRuntime) {
-      void listen<Live2DModelId>("piko-live2d-model-changed", updateFromTauriEvent).then((unlisten) => {
-        unlistenTauri = unlisten;
-      });
-    }
-    return () => {
-      window.removeEventListener("storage", update);
-      window.removeEventListener("piko-live2d-model-changed", updateFromEvent);
-      unlistenTauri?.();
-    };
-  }, []);
-
-  return modelId;
 }
 
 export function usePetVisualStyle() {

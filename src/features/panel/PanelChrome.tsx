@@ -31,9 +31,9 @@ export function PanelNavigation({ tab, onChange }: { tab: PanelTab; onChange: (t
   </nav>;
 }
 
-export function CompanionHero({ companionName, styleLabel, modelLabel, onReminders }: { companionName: string; styleLabel: string; modelLabel: string | null; onReminders: () => void }) {
+export function CompanionHero({ companionName, styleLabel, onReminders }: { companionName: string; styleLabel: string; onReminders: () => void }) {
   return <section className="companion-card companion-hero" aria-label="我的伙伴">
     <div className="companion-card__copy"><p className="eyebrow">YOUR EVERYDAY COMPANION</p><h2>我在，随时都在。</h2><p>我是 {companionName}。陪你聊一聊，<br />也帮你照顾好今天的小事。</p><div className="companion-hero__actions"><button type="button" className="primary-action" onClick={() => void runCommand("show_bubble")}><MessageCircle size={16} />开始对话<ArrowUpRight size={15} /></button><button type="button" className="text-action" onClick={onReminders}>安排今天</button></div></div>
-    <div className="companion-card__portrait"><PetSprite mode="idle" /><span>{styleLabel}{modelLabel ? ` · ${modelLabel}` : ""}</span></div>
+    <div className="companion-card__portrait"><PetSprite mode="idle" /><span>{styleLabel}</span></div>
   </section>;
 }

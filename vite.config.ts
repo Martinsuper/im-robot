@@ -23,10 +23,6 @@ export default defineConfig(async () => ({
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
           if (id.includes("react") || id.includes("scheduler")) return "vendor-react";
-          if (id.includes("pixi.js") || id.includes("@pixi/")) return "vendor-pixi";
-          if (id.includes("untitled-pixi-live2d-engine") || id.includes("@hazart-pkg/live2d-core")) {
-            return "vendor-live2d";
-          }
           if (
             id.includes("react-markdown") ||
             id.includes("remark-") ||

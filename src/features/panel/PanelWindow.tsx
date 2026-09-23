@@ -67,17 +67,14 @@ import {
   formatFocusRemaining,
   formatReminderTime,
   getAvailablePetVisualStyleOptions,
-  live2dModelOptions,
   petVisualStyleOptions,
   providerOptions,
   quietModeOptions,
   reminderRepeatLabel,
   reminderRepeatOptions,
   setCustomPetImagePath,
-  setLive2DModelId,
   setPetVisualStyle,
   useCustomPetImagePath,
-  useLive2DModelId,
   usePetVisualStyle,
 } from "../app/appShared";
 import { isTauriRuntime, runCommand, runCommandAndRefresh } from "../app/appRuntime";
@@ -135,14 +132,9 @@ export function PanelWindow() {
   const savedPreferencesRef = useRef(preferences);
   const { companionName, theme, sensingPaused } = preferences;
   const petVisualStyle = usePetVisualStyle();
-  const live2dModelId = useLive2DModelId();
   const customPetImagePath = useCustomPetImagePath();
   const availablePetVisualStyleOptions = getAvailablePetVisualStyleOptions(Boolean(customPetImagePath));
   const petVisualStyleLabel = petVisualStyleOptions.find((option) => option.value === petVisualStyle)?.label ?? "机甲猫";
-  const enabledLive2DModelOptions = live2dModelOptions.filter((option) => option.enabled);
-  const disabledLive2DModelOptions = live2dModelOptions.filter((option) => !option.enabled);
-  const live2dModelLabel =
-    live2dModelOptions.find((option) => option.value === live2dModelId)?.label ?? enabledLive2DModelOptions[0]?.label;
   const [workRhythm, setWorkRhythm] = useState<WorkRhythmDraft>(defaultWorkRhythmDraft);
   const workRhythmRef = useRef(workRhythm);
   const savedWorkRhythmRef = useRef(workRhythm);
@@ -917,7 +909,7 @@ export function PanelWindow() {
         </div>
       </section>
 
-      {panelTab === "companion" && <CompanionHero companionName={companionName} styleLabel={petVisualStyleLabel} modelLabel={petVisualStyle === "character" ? live2dModelLabel : null} onReminders={() => setPanelTab("reminders")} />}
+      {panelTab === "companion" && <CompanionHero companionName={companionName} styleLabel={petVisualStyleLabel} onReminders={() => setPanelTab("reminders")} />}
 
       {panelTab === "companion" && (
         <>
@@ -1115,34 +1107,6 @@ export function PanelWindow() {
               ))}
             </select>
           </label>
-          {petVisualStyle === "character" ? (
-            <label>
-              <span>Live2D 模型</span>
-              {/*
-               * TODO(R3/R5): 这个下拉框目前是空操作。
-               * petVisualStyle === "character" 实际渲染的是 LiveCharacterPet（静态精灵图
-               * /pets/piko-character-sheet.png，没有模型概念），唯一会读 live2dModelId
-               * 的 Live2DCharacterPet 已无人引用（grep -rn Live2DCharacterPet src 零命中）。
-               * 所以选 Hiyori/Wanko 只会写进 localStorage，视觉上无任何变化，
-               * 同时 public/live2d 的 24MB 资产从不加载。
-               * 待决：重新接回 Live2D，或删掉本选择器 + 资产（见
-               * .sdlc/01-prd/09-R0执行清单.md 的 NEW-13）。
-               */}
-              <select
-                value={live2dModelId}
-                onChange={(event) => setLive2DModelId(event.currentTarget.value as typeof live2dModelId)}
-              >
-                {enabledLive2DModelOptions.map(({ label, value, note }) => (
-                  <option key={value} value={value}>{label} · {note}</option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {petVisualStyle === "character" && disabledLive2DModelOptions.length ? (
-            <p className="empty-state">
-              {disabledLive2DModelOptions.map((option) => `${option.label}：${option.note}`).join("；")}
-            </p>
-          ) : null}
           <div className="custom-pet-picker">
             <span>{customPetImagePath ? customPetImagePath.split(/[\\/]/).pop() : "未选择自定义图片"}</span>
             <div>
