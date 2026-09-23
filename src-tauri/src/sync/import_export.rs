@@ -98,7 +98,7 @@ pub struct ImportPreview {
 /// Build export data from current state.
 pub fn build_export_data(app: &AppHandle) -> ExportData {
     let settings = read_settings_for_export(app);
-    let chats = read_chat_history_for_export(app);
+    let chats = crate::read_chat_history(app);
     let reminders = crate::read_reminders(app);
     let calendar = crate::read_calendar_events(app);
     let focus = read_focus_for_export(app);
@@ -208,12 +208,6 @@ pub struct ImportResult {
 
 // --- Read functions (reuse existing lib.rs patterns) ---
 
-fn read_chat_history_for_export(app: &AppHandle) -> Vec<ChatHistoryEntry> {
-    chat_history_path(app)
-        .map(|path| storage::read_or_default(&path))
-        .unwrap_or_default()
-}
-
 fn read_focus_for_export(app: &AppHandle) -> Vec<FocusRecord> {
     focus_records_path(app)
         .map(|path| storage::read_or_default(&path))
@@ -228,13 +222,6 @@ fn read_settings_for_export(app: &AppHandle) -> Option<SanitizedSettings> {
 }
 
 // --- Path helpers ---
-
-fn chat_history_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|d| d.join("chat-history.json"))
-}
 
 fn focus_records_path(app: &AppHandle) -> Option<std::path::PathBuf> {
     app.path()
@@ -254,13 +241,14 @@ fn app_settings_path(app: &AppHandle) -> Option<std::path::PathBuf> {
 
 fn merge_chat_history(app: &AppHandle, incoming: &[ChatHistoryEntry]) -> Result<usize, String> {
     let _transaction = storage::transaction();
+    // 保留策略已改为「最多 200 个会话」（见 chat_session 模块），这里只限制本次导入条数。
     const MAX_CHAT_HISTORY: usize = 50;
-    let existing_ids = read_chat_history_for_export(app)
+    let existing_ids = crate::read_chat_history(app)
         .iter()
         .map(|e| e.id.clone())
         .collect::<std::collections::HashSet<_>>();
 
-    let mut existing = read_chat_history_for_export(app);
+    let mut existing = crate::read_chat_history(app);
     let mut count = 0;
 
     for entry in incoming.iter().rev() {
@@ -271,7 +259,7 @@ fn merge_chat_history(app: &AppHandle, incoming: &[ChatHistoryEntry]) -> Result<
     }
 
     if count > 0 {
-        persist_chat_history(app, &existing)?;
+        crate::persist_chat_history(app, &existing)?;
     }
     Ok(count)
 }
@@ -363,12 +351,6 @@ fn merge_settings(app: &AppHandle, incoming: &SanitizedSettings) -> Result<(), S
 }
 
 // --- Persist helpers (local copies to avoid dependency on lib.rs) ---
-
-fn persist_chat_history(app: &AppHandle, history: &[ChatHistoryEntry]) -> Result<(), String> {
-    let _transaction = storage::transaction();
-    let path = chat_history_path(app).ok_or_else(|| "无法获取历史记录路径".to_string())?;
-    storage::write(&path, history)
-}
 
 fn persist_focus_records(app: &AppHandle, records: &[FocusRecord]) -> Result<(), String> {
     let _transaction = storage::transaction();

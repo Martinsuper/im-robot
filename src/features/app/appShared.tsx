@@ -356,14 +356,9 @@ export const defaultWorkRhythmState: WorkRhythmState = {
   focusRemainingSeconds: 0,
 };
 
-export const providerOptions = [
-  { label: "LM Studio", value: "lmstudio", baseUrl: "http://localhost:1234/v1", model: "" },
-  { label: "OpenAI Compatible", value: "openai-compatible", baseUrl: "http://localhost:11434/v1", model: "gemma4:e4b" },
-  { label: "Anthropic Claude", value: "anthropic", baseUrl: "https://api.anthropic.com/v1", model: "claude-sonnet-4-6" },
-  { label: "Google Gemini", value: "gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-2.5-flash" },
-  { label: "DeepSeek", value: "deepseek", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash" },
-  { label: "通义千问 DashScope", value: "dashscope", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen3.6-plus" },
-];
+// provider 预设已收敛到 ./providerPresets（唯一来源，引导页与设置页共用）。
+// 这里保留同名导出，避免一次性改动所有调用点。
+export { providerPresets as providerOptions, type ProviderPreset } from "./providerPresets";
 
 export const quietModeOptions: Array<{ label: string; value: QuietMode }> = [
   { label: "活泼", value: "active" },

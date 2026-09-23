@@ -29,6 +29,7 @@ use wasmtime_wasi::WasiCtxBuilder;
 // --- Module declarations for new features ---
 pub mod app_awareness;
 mod chat;
+mod chat_session;
 mod chat_stream;
 use chat::*;
 mod debounce;
@@ -1160,6 +1161,20 @@ fn chat_history_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|directory| directory.join("chat-history.json"))
 }
 
+fn chat_sessions_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("chat-sessions.json"))
+}
+
+fn chat_migration_marker_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("chat-migration.json"))
+}
+
 fn reminders_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
@@ -1209,25 +1224,101 @@ fn focus_records_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|directory| directory.join("focus-records.json"))
 }
 
+fn chat_migration_done(app: &AppHandle) -> Result<bool, String> {
+    let marker = chat_migration_marker_path(app).ok_or("无法获取对话迁移标记路径")?;
+    let value: serde_json::Value = storage::read_or_default(&marker);
+    Ok(value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|version| version >= chat_session::SCHEMA_VERSION as u64))
+}
+
+fn migrate_chat_sessions(app: &AppHandle) -> Result<chat_session::ChatMigrationReport, String> {
+    let _transaction = storage::transaction();
+    let history = chat_history_path(app).ok_or("无法获取对话历史路径")?;
+    let sessions = chat_sessions_path(app).ok_or("无法获取会话存储路径")?;
+    let marker = chat_migration_marker_path(app).ok_or("无法获取对话迁移标记路径")?;
+    chat_session::migrate_legacy_chat_at(&history, &sessions, &marker)
+}
+
+/// 读会话存储。语义与 `load_schedule_items` 一致：
+/// 读路径允许在迁移失败时降级为只读旧文件；写路径拒绝在迁移未完成时写入。
+fn load_chat_sessions(app: &AppHandle, allow_legacy_fallback: bool) -> Result<Vec<chat_session::ChatSession>, String> {
+    let _transaction = storage::transaction();
+    if !chat_migration_done(app)? {
+        match migrate_chat_sessions(app) {
+            Ok(_) => {}
+            Err(error) if allow_legacy_fallback => {
+                eprintln!("[chat] 迁移未完成，读取降级为旧历史（只读）：{error}");
+                let history = chat_history_path(app).ok_or("无法获取对话历史路径")?;
+                return chat_session::legacy_projection_at(&history);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let path = chat_sessions_path(app).ok_or("无法获取会话存储路径")?;
+    storage::read(&path)
+}
+
+pub(crate) fn persist_chat_sessions(
+    app: &AppHandle,
+    sessions: &[chat_session::ChatSession],
+) -> Result<(), String> {
+    let path = chat_sessions_path(app).ok_or("无法获取会话存储路径")?;
+    storage::write(&path, sessions)?;
+    let _ = app.emit("chat-sessions-updated", ());
+    Ok(())
+}
+
+/// 旧的扁平视图。签名不变，因此 chat.rs / 面板 / 导出都无需改动。
 fn read_chat_history(app: &AppHandle) -> Vec<ChatHistoryEntry> {
-    chat_history_path(app)
-        .map(|path| storage::read_or_default(&path))
-        .unwrap_or_default()
+    match load_chat_sessions(app, true) {
+        Ok(sessions) => chat_session::entries_view(&sessions),
+        Err(error) => {
+            eprintln!("[chat] 读取对话历史失败：{error}");
+            Vec::new()
+        }
+    }
 }
 
 fn persist_chat_history(app: &AppHandle, history: &[ChatHistoryEntry]) -> Result<(), String> {
-    let path = chat_history_path(app).ok_or("无法获取数据路径")?;
-    storage::write(&path, history)
+    let _transaction = storage::transaction();
+    let mut sessions = chat_session::sessions_from_entries(history);
+    chat_session::trim_sessions(&mut sessions);
+    persist_chat_sessions(app, &sessions)
 }
 
+#[tauri::command]
+fn list_chat_sessions(app: AppHandle) -> Result<Vec<chat_session::ChatSession>, String> {
+    let mut sessions = load_chat_sessions(&app, true)?;
+    // 最近更新的在前，与「记录」页的展示顺序一致。
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
+    Ok(sessions)
+}
+
+#[tauri::command]
+fn delete_chat_session(app: AppHandle, id: String) -> Result<(), String> {
+    let _transaction = storage::transaction();
+    let mut sessions = load_chat_sessions(&app, false)?;
+    let before = sessions.len();
+    sessions.retain(|session| session.id != id);
+    if sessions.len() == before {
+        return Err("这个会话已不存在，请刷新后重试".to_string());
+    }
+    persist_chat_sessions(&app, &sessions)?;
+    let _ = app.emit_to("panel", "chat-history-updated", ());
+    Ok(())
+}
+
+/// 追加一轮问答。
+///
+/// 保留策略从「最多 50 轮」改为「最多 200 个会话」（02 §13）：以会话为单位保留，
+/// 才不会出现「聊到一半的会话被截断」。
 fn append_chat_history(app: &AppHandle, entry: ChatHistoryEntry) -> Result<(), String> {
     let _transaction = storage::transaction();
-    const MAX_CHAT_HISTORY: usize = 50;
-
-    let mut history = read_chat_history(app);
-    history.insert(0, entry);
-    history.truncate(MAX_CHAT_HISTORY);
-    persist_chat_history(app, &history)
+    let mut sessions = load_chat_sessions(app, false)?;
+    chat_session::append_entry_to_sessions(&mut sessions, &entry);
+    persist_chat_sessions(app, &sessions)
 }
 
 fn append_session_chat_history(history: &mut Vec<ChatHistoryEntry>, entry: ChatHistoryEntry) {
@@ -2243,7 +2334,8 @@ enum ProviderKind {
 
 fn provider_kind(provider: &str) -> Option<ProviderKind> {
     match provider {
-        "openai-compatible" | "deepseek" | "dashscope" | "lmstudio" => {
+        // ollama 说的是 OpenAI 兼容协议，归到同一分支即可。
+        "openai-compatible" | "deepseek" | "dashscope" | "lmstudio" | "ollama" => {
             Some(ProviderKind::OpenAiCompatible)
         }
         "anthropic" => Some(ProviderKind::Anthropic),
@@ -2252,8 +2344,14 @@ fn provider_kind(provider: &str) -> Option<ProviderKind> {
     }
 }
 
+/// 本机服务：允许模型名为空（启动后自动探测）。
+///
+/// 注意 `openai-compatible` 也在这里。按 02 §10.1，它本应指 OpenAI 官方接口
+/// （需要 Key、需要模型名），但历史配置里有用户把它当作「自建兼容端点」使用，
+/// 一旦移出这个集合，那些「模型名留空」的既有配置会立刻校验失败。
+/// 先保留，等有迁移手段时再收紧。
 fn is_local_provider(provider: &str) -> bool {
-    matches!(provider, "lmstudio" | "openai-compatible")
+    matches!(provider, "lmstudio" | "ollama" | "openai-compatible")
 }
 
 fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
@@ -5610,6 +5708,17 @@ pub fn run() {
 
             // R1：把提醒与日程合并到统一存储。幂等且不删除旧文件；
             // 失败只记录日志，不能让迁移问题阻断应用启动。
+            match migrate_chat_sessions(app.handle()) {
+                Ok(report) if report.already_migrated => {}
+                Ok(report) => println!(
+                    "[chat] 迁移完成：{} 个会话（来自 {} 轮问答），备份于 {}",
+                    report.sessions_imported,
+                    report.entries_imported,
+                    report.backup_dir.as_deref().unwrap_or("（无旧文件，未备份）")
+                ),
+                Err(error) => eprintln!("[chat] 迁移中止：{error}"),
+            }
+
             match migrate_schedule_items(app.handle()) {
                 Ok(report) if report.already_migrated => {}
                 Ok(report) => println!(
@@ -5687,6 +5796,8 @@ pub fn run() {
             check_for_updates,
             check_for_updates_extended,
             list_chat_history,
+            list_chat_sessions,
+            delete_chat_session,
             clear_chat_history,
             clear_chat_context,
             speak_local_text,
