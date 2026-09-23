@@ -343,7 +343,7 @@ struct ScreenshotPreview {
 #[derive(Default)]
 struct ScreenCaptureStore(Mutex<Option<ScreenCapture>>);
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Reminder {
     id: String,
@@ -393,7 +393,7 @@ struct MemoSummaryGroup {
     top_tags: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CalendarEvent {
     id: String,
@@ -1226,15 +1226,26 @@ fn append_session_chat_history(history: &mut Vec<ChatHistoryEntry>, entry: ChatH
     history.truncate(MAX_SESSION_CHAT_HISTORY);
 }
 
+/// 提醒视图。**唯一数据源是 schedule-items.json**，旧 reminders.json 只作归档。
+///
+/// 读失败时返回空列表，与改动前 `read_or_default` 的行为一致（旧实现遇到损坏文件
+/// 也是返回空），因此没有引入新的失败模式。
 fn read_reminders(app: &AppHandle) -> Vec<Reminder> {
-    reminders_path(app)
-        .map(|path| storage::read_or_default(&path))
-        .unwrap_or_default()
+    match read_schedule_items(app) {
+        Ok(items) => schedule::reminders_view(&items),
+        Err(error) => {
+            eprintln!("[schedule] 读取提醒视图失败：{error}");
+            Vec::new()
+        }
+    }
 }
 
 fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), String> {
-    let path = reminders_path(app).ok_or("无法获取数据路径")?;
-    storage::write(&path, reminders)
+    let _transaction = storage::transaction();
+    // 严格模式：迁移未完成时报错，而不是把数据悄悄写进另一份存储。
+    let existing = load_schedule_items(app, false)?;
+    let next = schedule::merge_reminders(&existing, reminders);
+    persist_schedule_items(app, &next)
 }
 
 fn read_memos(app: &AppHandle) -> Vec<Memo> {
@@ -1248,10 +1259,15 @@ fn persist_memos(app: &AppHandle, memos: &[Memo]) -> Result<(), String> {
     storage::write(&path, memos)
 }
 
+/// 日程视图。同 `read_reminders`：统一存储在 schedule-items.json。
 fn read_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
-    calendar_events_path(app)
-        .map(|path| read_calendar_events_from_path(&path))
-        .unwrap_or_default()
+    match read_schedule_items(app) {
+        Ok(items) => schedule::calendar_view(&items),
+        Err(error) => {
+            eprintln!("[schedule] 读取日程视图失败：{error}");
+            Vec::new()
+        }
+    }
 }
 
 fn read_calendar_events_from_path(path: &Path) -> Vec<CalendarEvent> {
@@ -1260,8 +1276,9 @@ fn read_calendar_events_from_path(path: &Path) -> Vec<CalendarEvent> {
 
 fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<(), String> {
     let _transaction = storage::transaction();
-    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
-    persist_calendar_events_to_path(&path, events)
+    let existing = load_schedule_items(app, false)?;
+    let next = schedule::merge_calendar_events(&existing, events);
+    persist_schedule_items(app, &next)
 }
 
 fn persist_calendar_events_to_path(path: &Path, events: &[CalendarEvent]) -> Result<(), String> {
@@ -1280,25 +1297,61 @@ fn migrate_schedule_items(app: &AppHandle) -> Result<schedule::ScheduleMigration
     schedule::migrate_legacy_schedule_at(&reminders, &events, &items, &marker)
 }
 
-/// 统一时间线读取入口。首次调用会按需完成迁移。
-fn read_schedule_items(app: &AppHandle) -> Result<Vec<schedule::ScheduleItem>, String> {
-    let _transaction = storage::transaction();
-    let items_path = schedule_items_path(app).ok_or("无法获取日程记录路径")?;
+fn schedule_migration_done(app: &AppHandle) -> Result<bool, String> {
     let marker = schedule_migration_marker_path(app).ok_or("无法获取迁移标记路径")?;
-    let version: serde_json::Value = storage::read_or_default(&marker);
-    let migrated = version
+    let value: serde_json::Value = storage::read_or_default(&marker);
+    Ok(value
         .get("version")
         .and_then(serde_json::Value::as_u64)
-        .is_some_and(|value| value >= schedule::SCHEMA_VERSION as u64);
-    if !migrated {
-        migrate_schedule_items(app)?;
+        .is_some_and(|version| version >= schedule::SCHEMA_VERSION as u64))
+}
+
+/// 读统一存储。迁移未完成时按需迁移。
+///
+/// `allow_legacy_fallback`：迁移失败时是否降级为「只读旧文件」。
+/// 读路径传 true——宁可显示旧数据，也不能让用户以为提醒不见了；
+/// 写路径传 false——迁移没完成就拒绝写入，绝不在旧文件之外再制造一份数据源。
+fn load_schedule_items(
+    app: &AppHandle,
+    allow_legacy_fallback: bool,
+) -> Result<Vec<schedule::ScheduleItem>, String> {
+    let _transaction = storage::transaction();
+    if !schedule_migration_done(app)? {
+        match migrate_schedule_items(app) {
+            Ok(_) => {}
+            Err(error) if allow_legacy_fallback => {
+                eprintln!("[schedule] 迁移未完成，读取降级为旧文件（只读）：{error}");
+                let reminders = reminders_path(app).ok_or("无法获取提醒数据路径")?;
+                let events = calendar_events_path(app).ok_or("无法获取日程数据路径")?;
+                return schedule::legacy_projection_at(&reminders, &events);
+            }
+            Err(error) => return Err(error),
+        }
     }
+    let items_path = schedule_items_path(app).ok_or("无法获取日程记录路径")?;
     storage::read(&items_path)
 }
 
+/// 统一时间线读取入口（读路径，允许旧文件兜底）。
+pub(crate) fn read_schedule_items(app: &AppHandle) -> Result<Vec<schedule::ScheduleItem>, String> {
+    load_schedule_items(app, true)
+}
+
+/// 写回统一存储。调用方必须已持有 `storage::transaction()`。
+pub(crate) fn persist_schedule_items(
+    app: &AppHandle,
+    items: &[schedule::ScheduleItem],
+) -> Result<(), String> {
+    let path = schedule_items_path(app).ok_or("无法获取日程记录路径")?;
+    storage::write(&path, items)
+}
+
+/// 统一时间线视图：按时间排序后返回，供「今天」使用。
 #[tauri::command]
 fn list_schedule_items(app: AppHandle) -> Result<Vec<schedule::ScheduleItem>, String> {
-    read_schedule_items(&app)
+    let mut items = read_schedule_items(&app)?;
+    schedule::sort_schedule_items(&mut items);
+    Ok(items)
 }
 
 struct ExternalPluginPackage {

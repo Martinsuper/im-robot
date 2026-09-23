@@ -469,7 +469,7 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
         .map(SystemCalendarEvent::to_calendar_event)
         .collect();
 
-    let mut local_events = read_local_calendar_events(app);
+    let mut local_events = crate::read_calendar_events(app);
     log_debug(&format!(
         "pull: {} existing local events",
         local_events.len()
@@ -497,7 +497,7 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
     cleanup_deleted_ids(app, &reimported_ids);
 
     local_events.sort_by_key(|a| a.start_at);
-    persist_local_calendar_events(app, &local_events)?;
+    crate::persist_calendar_events(app, &local_events)?;
     log_debug(&format!(
         "pull: DONE imported={}, total={}",
         imported,
@@ -621,33 +621,6 @@ impl SystemCalendarEvent {
             notes: self.notes.clone(),
         }
     }
-}
-
-fn read_local_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
-    calendar_events_path(app)
-        .map(|path| storage::read_or_default(&path))
-        .unwrap_or_default()
-}
-
-fn persist_local_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<(), String> {
-    let _transaction = storage::transaction();
-    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
-    let dir = path
-        .parent()
-        .ok_or_else(|| "无法获取日程记录目录".to_string())?;
-    let json = serde_json::to_string_pretty(events).map_err(|e| e.to_string())?;
-    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    storage::write(
-        &path,
-        &serde_json::from_str::<serde_json::Value>(&json).map_err(|e| e.to_string())?,
-    )
-}
-
-fn calendar_events_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|directory| directory.join("calendar-events.json"))
 }
 
 #[cfg(test)]

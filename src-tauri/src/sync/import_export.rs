@@ -99,8 +99,8 @@ pub struct ImportPreview {
 pub fn build_export_data(app: &AppHandle) -> ExportData {
     let settings = read_settings_for_export(app);
     let chats = read_chat_history_for_export(app);
-    let reminders = read_reminders_for_export(app);
-    let calendar = read_calendar_for_export(app);
+    let reminders = crate::read_reminders(app);
+    let calendar = crate::read_calendar_events(app);
     let focus = read_focus_for_export(app);
 
     ExportData {
@@ -214,18 +214,6 @@ fn read_chat_history_for_export(app: &AppHandle) -> Vec<ChatHistoryEntry> {
         .unwrap_or_default()
 }
 
-fn read_reminders_for_export(app: &AppHandle) -> Vec<Reminder> {
-    reminders_path(app)
-        .map(|path| storage::read_or_default(&path))
-        .unwrap_or_default()
-}
-
-fn read_calendar_for_export(app: &AppHandle) -> Vec<CalendarEvent> {
-    calendar_events_path(app)
-        .map(|path| storage::read_or_default(&path))
-        .unwrap_or_default()
-}
-
 fn read_focus_for_export(app: &AppHandle) -> Vec<FocusRecord> {
     focus_records_path(app)
         .map(|path| storage::read_or_default(&path))
@@ -246,20 +234,6 @@ fn chat_history_path(app: &AppHandle) -> Option<std::path::PathBuf> {
         .app_config_dir()
         .ok()
         .map(|d| d.join("chat-history.json"))
-}
-
-fn reminders_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|d| d.join("reminders.json"))
-}
-
-fn calendar_events_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|d| d.join("calendar-events.json"))
 }
 
 fn focus_records_path(app: &AppHandle) -> Option<std::path::PathBuf> {
@@ -304,12 +278,12 @@ fn merge_chat_history(app: &AppHandle, incoming: &[ChatHistoryEntry]) -> Result<
 
 fn merge_reminders(app: &AppHandle, incoming: &[Reminder]) -> Result<usize, String> {
     let _transaction = storage::transaction();
-    let existing_ids = read_reminders_for_export(app)
+    let existing_ids = crate::read_reminders(app)
         .iter()
         .map(|r| r.id.clone())
         .collect::<std::collections::HashSet<_>>();
 
-    let mut existing = read_reminders_for_export(app);
+    let mut existing = crate::read_reminders(app);
     let mut count = 0;
 
     for reminder in incoming {
@@ -320,19 +294,19 @@ fn merge_reminders(app: &AppHandle, incoming: &[Reminder]) -> Result<usize, Stri
     }
 
     if count > 0 {
-        persist_reminders(app, &existing)?;
+        crate::persist_reminders(app, &existing)?;
     }
     Ok(count)
 }
 
 fn merge_calendar(app: &AppHandle, incoming: &[CalendarEvent]) -> Result<usize, String> {
     let _transaction = storage::transaction();
-    let existing_ids = read_calendar_for_export(app)
+    let existing_ids = crate::read_calendar_events(app)
         .iter()
         .map(|e| e.id.clone())
         .collect::<std::collections::HashSet<_>>();
 
-    let mut existing = read_calendar_for_export(app);
+    let mut existing = crate::read_calendar_events(app);
     let mut count = 0;
 
     for event in incoming {
@@ -343,7 +317,7 @@ fn merge_calendar(app: &AppHandle, incoming: &[CalendarEvent]) -> Result<usize, 
     }
 
     if count > 0 {
-        persist_calendar_events(app, &existing)?;
+        crate::persist_calendar_events(app, &existing)?;
     }
     Ok(count)
 }
@@ -394,18 +368,6 @@ fn persist_chat_history(app: &AppHandle, history: &[ChatHistoryEntry]) -> Result
     let _transaction = storage::transaction();
     let path = chat_history_path(app).ok_or_else(|| "无法获取历史记录路径".to_string())?;
     storage::write(&path, history)
-}
-
-fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), String> {
-    let _transaction = storage::transaction();
-    let path = reminders_path(app).ok_or_else(|| "无法获取提醒记录路径".to_string())?;
-    storage::write(&path, reminders)
-}
-
-fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<(), String> {
-    let _transaction = storage::transaction();
-    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
-    storage::write(&path, events)
 }
 
 fn persist_focus_records(app: &AppHandle, records: &[FocusRecord]) -> Result<(), String> {
