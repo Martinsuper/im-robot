@@ -1,0 +1,181 @@
+/*
+ * 统一状态反馈：Toast / EmptyState / ErrorState
+ *
+ * 令牌说明：R0-5 会把 --piko-* 抽到 src/styles/tokens.css。在那之前这里直接用
+ * 现有变量并带字面量兜底，保证任何窗口（含未挂 .panel-shell 的窗）都能正常渲染。
+ */
+
+.feedback-toast-viewport {
+  position: fixed;
+  z-index: 90;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.feedback-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--piko-line, #dfe5dc);
+  border-radius: 12px;
+  background: var(--piko-fill, #fffefa);
+  box-shadow: 0 6px 24px rgba(36, 63, 44, .14);
+  color: var(--piko-ink, #293b34);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: auto;
+}
+
+.feedback-toast__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--piko-muted, #68756e);
+}
+
+.feedback-toast--success .feedback-toast__icon { color: var(--piko-accent, #356951); }
+.feedback-toast--error .feedback-toast__icon { color: #b85a51; }
+.feedback-toast--info .feedback-toast__icon { color: #38667c; }
+
+.feedback-toast--error { border-color: rgba(184, 90, 81, .35); }
+
+.feedback-toast__message {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.feedback-toast__action,
+.feedback-toast__close {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--piko-muted, #68756e);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.feedback-toast__action {
+  padding: 2px 4px;
+  color: var(--piko-accent, #356951);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.feedback-toast__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  padding: 0;
+}
+
+.feedback-toast__close:hover { background: var(--piko-soft, #e9f0e7); }
+
+/*
+ * 持久型内联状态文本（例如连接状态）。它是「当前值」而不是「一次性反馈」，
+ * 所以不走 Toast，但统一到同一套视觉。
+ */
+.feedback-status {
+  margin: 0;
+  color: var(--piko-muted, #68756e);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.feedback-status--error { color: #b85a51; }
+
+.feedback-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.feedback-empty__icon {
+  display: inline-flex;
+  color: var(--piko-muted, #68756e);
+  opacity: .7;
+}
+
+.feedback-empty__title {
+  margin: 0;
+  color: var(--piko-ink, #293b34);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.feedback-empty__description {
+  margin: 0;
+  max-width: 32ch;
+  color: var(--piko-muted, #68756e);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.feedback-empty__action { margin-top: 4px; }
+
+.feedback-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(184, 90, 81, .3);
+  border-radius: 10px;
+  background: rgba(184, 90, 81, .06);
+}
+
+.feedback-error__icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #b85a51;
+}
+
+.feedback-error__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.feedback-error__message {
+  margin: 0;
+  color: #8f453d;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.feedback-error__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.feedback-error__retry,
+.feedback-error__dismiss {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.feedback-error__retry {
+  color: #8f453d;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.feedback-error__dismiss { color: var(--piko-muted, #68756e); }

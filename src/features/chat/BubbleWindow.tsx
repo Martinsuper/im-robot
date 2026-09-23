@@ -11,6 +11,8 @@ import type { ActionDraft, ActionExecution, ChatEvent } from "./chatTypes";
 import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry, ScreenshotPreview, Theme } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
+import { useToast } from "../../components/feedback/toastStore";
+import { toUserMessage } from "../../lib/errors";
 import { extractHtmlPreviewSource, HtmlPreviewFrame } from "./HtmlPreviewFrame";
 
 type VoiceTranscriptionOutput = {
@@ -22,6 +24,7 @@ const WHISPER_SAMPLE_RATE = 16000;
 // --- Main Component ---
 
 export function BubbleWindow() {
+  const toast = useToast();
   const [prompt, setPrompt] = useState("");
   const [message, setMessage] = useState("");
   const [companionName, setCompanionName] = useState("Piko");
@@ -30,14 +33,11 @@ export function BubbleWindow() {
   const [isThinking, setIsThinking] = useState(false);
   const [attachment, setAttachment] = useState<AttachmentPreview>();
   const [attachmentAction, setAttachmentAction] = useState<AttachmentAction>("summarize");
-  const [attachmentError, setAttachmentError] = useState("");
   const [screenshot, setScreenshot] = useState<ScreenshotPreview>();
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
-  const [speechError, setSpeechError] = useState("");
-  const [saveError, setSaveError] = useState("");
   const [contextNotice, setContextNotice] = useState("");
   const [requestId, setRequestId] = useState<string>();
   const [pendingAction, setPendingAction] = useState<ActionDraft>();
@@ -51,7 +51,7 @@ export function BubbleWindow() {
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
   const [currentPrompt, setCurrentPrompt] = useState("");
   const [copyFeedback, setCopyFeedback] = useState(false);
-  const hasInputContext = Boolean(attachment || screenshot || attachmentError || isDraggingFile);
+  const hasInputContext = Boolean(attachment || screenshot || isDraggingFile);
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
   const mountedRef = useRef(true);
@@ -281,16 +281,15 @@ export function BubbleWindow() {
       setIsDraggingFile(false);
       if (event.payload.type !== "drop") return;
       if (event.payload.paths.length !== 1) {
-        setAttachmentError("一次只能处理一个文本文件。");
+        toast.error("一次只能处理一个文本文件。");
         return;
       }
 
-      setAttachmentError("");
       void runCommand<AttachmentPreview>("prepare_text_attachment", {
         path: event.payload.paths[0],
       })
         .then(setAttachment)
-        .catch((error) => setAttachmentError(String(error)));
+        .catch((error) => toast.error(toUserMessage(error, "附件读取失败，请重试。")));
     });
 
     return () => {
@@ -298,7 +297,7 @@ export function BubbleWindow() {
         if (mountedRef.current) dispose();
       });
     };
-  }, []);
+  }, [toast]);
 
   // Auto-scroll thread to bottom when new messages arrive
   useEffect(() => {
@@ -387,7 +386,6 @@ export function BubbleWindow() {
 
   async function confirmAction() {
     if (!pendingAction) return;
-    setSaveError("");
     try {
       if (pendingAction.pluginId === "piko.reminders" && isTauriRuntime && !(await isPermissionGranted())) {
         await requestPermission();
@@ -416,7 +414,7 @@ export function BubbleWindow() {
         });
       }
     } catch (error) {
-      setSaveError(String(error));
+      toast.error(toUserMessage(error, "保存失败，请重试。"));
     }
   }
 
@@ -428,12 +426,11 @@ export function BubbleWindow() {
       setSelectedChoiceIndexes([]);
       setMessage("已取消该操作。");
     } catch (error) {
-      setSaveError(String(error));
+      toast.error(toUserMessage(error, "保存失败，请重试。"));
     }
   }
 
   async function toggleSpeech() {
-    setSpeechError("");
     if (isSpeaking) {
       if (isTauriRuntime) {
         await runCommand("stop_local_speech");
@@ -448,17 +445,17 @@ export function BubbleWindow() {
         await runCommand("speak_local_text", { text: message });
         setIsSpeaking(true);
       } catch (error) {
-        setSpeechError(String(error));
+        toast.error(toUserMessage(error, "朗读失败，请重试。"));
       }
       return;
     }
     if (!("speechSynthesis" in window)) {
-      setSpeechError("当前环境不支持朗读。");
+      toast.info("当前环境不支持朗读。");
       return;
     }
     const spokenMessage = textForSpeech(message).trim();
     if (!spokenMessage) {
-      setSpeechError("没有可朗读的文字内容。");
+      toast.info("没有可朗读的文字内容。");
       return;
     }
     const utterance = new SpeechSynthesisUtterance(spokenMessage);
@@ -539,7 +536,7 @@ export function BubbleWindow() {
     setIsListening(false);
     if (!shouldTranscribe) return;
     if (!samples.length) {
-      setSpeechError("没有录到语音内容。");
+      toast.info("没有录到语音内容。");
       return;
     }
     const blob = encodeWav(samples, sampleRate);
@@ -548,11 +545,10 @@ export function BubbleWindow() {
 
   async function transcribeVoiceBlob(blob: Blob) {
     if (blob.size <= 44) {
-      setSpeechError("没有录到语音内容。");
+      toast.info("没有录到语音内容。");
       return;
     }
     setIsTranscribingVoice(true);
-    setSpeechError("");
     try {
       const audioDataUrl = await blobToDataUrl(blob);
       const result = await runCommand<VoiceTranscriptionOutput>("transcribe_voice_input", {
@@ -561,24 +557,23 @@ export function BubbleWindow() {
       setPrompt((current) => appendSpeechText(current, result.text));
       promptInputRef.current?.focus();
     } catch (error) {
-      setSpeechError(`语音转文字失败：${String(error)}`);
+      toast.error(`语音转文字失败：${toUserMessage(error)}`);
     } finally {
       setIsTranscribingVoice(false);
     }
   }
 
   async function toggleVoiceInput() {
-    setSpeechError("");
     if (isListening) {
       stopVoiceRecording();
       return;
     }
     if (!isTauriRuntime) {
-      setSpeechError("浏览器预览无法调用本地语音模型，请在桌面应用中使用。");
+      toast.info("浏览器预览无法调用本地语音模型，请在桌面应用中使用。");
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia || !window.AudioContext) {
-      setSpeechError("当前环境不支持麦克风录音。");
+      toast.info("当前环境不支持麦克风录音。");
       return;
     }
 
@@ -603,14 +598,13 @@ export function BubbleWindow() {
     } catch (error) {
       setIsListening(false);
       stopVoiceStream();
-      setSpeechError(`无法启动录音：${String(error)}`);
+      toast.error(`无法启动录音：${toUserMessage(error)}`);
     }
   }
 
   async function clearAttachment() {
     await runCommand("clear_text_attachment");
     setAttachment(undefined);
-    setAttachmentError("");
   }
 
   async function chooseAttachment() {
@@ -620,11 +614,10 @@ export function BubbleWindow() {
       filters: [{ name: "文本文件", extensions: ["txt", "md", "json", "csv", "log"] }],
     });
     if (!path) return;
-    setAttachmentError("");
     try {
       setAttachment(await runCommand<AttachmentPreview>("prepare_text_attachment", { path }));
     } catch (error) {
-      setAttachmentError(String(error));
+      toast.error(toUserMessage(error, "附件读取失败，请重试。"));
     }
   }
 
@@ -658,9 +651,8 @@ export function BubbleWindow() {
   }
 
   async function saveResult() {
-    setSaveError("");
     if (!isTauriRuntime) {
-      setSaveError("桌面版中可保存回复到本地文件。");
+      toast.info("桌面版中可保存回复到本地文件。");
       return;
     }
     const path = await save({
@@ -675,7 +667,7 @@ export function BubbleWindow() {
         await runCommand("save_generated_text", { path, content: message, overwrite: true });
         return;
       }
-      setSaveError(String(error));
+      toast.error(toUserMessage(error, "保存失败，请重试。"));
     }
   }
 
@@ -846,7 +838,6 @@ export function BubbleWindow() {
                 </button>
               </div>
             )}
-            {attachmentError && <span className="bubble-input-zone__error">{attachmentError}</span>}
             {attachment && (
               <div className="bubble-input-zone__actions">
                 {attachmentActionOptions.map(({ label, value }) => (
@@ -902,8 +893,6 @@ export function BubbleWindow() {
       </div>
 
       {contextNotice && <p className="bubble-context-note" role="status">{contextNotice}</p>}
-      {speechError && <p className="speech-error" role="alert">{speechError}</p>}
-      {saveError && <p className="speech-error" role="alert">{saveError}</p>}
     </main>
   );
 }

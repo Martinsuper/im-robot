@@ -9,6 +9,9 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { OnboardingWindow } from "../onboarding/OnboardingWindow";
 import { MemoryCenter } from "../memory/MemoryCenter";
+import { ErrorState } from "../../components/feedback/States";
+import { useToast, type ToastTone } from "../../components/feedback/toastStore";
+import { toUserMessage } from "../../lib/errors";
 import {
   loadGrowthSnapshot,
   loadInteractionStats,
@@ -91,8 +94,20 @@ const memoCategoryOptions: Array<{ label: string; value: MemoCategory | "all" }>
   { label: "其他", value: "other" },
 ];
 
+/**
+ * 瞬时状态文案 → Toast 语气。
+ * Why 用关键字集中判断，而不是让 20 个写入点各自选 tone：逐处改造既容易漏，
+ * 也会把语气逻辑撒满整个文件。
+ */
+function toneFromStatus(text: string, fallback: ToastTone = "info"): ToastTone {
+  if (/失败|错误|异常|无法/.test(text)) return "error";
+  if (/已保存|已同步|已可用|已是最新|下载完成|已更新|已配置/.test(text)) return "success";
+  return fallback;
+}
+
 export function PanelWindow() {
   const mountedRef = useRef(true);
+  const toast = useToast();
   const [panelTab, setPanelTab] = useState<PanelTab>("companion");
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
@@ -156,6 +171,26 @@ export function PanelWindow() {
     mappingCount: 0,
   });
   const [calendarSyncNotice, setCalendarSyncNotice] = useState("");
+  /**
+   * 瞬时状态 → Toast 桥接。
+   * 这 5 个 state 只用于一次性反馈（已保存 / 失败 / 正在下载…），不再有内联渲染点。
+   * 集中在这里弹提示再清空，调用点保持原样，避免 20 处分散改造。
+   */
+  useEffect(() => {
+    const channels = [
+      { value: updateStatus, tone: toneFromStatus(updateStatus), reset: () => setUpdateStatus("") },
+      { value: preferencesStatus, tone: toneFromStatus(preferencesStatus), reset: () => setPreferencesStatus("") },
+      { value: speechModelNotice, tone: toneFromStatus(speechModelNotice, "success"), reset: () => setSpeechModelNotice("") },
+      { value: calendarNotice, tone: "info" as ToastTone, reset: () => setCalendarNotice("") },
+      { value: calendarSyncNotice, tone: toneFromStatus(calendarSyncNotice), reset: () => setCalendarSyncNotice("") },
+    ];
+    const pending = channels.filter((channel) => channel.value);
+    if (!pending.length) return;
+    for (const channel of pending) {
+      toast.show({ message: channel.value, tone: channel.tone });
+      channel.reset();
+    }
+  }, [calendarNotice, calendarSyncNotice, preferencesStatus, speechModelNotice, toast, updateStatus]);
   const [externalPlugins, setExternalPlugins] = useState<InstalledPlugin[]>([]);
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusState, setFocusState] = useState<FocusSnapshot>(defaultFocusSnapshot);
@@ -468,7 +503,7 @@ export function PanelWindow() {
       setSpeechModels((current) => current.map((item) => (item.id === model.id ? model : item)));
       setSpeechModelNotice(`${model.name} 已可用`);
     } catch (error) {
-      setSpeechModelNotice(String(error));
+      setSpeechModelNotice(toUserMessage(error));
     } finally {
       setDownloadingSpeechModelId("");
       void loadSpeechModels();
@@ -486,7 +521,7 @@ export function PanelWindow() {
       const modelNames = models.map((model) => model.id).join("、");
       setConnectionStatus(models.length ? `已连接：${modelNames}` : "已连接，未发现模型");
     } catch (error) {
-      setConnectionStatus(`连接失败：${String(error)}`);
+      setConnectionStatus(`连接失败：${toUserMessage(error)}`);
     } finally {
       setIsTesting(false);
     }
@@ -518,7 +553,7 @@ export function PanelWindow() {
       setReminderTitle("");
       setReminderDueAt(defaultReminderTime());
     } catch (error) {
-      setReminderError(String(error));
+      setReminderError(toUserMessage(error));
     }
   }
 
@@ -526,7 +561,7 @@ export function PanelWindow() {
     try {
       await runCommandAndRefresh("delete_reminder", { id }, [loadReminders]);
     } catch (error) {
-      setReminderError(String(error));
+      setReminderError(toUserMessage(error));
     }
   }
 
@@ -569,7 +604,7 @@ export function PanelWindow() {
       setMemoContent("");
       setEditingMemoId("");
     } catch (error) {
-      setMemoError(String(error));
+      setMemoError(toUserMessage(error));
     }
   }
 
@@ -595,7 +630,7 @@ export function PanelWindow() {
       }
       await runCommandAndRefresh("delete_memo", { id }, [loadMemos, loadMemoSummaries]);
     } catch (error) {
-      setMemoError(String(error));
+      setMemoError(toUserMessage(error));
     }
   }
 
@@ -622,7 +657,7 @@ export function PanelWindow() {
       setCalendarStartAt(defaultCalendarStartTime());
       setCalendarEndAt(defaultCalendarEndTime());
     } catch (error) {
-      setCalendarError(String(error));
+      setCalendarError(toUserMessage(error));
     }
   }
 
@@ -630,7 +665,7 @@ export function PanelWindow() {
     try {
       await runCommandAndRefresh("delete_calendar_event", { id }, [loadCalendarEvents]);
     } catch (error) {
-      setCalendarError(String(error));
+      setCalendarError(toUserMessage(error));
     }
   }
 
@@ -647,7 +682,7 @@ export function PanelWindow() {
         await runCommand("open_calendar_import", { path });
       }
     } catch (error) {
-      setCalendarError(String(error));
+      setCalendarError(toUserMessage(error));
     }
   }
 
@@ -673,7 +708,7 @@ export function PanelWindow() {
       const result = await runCommand<{ pushed: number; mappingCount: number }>("sync_calendar_to_system");
       setCalendarSyncNotice(`已同步到系统日历：${result.pushed} 条`);
     } catch (error) {
-      setCalendarSyncNotice(`同步到系统日历失败：${String(error)}`);
+      setCalendarSyncNotice(`同步到系统日历失败：${toUserMessage(error)}`);
     }
   }
 
@@ -683,7 +718,7 @@ export function PanelWindow() {
       const result = await runCommand<{ imported: number; events: CalendarEvent[] }>("sync_calendar_from_system");
       setCalendarSyncNotice(`已从系统日历同步：${result.imported} 条`);
     } catch (error) {
-      setCalendarSyncNotice(`从系统日历同步失败：${String(error)}`);
+      setCalendarSyncNotice(`从系统日历同步失败：${toUserMessage(error)}`);
     }
   }
 
@@ -704,7 +739,7 @@ export function PanelWindow() {
       setSensingPaused(settings.sensingPaused);
       setPreferencesStatus("已保存");
     } catch (error) {
-      setPreferencesStatus(String(error));
+      setPreferencesStatus(toUserMessage(error));
     }
   }
 
@@ -742,7 +777,7 @@ export function PanelWindow() {
       setBreakReminderQuietHoursEnd(settings.breakReminderQuietHoursEnd);
       setPreferencesStatus("休息提醒设置已保存");
     } catch (error) {
-      setPreferencesStatus(String(error));
+      setPreferencesStatus(toUserMessage(error));
     }
   }
 
@@ -756,7 +791,7 @@ export function PanelWindow() {
       setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
       setPreferencesStatus("HTML 预览插件已更新");
     } catch (error) {
-      setPreferencesStatus(`HTML 预览插件更新失败：${String(error)}`);
+      setPreferencesStatus(`HTML 预览插件更新失败：${toUserMessage(error)}`);
     }
   }
 
@@ -769,7 +804,7 @@ export function PanelWindow() {
       }
       setAutostartEnabled(!autostartEnabled);
     } catch (error) {
-      setPreferencesStatus(`开机启动设置失败：${String(error)}`);
+      setPreferencesStatus(`开机启动设置失败：${toUserMessage(error)}`);
     }
   }
 
@@ -790,7 +825,7 @@ export function PanelWindow() {
       setUpdateStatus(update.available ? `发现新版本：${update.latestVersion}` : `已是最新版本：${update.currentVersion}`);
       setUpdateUrl(update.releaseUrl);
     } catch (error) {
-      setUpdateStatus(`检查更新失败：${String(error)}`);
+      setUpdateStatus(`检查更新失败：${toUserMessage(error)}`);
     }
   }
 
@@ -819,7 +854,7 @@ export function PanelWindow() {
       setDownloadedUpdatePath(downloaded.filePath);
       setUpdateStatus(`下载完成：${downloaded.fileName}`);
     } catch (error) {
-      setUpdateStatus(`更新下载失败：${String(error)}`);
+      setUpdateStatus(`更新下载失败：${toUserMessage(error)}`);
     } finally {
       setIsDownloadingUpdate(false);
     }
@@ -957,7 +992,6 @@ export function PanelWindow() {
           </div>
         </div>
         <p className="empty-state">Piko Desktop Companion · v{appVersion}</p>
-        {updateStatus && <p className="connection-status">{updateStatus}</p>}
         {updateUrl && (
           <button className="release-link" type="button" onClick={() => void openUrl(updateUrl)}>
             打开下载页
@@ -1106,7 +1140,6 @@ export function PanelWindow() {
           >
             重新运行引导
           </button>
-          {preferencesStatus && <p className="connection-status">{preferencesStatus}</p>}
         </div>
       </section>
 
@@ -1264,7 +1297,6 @@ export function PanelWindow() {
               「SenseVoice 中文优化」—— 阿里 FunAudioLLM 出品，专为中文设计，字错率比 Whisper 低一半以上，且几乎不出繁体字。
             </p>
           )}
-          {speechModelNotice && <p className="reminder-error">{speechModelNotice}</p>}
           <label>
             <span>API Key</span>
             <input
@@ -1302,7 +1334,11 @@ export function PanelWindow() {
           <button type="button" disabled={isTesting} onClick={testConnection}>
             {isTesting ? "正在测试..." : "保存并测试连接"}
           </button>
-          <p className="connection-status">{connectionStatus}</p>
+          <p
+            className={`feedback-status${connectionStatus.startsWith("连接失败") ? " feedback-status--error" : ""}`}
+          >
+            {connectionStatus}
+          </p>
         </div>
       </section>
 
@@ -1383,7 +1419,7 @@ export function PanelWindow() {
             ))}
           </select>
         </form>
-        {reminderError && <p className="reminder-error">{reminderError}</p>}
+        {reminderError && <ErrorState message={reminderError} onDismiss={() => setReminderError("")} />}
         {reminders.length ? (
           <ul className="reminder-list">
             {reminders.map((reminder) => (
@@ -1430,7 +1466,6 @@ export function PanelWindow() {
             ? `系统同步已就绪 · ${calendarSyncStatus.platform} · 映射 ${calendarSyncStatus.mappingCount} 条`
             : "当前平台未开放系统日历直连，同步按钮将保持为导出/导入式兼容路径。"}
         </p>
-        {calendarSyncNotice && <p className="calendar-notice">{calendarSyncNotice}</p>}
         <form className="reminder-form" onSubmit={createCalendarEvent}>
           <input
             value={calendarTitle}
@@ -1457,8 +1492,7 @@ export function PanelWindow() {
             </button>
           </div>
         </form>
-        {calendarError && <p className="reminder-error">{calendarError}</p>}
-        {calendarNotice && <p className="calendar-notice">{calendarNotice}</p>}
+        {calendarError && <ErrorState message={calendarError} onDismiss={() => setCalendarError("")} />}
         {calendarEvents.length ? (
           <ul className="reminder-list">
             {calendarEvents.map((event) => (
@@ -1522,7 +1556,7 @@ export function PanelWindow() {
             </button>
           </div>
         </form>
-        {memoError && <p className="reminder-error">{memoError}</p>}
+        {memoError && <ErrorState message={memoError} onDismiss={() => setMemoError("")} />}
         {memoSummaries.length ? (
           <div className="memo-summary-grid">
             {memoSummaries.map((group) => (
