@@ -5638,7 +5638,7 @@ fn set_pet_visible(app: &AppHandle, visible: bool) {
     }
 }
 
-fn configure_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+fn configure_tray(app: &tauri::App) -> Result<MenuItem<tauri::Wry>, Box<dyn std::error::Error>> {
     let show_pet = MenuItem::with_id(app, "toggle_pet", "隐藏 Piko", true, None::<&str>)?;
     let open_panel = MenuItem::with_id(app, "open_panel", "打开主面板", true, None::<&str>)?;
     let open_chat = MenuItem::with_id(app, "open_chat", "打开对话", true, None::<&str>)?;
@@ -5675,14 +5675,7 @@ fn configure_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         })
         .build(app)?;
 
-    // 菜单项句柄要在 build 之后才能拿到（R4-1 状态感知：切换时改文案）
-    if let Some(state) = app.try_state::<TrayState>() {
-        if let Ok(mut slot) = state.toggle_label.lock() {
-            *slot = show_pet;
-        }
-    }
-
-    Ok(())
+    Ok(show_pet)
 }
 
 fn configure_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -5739,6 +5732,11 @@ pub fn run() {
 
             // R1：把提醒与日程合并到统一存储。幂等且不删除旧文件；
             // 失败只记录日志，不能让迁移问题阻断应用启动。
+            // R4-1：先建托盘拿到菜单项句柄，再交给全局状态，
+            // 之后 set_pet_visible() 才能在运行时改「隐藏/显示 Piko」的文案。
+            let tray_toggle = configure_tray(app)?;
+            app.manage(TrayState { toggle_label: Mutex::new(tray_toggle) });
+
             match migrate_chat_sessions(app.handle()) {
                 Ok(report) if report.already_migrated => {}
                 Ok(report) => println!(
@@ -5761,7 +5759,6 @@ pub fn run() {
                 Err(error) => eprintln!("[schedule] 迁移中止：{error}"),
             }
 
-            configure_tray(app)?;
             configure_global_shortcut(app)?;
             app.state::<PluginRegistry>()
                 .register_declarative_plugins(app.handle());
