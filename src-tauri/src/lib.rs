@@ -5714,6 +5714,14 @@ struct TrayState {
     toggle_label: Mutex<MenuItem<tauri::Wry>>,
 }
 
+/// `TrayIcon` 是引用计数的：**最后一个实例被 drop 时图标就会从菜单栏消失**
+/// （tauri tray/mod.rs:394）。必须把它存进 managed state，否则
+/// `TrayIconBuilder::build()` 返回值一被丢弃，托盘就没了——
+/// 这正是「日志说创建成功、菜单栏却看不到图标」的原因。
+struct TrayIconHandle {
+    _icon: tauri::tray::TrayIcon<tauri::Wry>,
+}
+
 /// 当前生效的全局快捷键（R4-2），供设置页展示。
 struct GlobalShortcutState(Mutex<String>);
 
@@ -5736,14 +5744,16 @@ fn set_pet_visible(app: &AppHandle, visible: bool) {
     }
 }
 
-fn configure_tray(app: &tauri::App) -> Result<MenuItem<tauri::Wry>, Box<dyn std::error::Error>> {
+fn configure_tray(
+    app: &tauri::App,
+) -> Result<(MenuItem<tauri::Wry>, tauri::tray::TrayIcon<tauri::Wry>), Box<dyn std::error::Error>> {
     let show_pet = MenuItem::with_id(app, "toggle_pet", "隐藏 Piko", true, None::<&str>)?;
     let open_panel = MenuItem::with_id(app, "open_panel", "打开主面板", true, None::<&str>)?;
     let open_chat = MenuItem::with_id(app, "open_chat", "打开对话", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 Piko", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_pet, &open_chat, &open_panel, &quit])?;
 
-    TrayIconBuilder::new()
+    let tray_icon = TrayIconBuilder::new()
         .icon(app.default_window_icon().expect("application icon").clone())
         .tooltip("Piko · 桌面陪伴助手")
         .menu(&menu)
@@ -5773,7 +5783,8 @@ fn configure_tray(app: &tauri::App) -> Result<MenuItem<tauri::Wry>, Box<dyn std:
         })
         .build(app)?;
 
-    Ok(show_pet)
+    println!("[tray] 托盘已创建，菜单 4 项");
+    Ok((show_pet, tray_icon))
 }
 
 /// 把 "CmdOrCtrl+Shift+Space" 这类字符串解析成 `Shortcut`（R4-2）。
@@ -5889,7 +5900,9 @@ pub fn run() {
             // 失败只记录日志，不能让迁移问题阻断应用启动。
             // R4-1：先建托盘拿到菜单项句柄，再交给全局状态，
             // 之后 set_pet_visible() 才能在运行时改「隐藏/显示 Piko」的文案。
-            let tray_toggle = configure_tray(app)?;
+            let (tray_toggle, tray_icon) = configure_tray(app)?;
+            // 必须持有 TrayIcon：引用计数归零时图标会从菜单栏消失
+            app.manage(TrayIconHandle { _icon: tray_icon });
             app.manage(TrayState { toggle_label: Mutex::new(tray_toggle) });
             app.manage(GlobalShortcutState(Mutex::new(read_settings(app.handle()).global_shortcut)));
 
