@@ -1,0 +1,234 @@
+/*
+ * 引导页样式（05 §3）。
+ *
+ * 只与本屏有关；控件与容器都复用 src/styles/tokens.css 的令牌。
+ * class 统一加 `onb-` 前缀（App.css 里那套旧的 `.onboarding-*`
+ * 规则按任务卡要求原样保留，因此这里刻意不复用/不覆盖它们）。
+ */
+
+.onb-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5, 20px);
+  color: var(--piko-ink);
+  background:
+    radial-gradient(circle at top left, rgba(88, 121, 109, 0.12), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(77, 126, 138, 0.09), transparent 28%),
+    var(--piko-paper);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+
+.onb-card {
+  width: min(100%, 420px);
+  border: 1px solid var(--piko-line);
+  border-radius: var(--radius-xl, 16px);
+  padding: var(--space-5, 20px);
+  background: var(--piko-fill, #fffefa);
+  box-shadow: 0 16px 38px rgba(31, 41, 55, 0.13);
+}
+
+.onb-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  margin-bottom: var(--space-4, 16px);
+}
+
+.onb-step-badge {
+  margin: 0 0 var(--space-1, 4px);
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.onb-title {
+  margin: 0;
+  font-size: var(--text-lg, 15px);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.03em;
+}
+
+.onb-body {
+  display: grid;
+  gap: var(--space-3, 12px);
+}
+
+.onb-step-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.onb-hint {
+  margin: 0;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  line-height: 1.6;
+}
+
+.onb-field {
+  display: grid;
+  gap: var(--space-2, 8px);
+}
+
+.onb-label {
+  color: var(--piko-ink);
+  font-size: var(--text-md, 12px);
+  font-weight: 600;
+}
+
+.onb-input,
+.onb-select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--piko-line);
+  border-radius: var(--radius-md, 10px);
+  padding: 0 var(--space-3, 12px);
+  color: var(--piko-ink);
+  background: #fff;
+  font-family: inherit;
+  font-size: var(--text-base, 13px);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.onb-input:focus,
+.onb-select:focus {
+  border-color: var(--piko-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--piko-soft);
+}
+
+/* 本机服务分支：用这块说明替代 Key 输入框。 */
+.onb-local-note {
+  margin: 0;
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-3, 12px);
+  color: var(--piko-accent);
+  background: var(--piko-soft);
+  font-size: var(--text-md, 12px);
+  line-height: 1.6;
+}
+
+.onb-result {
+  margin: 0;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  line-height: 1.6;
+  min-height: 18px;
+}
+
+.onb-result--pending {
+  color: var(--piko-muted);
+}
+
+.onb-result--success {
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  color: var(--piko-accent);
+  background: var(--piko-soft);
+  font-weight: 600;
+}
+
+.onb-result--error {
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  color: #b85a51;
+  background: rgba(194, 84, 73, 0.08);
+  font-weight: 600;
+}
+
+.onb-checklist {
+  display: grid;
+  gap: var(--space-3, 12px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onb-checklist li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3, 12px);
+  font-size: var(--text-base, 13px);
+  line-height: 1.6;
+}
+
+.onb-check {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--piko-accent);
+  font-size: var(--text-xs, 9px);
+  font-weight: 700;
+}
+
+.onb-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-2, 8px);
+}
+
+.onb-btn {
+  min-height: 34px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: var(--text-md, 12px);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 160ms ease, opacity 160ms ease;
+}
+
+.onb-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.onb-btn--primary {
+  min-width: 92px;
+  color: #fff;
+  background: var(--piko-accent);
+}
+
+.onb-btn--primary:hover {
+  filter: brightness(0.93);
+}
+
+.onb-btn--ghost {
+  color: var(--piko-accent);
+  background: var(--piko-soft);
+}
+
+.onb-btn--quiet {
+  flex-shrink: 0;
+  color: var(--piko-muted);
+  background: transparent;
+  font-weight: 600;
+}
+
+.onb-btn--quiet:hover {
+  background: var(--piko-soft);
+}
+
+@media (max-width: 380px) {
+  .onb-shell {
+    padding: var(--space-3, 12px);
+  }
+
+  .onb-card {
+    padding: var(--space-4, 16px);
+  }
+}

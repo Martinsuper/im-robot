@@ -1,4 +1,13 @@
-import { HistoryItem, InlineToolbar, MarkdownContent, WelcomeState, textForSpeech } from "./ChatPresentation";
+import {
+  CollapsibleReply,
+  HistoryItem,
+  InlineToolbar,
+  ModelSetupCard,
+  ReplyStatusCard,
+  WelcomeState,
+  openModelSettings,
+  textForSpeech,
+} from "./ChatPresentation";
 import { ArrowUp, Mic, Paperclip, ScanLine, Square, X } from "lucide-react";
 import { FormEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -31,6 +40,14 @@ export function BubbleWindow() {
   const [theme, setTheme] = useState<Theme>("sage");
   const [htmlPreviewEnabled, setHtmlPreviewEnabled] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  /**
+   * 回复状态机（02 §4）：thinking / streaming 时是 null，结束后落到 done / failed / cancelled。
+   * 失败与停止都**不再把错误塞进 message**——那会让错误以 Markdown 正文的样子出现。
+   */
+  const [replyStatus, setReplyStatus] = useState<"done" | "failed" | "cancelled" | null>(null);
+  const [replyError, setReplyError] = useState("");
+  /** thinking 超过 8s 给一句安抚（02 §4）。 */
+  const [isThinkingLong, setIsThinkingLong] = useState(false);
   const [attachment, setAttachment] = useState<AttachmentPreview>();
   const [attachmentAction, setAttachmentAction] = useState<AttachmentAction>("summarize");
   const [screenshot, setScreenshot] = useState<ScreenshotPreview>();
@@ -46,6 +63,7 @@ export function BubbleWindow() {
   const [showReplySkeleton, setShowReplySkeleton] = useState(false);
   const [memoryActivity, setMemoryActivity] = useState<string>("");
   const [isReplyEntering, setIsReplyEntering] = useState(false);
+  const [aiConfigured, setAiConfigured] = useState(true);
   // New state for redesign
   const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
@@ -56,6 +74,7 @@ export function BubbleWindow() {
   const lastSequence = useRef(0);
   const mountedRef = useRef(true);
   const previewReplyTimer = useRef<number | undefined>(undefined);
+  const thinkingLongTimer = useRef<number | undefined>(undefined);
   const skeletonHideTimer = useRef<number | undefined>(undefined);
   const receivedFirstDelta = useRef(false);
   const threadScrollRef = useRef<HTMLDivElement>(null);
@@ -89,6 +108,19 @@ export function BubbleWindow() {
   const hasCurrentTurn = Boolean(currentPrompt || message || pendingAction || showReplySkeleton);
   const showWelcome = !hasCurrentTurn && chatHistory.length === 0;
 
+  // 02 §3.3：Esc 收起窗口；Cmd/Ctrl + Enter 发送
+  function handleWindowKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      void runCommand("hide_bubble");
+      return;
+    }
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      submitPrompt();
+    }
+  }
+
   function startBubbleDrag(event: PointerEvent<HTMLElement>) {
     if (!isTauriRuntime || event.button !== 0) return;
     const target = event.target as HTMLElement;
@@ -97,6 +129,10 @@ export function BubbleWindow() {
   }
 
   function clearSkeletonHideTimer() {
+    if (thinkingLongTimer.current) {
+      window.clearTimeout(thinkingLongTimer.current);
+      thinkingLongTimer.current = undefined;
+    }
     if (skeletonHideTimer.current) {
       window.clearTimeout(skeletonHideTimer.current);
       skeletonHideTimer.current = undefined;
@@ -131,6 +167,8 @@ export function BubbleWindow() {
       setCompanionName(settings.companionName);
       setTheme(settings.theme);
       setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
+      // 02 §10.4：未配置模型也要能打开对话，但要给引导卡
+      setAiConfigured(settings.hasApiKey || settings.ai.baseUrl.includes("localhost") || settings.ai.baseUrl.includes("127.0.0.1"));
     });
     refreshChatHistory();
   }, []);
@@ -317,7 +355,15 @@ export function BubbleWindow() {
     setPendingAction(undefined);
     setSelectedChoiceIndexes([]);
     setMessage("");
+    setReplyStatus(null);
+    setReplyError("");
+    setIsThinkingLong(false);
     setShowReplySkeleton(true);
+    if (thinkingLongTimer.current) window.clearTimeout(thinkingLongTimer.current);
+    thinkingLongTimer.current = window.setTimeout(() => {
+      // thinking 超过 8s 给一句安抚（02 §4）
+      setIsThinkingLong(true);
+    }, 8000);
     setIsReplyEntering(false);
     receivedFirstDelta.current = false;
     clearSkeletonHideTimer();
@@ -335,6 +381,7 @@ export function BubbleWindow() {
       previewReplyTimer.current = window.setTimeout(() => {
         previewReplyTimer.current = undefined;
         setMessage(`这是浏览器预览回复：${requestPrompt}`);
+        setReplyStatus("done");
         setIsThinking(false);
         clearSkeletonHideTimer();
         setShowReplySkeleton(false);
@@ -352,15 +399,21 @@ export function BubbleWindow() {
       },
     }).catch((error) => {
       setIsThinking(false);
-      setMessage(`模型服务连接失败：${toUserMessage(error)}`);
+      setShowReplySkeleton(false);
+      setReplyStatus("failed");
+      setReplyError(toUserMessage(error, "网络好像不太稳定"));
     });
+  }
+
+  function submitPrompt() {
+    if (!prompt.trim() && !attachment && !screenshot) return;
+    const currentPromptValue = prompt.trim();
+    void sendPrompt(currentPromptValue);
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!prompt.trim() && !attachment && !screenshot) return;
-    const currentPromptValue = prompt.trim();
-    void sendPrompt(currentPromptValue);
+    submitPrompt();
   }
 
   function cancel() {
@@ -372,7 +425,7 @@ export function BubbleWindow() {
       setShowReplySkeleton(false);
       setIsReplyEntering(false);
       setIsThinking(false);
-      setMessage("已停止生成。");
+      setReplyStatus("cancelled");
       return;
     }
     void runCommand("chat_cancel", { requestId });
@@ -690,7 +743,11 @@ export function BubbleWindow() {
   const htmlPreviewSource = htmlPreviewEnabled ? extractHtmlPreviewSource(message) : null;
 
   return (
-    <main className={`bubble-shell bubble-shell--${theme}`}>
+    <main
+      className={`bubble-shell bubble-shell--${theme}`}
+      onKeyDown={handleWindowKeyDown}
+      tabIndex={-1}
+    >
       {/* Layer 1: Top Bar */}
       <header className="bubble-topbar" onPointerDown={startBubbleDrag}>
         <div className="bubble-topbar__left">
@@ -717,6 +774,9 @@ export function BubbleWindow() {
 
       {/* Layer 2: Thread Area */}
       <section className="bubble-thread" ref={threadScrollRef}>
+        {showWelcome && !aiConfigured && (
+          <ModelSetupCard onOpenSettings={openModelSettings} />
+        )}
         {showWelcome && <WelcomeState companionName={companionName} message={getBubbleCompanionMessage() || ""} onSuggest={(suggestion) => { setPrompt(suggestion); promptInputRef.current?.focus(); }} />}
 
         {chatHistory.length > 0 && (
@@ -745,7 +805,10 @@ export function BubbleWindow() {
               </div>
             )}
 
-            {showReplySkeleton ? (
+            {isThinkingLong && isThinking ? (
+          <p className="bubble-thread__thinking-long" role="status">还在思考，稍等一下…</p>
+        ) : null}
+        {showReplySkeleton ? (
               <div className="bubble-thread__ai-card bubble-thread__ai-card--loading">
                 <div className="bubble-thread__ai-sprite">
                   <PetSprite mode="thinking" compact />
@@ -792,7 +855,7 @@ export function BubbleWindow() {
                   <PetSprite mode="idle" compact />
                 </div>
                 <div className="bubble-thread__ai-content">
-                  <MarkdownContent>{message}</MarkdownContent>
+                  <CollapsibleReply markdown={message} />
                 </div>
               </div>
             ) : null}
@@ -811,6 +874,14 @@ export function BubbleWindow() {
                 onOpenPanel={() => runCommand("open_panel")}
               />
             )}
+            {(replyStatus === "failed" || replyStatus === "cancelled") ? (
+              <ReplyStatusCard
+                tone={replyStatus}
+                message={replyError}
+                onRetry={() => void sendPrompt(currentPrompt)}
+                onOpenSettings={openModelSettings}
+              />
+            ) : null}
           </div>
         )}
       </section>

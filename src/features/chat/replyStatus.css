@@ -1,0 +1,107 @@
+/*
+ * 回复状态相关的呈现：长回复折叠、失败 / 停止状态卡、未配置模型引导卡、
+ * 思考超时提示。全部来自 02 §4 / §7.3 / §10.4 / §12。
+ * 令牌来自 src/styles/tokens.css。
+ */
+
+/* --- 长回复折叠 --- */
+.reply-fold-toggle {
+  margin-top: 6px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--piko-accent, #356951);
+  font-size: var(--text-xs, 9px);
+  font-weight: 600;
+  cursor: pointer;
+}
+.reply-fold-toggle:hover { text-decoration: underline; }
+
+/* --- 思考超过 8s 的安抚 --- */
+.bubble-thread__thinking-long {
+  margin: 6px 0 0;
+  color: var(--piko-muted, #68756e);
+  font-size: var(--text-xs, 9px);
+}
+
+/* --- 失败 / 停止状态卡 --- */
+.reply-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 9px 11px;
+  border-radius: var(--radius-md, 10px);
+  font-size: var(--text-sm, 11px);
+}
+.reply-status--failed {
+  border: 1px solid rgba(184, 90, 81, .3);
+  background: rgba(184, 90, 81, .07);
+  color: #8f453d;
+}
+.reply-status--cancelled {
+  border: 1px solid var(--piko-line, #dfe5dc);
+  background: var(--piko-soft, #e9f0e7);
+  color: var(--piko-muted, #68756e);
+  align-items: center;
+}
+.reply-status__body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.reply-status__body p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.reply-status__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.reply-status__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.reply-status__actions .text-action {
+  color: var(--piko-muted, #68756e);
+  font-weight: 500;
+}
+
+/* --- 未配置模型的引导卡 --- */
+.model-setup-card {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  margin: 0 auto 12px;
+  max-width: 320px;
+  border: 1px solid var(--piko-line, #dfe5dc);
+  border-radius: var(--radius-lg, 13px);
+  background: var(--piko-fill, #fffefa);
+  padding: 14px 16px;
+}
+.model-setup-card__title {
+  margin: 0;
+  color: var(--piko-ink, #293b34);
+  font-size: var(--text-md, 12px);
+  font-weight: 650;
+}
+.model-setup-card__hint {
+  margin: 0;
+  color: var(--piko-muted, #68756e);
+  font-size: var(--text-sm, 11px);
+  line-height: 1.6;
+}
+.model-setup-card .primary-action {
+  min-height: 32px;
+  margin-top: 2px;
+}

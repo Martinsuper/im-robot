@@ -1,4 +1,8 @@
-import { Coffee, FileText, MessageCircle } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Coffee, FileText, MessageCircle, RotateCcw, Settings2, Square } from "lucide-react";
+import { runCommand } from "../app/appRuntime";
+import { suggestionsFor } from "./chatSuggestions";
+import { foldReply, foldedRemainder, shouldFoldReply } from "./replyFolding";
 import { isValidElement, type ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ChatHistoryEntry } from "../../types/appTypes";
@@ -8,6 +12,7 @@ import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
+import "./replyStatus.css";
 
 export function extractMarkdownText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -208,19 +213,116 @@ export function HistoryItem({
   );
 }
 
+const SUGGESTION_ICONS = [Coffee, FileText, MessageCircle];
+
 export function WelcomeState({ companionName, message, onSuggest }: { companionName: string; message: string; onSuggest: (prompt: string) => void }) {
+  // 建议随小时变化（02 §11）；点击只填入输入框，不自动发送。
+  const suggestions = suggestionsFor();
   return (
     <div className="bubble-welcome">
       <PetSprite mode="idle" />
       <p className="bubble-welcome__greeting">
-        {message || `你好，我是 ${companionName}。今天想一起完成什么？`}
+        {message || `你好，我是 ${companionName} 👋\n可以问我问题，也可以让我帮你记点东西。`}
       </p>
       <div className="bubble-suggestions" aria-label="提问建议">
-        <button type="button" onClick={() => onSuggest("帮我梳理一下今天的计划")}><Coffee size={14} />安排今天</button>
-        <button type="button" onClick={() => onSuggest("帮我整理这段文字的重点：")}><FileText size={14} />整理想法</button>
-        <button type="button" onClick={() => onSuggest("陪我聊一会儿吧")}><MessageCircle size={14} />随便聊聊</button>
+        {suggestions.map((suggestion, index) => {
+          const Icon = SUGGESTION_ICONS[index] ?? MessageCircle;
+          return (
+            <button key={suggestion.label} type="button" onClick={() => onSuggest(suggestion.prompt)}>
+              <Icon size={14} />
+              {suggestion.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
+}
+
+/**
+ * 长回复折叠（02 §7.3）。
+ *
+ * 含代码块时不折叠，改由 `shouldFoldReply` 决定（代码被截断比不折叠更糟）。
+ */
+export function CollapsibleReply({ markdown }: { markdown: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!shouldFoldReply(markdown)) return <MarkdownContent>{markdown}</MarkdownContent>;
+  const remainder = foldedRemainder(markdown);
+  return (
+    <>
+      <MarkdownContent>{expanded ? markdown : foldReply(markdown)}</MarkdownContent>
+      <button type="button" className="reply-fold-toggle" onClick={() => setExpanded((value) => !value)}>
+        {expanded ? "收起" : `展开全部（还有 ${remainder} 字）`}
+      </button>
+    </>
+  );
+}
+
+/**
+ * 失败 / 停止状态（02 §4、§12）。
+ *
+ * 关键要求：**停止后保留已生成内容**，不整段清空；失败必须给出可操作按钮。
+ * 文案禁止直出 Rust / HTTP 原始错误——一律经过 `toUserMessage` 之后传进来。
+ */
+export function ReplyStatusCard({
+  tone,
+  message,
+  onRetry,
+  onOpenSettings,
+}: {
+  tone: "failed" | "cancelled";
+  message?: string;
+  onRetry: () => void;
+  onOpenSettings?: () => void;
+}) {
+  if (tone === "cancelled") {
+    return (
+      <div className="reply-status reply-status--cancelled" role="status">
+        <Square size={14} aria-hidden="true" />
+        <span>已停止</span>
+        <button type="button" className="text-action" onClick={onRetry}>重新生成</button>
+      </div>
+    );
+  }
+  return (
+    <div className="reply-status reply-status--failed" role="alert">
+      <AlertTriangle size={15} aria-hidden="true" />
+      <div className="reply-status__body">
+        <p>{message || "出了点小状况"}</p>
+        <div className="reply-status__actions">
+          <button type="button" onClick={onRetry}><RotateCcw size={13} />重试</button>
+          {onOpenSettings ? (
+            <button type="button" className="text-action" onClick={onOpenSettings}>
+              <Settings2 size={13} />检查设置
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 未配置模型时的引导卡（02 §10.4）。
+ *
+ * 「未配置也能打开对话」是硬要求：不能因为没配 Key 就让窗口打不开或者一片空白。
+ */
+export function ModelSetupCard({ onOpenSettings }: { onOpenSettings: () => void }) {
+  return (
+    <div className="model-setup-card" role="status">
+      <p className="model-setup-card__title">先连接一个 AI 才能聊天</p>
+      <p className="model-setup-card__hint">
+        连上之后就能直接问我问题；也可以用本机运行的模型，不需要 Key。
+      </p>
+      <button type="button" className="primary-action" onClick={onOpenSettings}>
+        <Settings2 size={14} />去设置
+      </button>
+    </div>
+  );
+}
+
+/** 打开面板并定位到「设置 → 对话与模型」。 */
+export function openModelSettings() {
+  void runCommand("open_panel");
 }
 
