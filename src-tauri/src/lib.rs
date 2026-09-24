@@ -3033,14 +3033,12 @@ fn toggle_panel(app: AppHandle) {
 
 #[tauri::command]
 fn show_pet(app: AppHandle) {
-    show_and_focus(&app, "pet");
+    set_pet_visible(&app, true);
 }
 
 #[tauri::command]
 fn hide_pet(app: AppHandle) {
-    if let Some(window) = app.get_webview_window("pet") {
-        let _ = window.hide();
-    }
+    set_pet_visible(&app, false);
 }
 
 #[tauri::command]
@@ -5616,25 +5614,51 @@ async fn download_update_asset(
     })
 }
 
+/// 托盘菜单项句柄（R4-1 状态感知），用于在运行时改文案。
+struct TrayState {
+    toggle_label: Mutex<MenuItem<tauri::Wry>>,
+}
+
+/// 切换精灵可见性，并同步托盘菜单文案（R4-1 状态感知）。
+///
+/// 托盘菜单项在 build 时创建，Tauri 没有给「菜单即将显示」的钩子，
+/// 所以把可见性切换收敛到这一个函数里，在这里同步改菜单文字。
+fn set_pet_visible(app: &AppHandle, visible: bool) {
+    if let Some(window) = app.get_webview_window("pet") {
+        let _ = if visible { window.show() } else { window.hide() };
+        if visible {
+            let _ = window.set_focus();
+        }
+    }
+    if let Some(state) = app.try_state::<TrayState>() {
+        if let Ok(label) = state.toggle_label.lock() {
+            let text = if visible { "隐藏 Piko" } else { "显示 Piko" };
+            let _ = label.set_text(text);
+        }
+    }
+}
+
 fn configure_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let show_pet = MenuItem::with_id(app, "show_pet", "Show Piko", true, None::<&str>)?;
-    let hide_pet = MenuItem::with_id(app, "hide_pet", "Hide Piko", true, None::<&str>)?;
-    let open_panel = MenuItem::with_id(app, "open_panel", "Open Assistant", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_pet, &hide_pet, &open_panel, &quit])?;
+    let show_pet = MenuItem::with_id(app, "toggle_pet", "隐藏 Piko", true, None::<&str>)?;
+    let open_panel = MenuItem::with_id(app, "open_panel", "打开主面板", true, None::<&str>)?;
+    let open_chat = MenuItem::with_id(app, "open_chat", "打开对话", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出 Piko", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_pet, &open_chat, &open_panel, &quit])?;
 
     TrayIconBuilder::new()
         .icon(app.default_window_icon().expect("application icon").clone())
-        .tooltip("Piko Desktop AI Pet")
+        .tooltip("Piko · 桌面陪伴助手")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show_pet" => show_and_focus(app, "pet"),
-            "hide_pet" => {
-                if let Some(window) = app.get_webview_window("pet") {
-                    let _ = window.hide();
-                }
+            "toggle_pet" => {
+                let visible = app
+                    .get_webview_window("pet")
+                    .and_then(|window| window.is_visible().ok())
+                    .unwrap_or(false);
+                set_pet_visible(app, !visible);
             }
+            "open_chat" => show_and_focus(app, "bubble"),
             "open_panel" => show_and_focus(app, "panel"),
             "quit" => app.exit(0),
             _ => {}
@@ -5650,6 +5674,13 @@ fn configure_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
         })
         .build(app)?;
+
+    // 菜单项句柄要在 build 之后才能拿到（R4-1 状态感知：切换时改文案）
+    if let Some(state) = app.try_state::<TrayState>() {
+        if let Ok(mut slot) = state.toggle_label.lock() {
+            *slot = show_pet;
+        }
+    }
 
     Ok(())
 }

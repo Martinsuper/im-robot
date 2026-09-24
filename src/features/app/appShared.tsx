@@ -95,7 +95,12 @@ export function clearCustomPetImagePath() {
 }
 
 export function getAvailablePetVisualStyleOptions(hasCustomImage = Boolean(getCustomPetImagePath())) {
-  return petVisualStyleOptions.filter((option) => option.value !== "custom" || hasCustomImage);
+  // R3-5：外观收敛为三选一（05 §4.1）。
+  // "classic" 是兜底渲染（自定义图缺失、资产加载失败时自动回落），不是一种可选风格，
+  // 所以不出现在选择器里；但 getPetVisualStyle 的校验仍接受它，已有用户的存量值不受影响。
+  return petVisualStyleOptions.filter(
+    (option) => option.value !== "classic" && (option.value !== "custom" || hasCustomImage),
+  );
 }
 
 export function getNextPetVisualStyle(
