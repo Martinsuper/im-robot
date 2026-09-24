@@ -23,6 +23,8 @@ export interface AppSettings {
   ai: AiSettings;
   hasApiKey: boolean;
   htmlPreviewEnabled: boolean;
+  /** 全局快捷键（打开对话窗口）。格式如 CmdOrCtrl+Shift+Space。 */
+  globalShortcut: string;
 }
 
 export interface ModelInfo {

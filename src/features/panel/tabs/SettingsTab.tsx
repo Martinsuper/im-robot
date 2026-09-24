@@ -104,6 +104,11 @@ export function SettingsTab() {
   const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
   const [isTesting, setIsTesting] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
+  const [shortcutDraft, setShortcutDraft] = useState<string | null>(null);
+  const [isSavingShortcut, setIsSavingShortcut] = useState(false);
+  /** 两段式确认：第一次点击只变成「确认清空」，再点才执行（00 §5.9 可逆原则）。 */
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState("按需申请");
   const [screenCapturePermission, setScreenCapturePermission] = useState("截图时按需申请");
   const [preferencesStatus, setPreferencesStatus] = useState("");
@@ -394,6 +399,47 @@ export function SettingsTab() {
    * 注意它**不含 API Key**（密钥存在钥匙串里），这一点在界面上要说清楚，
    * 否则用户会以为导出的是完整备份。
    */
+  /**
+   * R4-2：修改全局快捷键。
+   * 失败时后端会回滚并给人话原因，这里把错误显示出来即可。
+   */
+  async function saveGlobalShortcut() {
+    const next = (shortcutDraft ?? "").trim();
+    if (!next) return;
+    setIsSavingShortcut(true);
+    try {
+      await runCommand("update_global_shortcut", { shortcut: next });
+      setShortcutDraft(null);
+      toast.success("快捷键已更新");
+    } catch (error) {
+      toast.error(toUserMessage(error, "快捷键更新失败，请重试。"));
+      setShortcutDraft(null);
+    } finally {
+      setIsSavingShortcut(false);
+    }
+  }
+
+  async function clearMyData() {
+    setIsClearing(true);
+    try {
+      const result = await runCommand<{ backupDir: string; cleared: string[] }>("clear_my_data", undefined, {
+        backupDir: "",
+        cleared: [],
+      });
+      toast.show({
+        message: `已清空 ${result?.cleared.length ?? 0} 类数据，备份在 backups 目录`,
+        tone: "success",
+      });
+      setConfirmClear(false);
+      // 记录 Tab 监听 memos-updated / chat-history-updated，会自己刷新
+
+    } catch (error) {
+      toast.error(toUserMessage(error, "清空失败，未做任何删除。"));
+    } finally {
+      setIsClearing(false);
+    }
+  }
+
   async function exportMyData() {
     try {
       const path = await save({
@@ -860,6 +906,33 @@ export function SettingsTab() {
         </section>
 
         <section className="panel-card">
+          <p className="eyebrow">SHORTCUT</p>
+          <h2>全局快捷键</h2>
+          <div className="settings-form">
+            <label>
+              <span>打开对话窗口</span>
+              <input
+                value={shortcutDraft ?? settings.globalShortcut}
+                onChange={(event) => setShortcutDraft(event.currentTarget.value)}
+                placeholder="CmdOrCtrl+Shift+Space"
+                aria-label="全局快捷键"
+              />
+            </label>
+            {shortcutDraft !== null && shortcutDraft !== settings.globalShortcut ? (
+              <div className="settings-subgroup">
+                <button type="button" onClick={() => void saveGlobalShortcut()} disabled={isSavingShortcut}>
+                  {isSavingShortcut ? "保存中…" : "保存快捷键"}
+                </button>
+                <button type="button" className="text-action" onClick={() => setShortcutDraft(null)}>
+                  取消
+                </button>
+              </div>
+            ) : null}
+            <p className="settings-note">被别的应用占用时保存会失败，并自动恢复原快捷键。</p>
+          </div>
+        </section>
+
+        <section className="panel-card">
           <p className="eyebrow">DATA</p>
           <h2>我的数据</h2>
           <div className="settings-form">
@@ -870,6 +943,31 @@ export function SettingsTab() {
               导出一份 JSON（设置、对话、提醒、日程、专注记录）。出于安全考虑，
               API Key 不在其中。
             </p>
+          </div>
+        </section>
+
+        <section className="panel-card">
+          <p className="eyebrow">DANGER</p>
+          <h2>清空我的数据</h2>
+          <div className="settings-form">
+            <p className="settings-note">
+              清空提醒、日程、备忘、对话与专注记录。会先自动备份，可从
+              backups 目录找回。设置与 Piko 记住的内容不受影响。
+            </p>
+            {confirmClear ? (
+              <div className="settings-subgroup">
+                <button type="button" disabled={isClearing} onClick={() => void clearMyData()}>
+                  {isClearing ? "清空中…" : "确认清空"}
+                </button>
+                <button type="button" className="text-action" onClick={() => setConfirmClear(false)}>
+                  取消
+                </button>
+              </div>
+            ) : (
+              <button type="button" onClick={() => setConfirmClear(true)}>
+                清空我的数据…
+              </button>
+            )}
           </div>
         </section>
       </SettingsGroup>

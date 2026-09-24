@@ -333,6 +333,7 @@ export const defaultAppSettings: AppSettings = {
   ai: defaultAiSettings,
   hasApiKey: false,
   htmlPreviewEnabled: false,
+  globalShortcut: "CmdOrCtrl+Shift+Space",
 };
 
 export const defaultFocusSnapshot: FocusSnapshot = {

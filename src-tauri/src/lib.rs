@@ -21,7 +21,7 @@ use tauri::{
     State, Webview, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::WasiCtxBuilder;
@@ -91,6 +91,9 @@ struct AppSettings {
     has_api_key: bool,
     #[serde(default)]
     html_preview_enabled: bool,
+    /// 全局快捷键（02 §3.3 / 06）：打开对话窗口。格式如 "CmdOrCtrl+Shift+Space"。
+    #[serde(default = "default_global_shortcut")]
+    global_shortcut: String,
     #[serde(default)]
     onboarding_completed: bool,
     #[serde(default)]
@@ -1062,6 +1065,7 @@ impl Default for AppSettings {
             ai: AiSettings::default(),
             has_api_key: false,
             html_preview_enabled: false,
+            global_shortcut: default_global_shortcut(),
             onboarding_completed: false,
             onboarding_version: String::new(),
         }
@@ -1074,6 +1078,10 @@ fn default_companion_name() -> String {
 
 fn default_theme() -> String {
     "sage".to_string()
+}
+
+fn default_global_shortcut() -> String {
+    "CmdOrCtrl+Shift+Space".to_string()
 }
 
 fn default_break_reminders_enabled() -> bool {
@@ -5357,6 +5365,93 @@ fn toggle_foreground_sensing(
 // DATA IMPORT/EXPORT COMMANDS
 // ============================================================================
 
+/// 清空我的数据（R4-6）。
+///
+/// 先把所有数据文件复制到 `backups/cleared-<时间戳>/`，再写回空数组。
+/// **不删除**任何文件——旧数据永远有一份留在备份里，这是 08 §1.4「可逆原则」的要求。
+/// 只清用户内容（提醒 / 日程 / 备忘 / 对话 / 专注记录），**不动**设置与记忆库
+/// （设置是「怎么表现」，清掉会让人莫名其妙；记忆库属 04 模块，单独提供入口）。
+#[tauri::command]
+fn clear_my_data(app: AppHandle) -> Result<serde_json::Value, String> {
+    let _transaction = storage::transaction();
+
+    let files: Vec<(&str, Option<PathBuf>, serde_json::Value)> = vec![
+        (
+            "reminders.json",
+            reminders_path(&app),
+            serde_json::json!([]),
+        ),
+        (
+            "calendar-events.json",
+            calendar_events_path(&app),
+            serde_json::json!([]),
+        ),
+        (
+            "schedule-items.json",
+            schedule_items_path(&app),
+            serde_json::json!([]),
+        ),
+        ("memos.json", memos_path(&app), serde_json::json!([])),
+        (
+            "chat-history.json",
+            chat_history_path(&app),
+            serde_json::json!([]),
+        ),
+        (
+            "chat-sessions.json",
+            chat_sessions_path(&app),
+            serde_json::json!([]),
+        ),
+        (
+            "focus-records.json",
+            focus_records_path(&app),
+            serde_json::json!([]),
+        ),
+    ];
+
+    // 先备份
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("无法获取数据目录：{error}"))?;
+    let backup_dir = config_dir.join(format!("backups/cleared-{}", unix_timestamp()));
+    let mut backed_up: Vec<String> = Vec::new();
+    for (name, path, _) in &files {
+        let Some(path) = path else { continue };
+        if !path.exists() {
+            continue;
+        }
+        std::fs::create_dir_all(&backup_dir)
+            .map_err(|error| format!("无法创建备份目录：{error}"))?;
+        std::fs::copy(path, backup_dir.join(name))
+            .map_err(|error| format!("无法备份 {name}：{error}"))?;
+        backed_up.push(name.to_string());
+    }
+
+    // 再清空
+    for (name, path, empty) in &files {
+        if let Some(path) = path {
+            storage::write(path, empty)
+                .map_err(|error| format!("清空 {name} 失败：{error}。原文件已恢复，未做任何删除。"))?;
+        }
+    }
+
+    // 内存中的会话上下文也一并清掉
+    if let Some(context) = app.try_state::<ChatContext>() {
+        if let Ok(mut history) = context.0.lock() {
+            history.clear();
+        }
+    }
+    let _ = app.emit("chat-history-updated", ());
+    let _ = app.emit("schedule-updated", ());
+    let _ = app.emit("memos-updated", ());
+
+    Ok(serde_json::json!({
+        "backupDir": backup_dir.display().to_string(),
+        "cleared": backed_up,
+    }))
+}
+
 #[tauri::command]
 fn export_data(app: AppHandle) -> Result<serde_json::Value, String> {
     let export = crate::sync::import_export::build_export_data(&app);
@@ -5619,6 +5714,9 @@ struct TrayState {
     toggle_label: Mutex<MenuItem<tauri::Wry>>,
 }
 
+/// 当前生效的全局快捷键（R4-2），供设置页展示。
+struct GlobalShortcutState(Mutex<String>);
+
 /// 切换精灵可见性，并同步托盘菜单文案（R4-1 状态感知）。
 ///
 /// 托盘菜单项在 build 时创建，Tauri 没有给「菜单即将显示」的钩子，
@@ -5678,12 +5776,22 @@ fn configure_tray(app: &tauri::App) -> Result<MenuItem<tauri::Wry>, Box<dyn std:
     Ok(show_pet)
 }
 
+/// 把 "CmdOrCtrl+Shift+Space" 这类字符串解析成 `Shortcut`（R4-2）。
+///
+/// 解析失败返回 Err，由调用方决定如何提示；绝不静默回退到默认值——
+/// 否则用户改了个坏值，界面显示的是新值，实际生效的却是旧值。
+fn parse_global_shortcut(value: &str) -> Result<Shortcut, String> {
+    use std::str::FromStr;
+    // 插件自带的解析器支持 "CmdOrCtrl+Shift+Space" / "Alt+X" 等写法
+    Shortcut::from_str(value).map_err(|_| {
+        format!("快捷键格式看不懂：{value}。请用类似 CmdOrCtrl+Shift+Space 的写法")
+    })
+}
+
+/// 注册全局快捷键（R4-2：从设置读取，不再硬编码）。
 fn configure_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(target_os = "macos")]
-    let primary_modifier = Modifiers::SUPER;
-    #[cfg(not(target_os = "macos"))]
-    let primary_modifier = Modifiers::CONTROL;
-    let shortcut = Shortcut::new(Some(primary_modifier | Modifiers::SHIFT), Code::Space);
+    let settings = read_settings(app.handle());
+    let shortcut = parse_global_shortcut(&settings.global_shortcut)?;
 
     app.handle().plugin(
         tauri_plugin_global_shortcut::Builder::new()
@@ -5695,8 +5803,55 @@ fn configure_global_shortcut(app: &tauri::App) -> Result<(), Box<dyn std::error:
             .build(),
     )?;
 
-    app.global_shortcut().register(shortcut)?;
+    app.global_shortcut().register(shortcut).map_err(|error| {
+        // 02 §12 / 06：注册失败要给人话原因（多半是冲突）
+        eprintln!("[shortcut] 全局快捷键注册失败：{error}");
+        Box::new(error) as Box<dyn std::error::Error>
+    })?;
     Ok(())
+}
+
+/// 修改全局快捷键（R4-2）。失败时返回人话原因，并说明是否与其他应用冲突。
+#[tauri::command]
+fn update_global_shortcut(
+    app: AppHandle,
+    global_shortcut: State<'_, GlobalShortcutState>,
+    shortcut: String,
+) -> Result<(), String> {
+    let new_shortcut = parse_global_shortcut(&shortcut)?;
+
+    // 先注销旧的，再尝试注册新的；失败则把旧的注册回来（回滚）。
+    let _ = app.global_shortcut().unregister_all();
+    if let Err(error) = app.global_shortcut().register(new_shortcut) {
+        let rollback = read_settings(&app).global_shortcut.clone();
+        if let Ok(previous) = parse_global_shortcut(&rollback) {
+            let _ = app.global_shortcut().register(previous);
+        }
+        let message = format!(
+            "快捷键注册失败，已恢复原快捷键。多半是被别的应用占用了（{error}）"
+        );
+        return Err(message);
+    }
+
+    let mut settings = read_settings(&app);
+    settings.global_shortcut = shortcut.clone();
+    persist_settings(&app, &settings)?;
+    *global_shortcut.0.lock().map_err(|_| "无法保存快捷键状态".to_string())? = shortcut;
+    let _ = app.emit("settings-updated", ());
+    Ok(())
+}
+
+/// 当前生效的快捷键（供设置页展示）。
+#[tauri::command]
+fn get_global_shortcut(
+    app: AppHandle,
+    global_shortcut: State<'_, GlobalShortcutState>,
+) -> String {
+    global_shortcut
+        .0
+        .lock()
+        .map(|value| value.clone())
+        .unwrap_or_else(|_| read_settings(&app).global_shortcut)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -5736,6 +5891,7 @@ pub fn run() {
             // 之后 set_pet_visible() 才能在运行时改「隐藏/显示 Piko」的文案。
             let tray_toggle = configure_tray(app)?;
             app.manage(TrayState { toggle_label: Mutex::new(tray_toggle) });
+            app.manage(GlobalShortcutState(Mutex::new(read_settings(app.handle()).global_shortcut)));
 
             match migrate_chat_sessions(app.handle()) {
                 Ok(report) if report.already_migrated => {}
@@ -5826,6 +5982,9 @@ pub fn run() {
             list_chat_history,
             list_chat_sessions,
             delete_chat_session,
+            update_global_shortcut,
+            get_global_shortcut,
+            clear_my_data,
             clear_chat_history,
             clear_chat_context,
             speak_local_text,
