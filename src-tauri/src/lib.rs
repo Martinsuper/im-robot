@@ -1979,7 +1979,7 @@ fn persist_settings(app: &AppHandle, settings: &AppSettings) {
     };
 
     let _ = fs::create_dir_all(directory);
-    if fs::write(path, json).is_err() {
+    if fs::write(&path, json).is_err() {
         // 写盘失败时使缓存失效，下次读取重新从磁盘加载
         let mut cache = SETTINGS_CACHE
             .lock()
