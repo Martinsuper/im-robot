@@ -410,7 +410,6 @@ trait PikoPlugin: Send + Sync {
 struct ReminderPlugin;
 struct CalendarPlugin;
 
-#[derive(Clone)]
 struct PluginRegistry {
     plugins: Mutex<HashMap<String, Arc<dyn PikoPlugin>>>,
 }
