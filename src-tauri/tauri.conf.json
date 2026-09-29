@@ -61,13 +61,7 @@
       }
     ],
     "security": {
-      "csp": null,
-      "assetProtocol": {
-        "enable": true,
-        "scope": [
-          "$HOME/**"
-        ]
-      }
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-src 'self' preview: http://preview.localhost; object-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "bundle": {

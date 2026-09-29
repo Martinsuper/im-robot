@@ -6,12 +6,12 @@ use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::Cursor,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
     process::{Child, Command},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -23,9 +23,10 @@ use tauri::{
     State, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
-use wasmtime::{Engine, Linker, Module, Store};
+use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
 use wasmtime_wasi::WasiCtxBuilder;
 
 // --- Module declarations for new features ---
@@ -409,6 +410,7 @@ trait PikoPlugin: Send + Sync {
 struct ReminderPlugin;
 struct CalendarPlugin;
 
+#[derive(Clone)]
 struct PluginRegistry {
     plugins: Mutex<HashMap<String, Arc<dyn PikoPlugin>>>,
 }
@@ -1153,6 +1155,23 @@ fn validate_declarative_plugin(package: &DeclarativePluginPackage) -> Result<(),
     Ok(())
 }
 
+/// Rough instruction budget per plugin invocation (~tens of milliseconds),
+/// so a runaway WASM plugin fails instead of hanging the caller forever.
+const WASM_PLUGIN_FUEL: u64 = 20_000_000;
+const WASM_PLUGIN_MAX_MEMORY_BYTES: usize = 64 * 1024 * 1024;
+const WASM_PLUGIN_MAX_TABLES: usize = 4;
+const WASM_PLUGIN_MAX_TABLE_ELEMENTS: usize = 10_000;
+
+static WASM_PLUGIN_ENGINE: OnceLock<Engine> = OnceLock::new();
+
+fn wasm_plugin_engine() -> &'static Engine {
+    WASM_PLUGIN_ENGINE.get_or_init(|| {
+        let mut config = Config::new();
+        config.consume_fuel(true);
+        Engine::new(&config).expect("初始化 WASM 引擎失败")
+    })
+}
+
 fn execute_wasm_plugin(
     _app: &AppHandle,
     directory: &Path,
@@ -1166,9 +1185,9 @@ fn execute_wasm_plugin(
         return Err(format!("WASM 插件模块不存在：{}", module_path.display()));
     }
 
-    let engine = Engine::default();
-    let module = Module::from_file(&engine, &module_path).map_err(|e| e.to_string())?;
-    let mut linker = Linker::<wasmtime_wasi::p1::WasiP1Ctx>::new(&engine);
+    let engine = wasm_plugin_engine();
+    let module = Module::from_file(engine, &module_path).map_err(|e| e.to_string())?;
+    let mut linker = Linker::<wasmtime_wasi::p1::WasiP1Ctx>::new(engine);
     wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |ctx| ctx).map_err(|e| e.to_string())?;
     let plugin_id = package.manifest.id.clone();
     let manifest = package.manifest.clone();
@@ -1189,14 +1208,33 @@ fn execute_wasm_plugin(
         .stdout(stdout.clone())
         .stderr(stderr.clone())
         .build_p1();
-    let mut store = Store::new(&engine, wasi);
+    let mut store = Store::new(engine, wasi);
+    let limits = StoreLimitsBuilder::new()
+        .memory_size(WASM_PLUGIN_MAX_MEMORY_BYTES)
+        .memories(1)
+        .tables(WASM_PLUGIN_MAX_TABLES)
+        .table_elements(WASM_PLUGIN_MAX_TABLE_ELEMENTS)
+        .build();
+    store.limiter(move |_| &mut limits);
+    store
+        .set_fuel(WASM_PLUGIN_FUEL)
+        .map_err(|e| e.to_string())?;
     let instance = linker
         .instantiate(&mut store, &module)
         .map_err(|e| e.to_string())?;
     let start = instance
         .get_typed_func::<(), ()>(&mut store, "_start")
         .map_err(|e| e.to_string())?;
-    start.call(&mut store, ()).map_err(|e| e.to_string())?;
+    if let Err(error) = start.call(&mut store, ()) {
+        let message = error.to_string();
+        if message.contains("fuel") {
+            return Err("插件执行超出指令预算，已中止".to_string());
+        }
+        if message.contains("memory") || message.contains("table") {
+            return Err("插件执行超出内存限制，已中止".to_string());
+        }
+        return Err(message);
+    }
 
     let stdout_text = String::from_utf8(stdout.contents().to_vec()).map_err(|e| e.to_string())?;
     let stderr_text = String::from_utf8(stderr.contents().to_vec()).unwrap_or_default();
@@ -1863,11 +1901,55 @@ fn today_focus_minutes(records: &[FocusRecord], now: u64) -> u64 {
         .sum()
 }
 
+/// 进程内 settings 缓存：轮询线程每 1-2 秒读一次设置，mtime 未变化时直接
+/// 返回缓存副本，避免持续读盘。写盘成功后同步缓存，失败则失效。
+struct SettingsCacheEntry {
+    path: PathBuf,
+    mtime: SystemTime,
+    settings: AppSettings,
+}
+
+static SETTINGS_CACHE: Mutex<Option<SettingsCacheEntry>> = Mutex::new(None);
+
 fn read_settings(app: &AppHandle) -> AppSettings {
-    let mut settings: AppSettings = app_settings_path(app)
+    let path = app_settings_path(app);
+    let mtime = path.as_ref().and_then(|path| {
+        fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+    });
+
+    if let (Some(path), Some(mtime)) = (path.as_ref(), mtime) {
+        let cache = SETTINGS_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(entry) = cache.as_ref() {
+            if entry.path == *path && entry.mtime == mtime {
+                let mut settings = entry.settings.clone();
+                settings.has_api_key = read_api_key().is_some();
+                return settings;
+            }
+        }
+    }
+
+    let settings: AppSettings = path
+        .as_ref()
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|json| serde_json::from_str(&json).ok())
         .unwrap_or_default();
+
+    if let (Some(path), Some(mtime)) = (path.as_ref(), mtime) {
+        let mut cache = SETTINGS_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *cache = Some(SettingsCacheEntry {
+            path: path.clone(),
+            mtime,
+            settings: settings.clone(),
+        });
+    }
+
+    let mut settings = settings;
     settings.has_api_key = read_api_key().is_some();
     settings
 }
@@ -1884,7 +1966,27 @@ fn persist_settings(app: &AppHandle, settings: &AppSettings) {
     };
 
     let _ = fs::create_dir_all(directory);
-    let _ = fs::write(path, json);
+    if fs::write(path, json).is_err() {
+        // 写盘失败时使缓存失效，下次读取重新从磁盘加载
+        let mut cache = SETTINGS_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *cache = None;
+        return;
+    }
+    if let Some(mtime) = fs::metadata(&path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+    {
+        let mut cache = SETTINGS_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *cache = Some(SettingsCacheEntry {
+            path: path.clone(),
+            mtime,
+            settings: settings.clone(),
+        });
+    }
 }
 
 fn keyring_entry() -> Result<keyring::Entry, String> {
@@ -2010,6 +2112,52 @@ fn request_builder(
 
 fn models_url(settings: &AiSettings) -> String {
     format!("{}/models", normalize_base_url(&settings.base_url))
+}
+
+fn connection_test_body(settings: &AiSettings) -> Result<Value, String> {
+    match provider_kind(&settings.provider) {
+        Some(ProviderKind::OpenAiCompatible) => Ok(json!({
+            "model": settings.model,
+            "messages": [{ "role": "user", "content": "Reply with OK." }],
+            "stream": false,
+            "max_tokens": 1
+        })),
+        Some(ProviderKind::Anthropic) => Ok(json!({
+            "model": settings.model,
+            "max_tokens": 1,
+            "messages": [{ "role": "user", "content": "Reply with OK." }]
+        })),
+        Some(ProviderKind::Gemini) => Ok(json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "Reply with OK." }] }],
+            "generationConfig": { "maxOutputTokens": 1 }
+        })),
+        None => Err("不支持的模型服务类型".to_string()),
+    }
+}
+
+async fn send_checked_request(
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, String> {
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("请求失败：{error}"))?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+    let body = response.text().await.unwrap_or_default();
+    let detail = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let detail = if detail.chars().count() > 500 {
+        format!("{}…", detail.chars().take(500).collect::<String>())
+    } else {
+        detail
+    };
+    if detail.is_empty() {
+        Err(format!("HTTP {}", status))
+    } else {
+        Err(format!("HTTP {}：{}", status, detail))
+    }
 }
 
 fn chat_url(settings: &AiSettings) -> Result<String, String> {
@@ -2643,13 +2791,15 @@ fn clear_chat_context(context: State<'_, ChatContext>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_bubble_chat_history(context: State<'_, ChatContext>) -> Result<Vec<ChatHistoryEntry>, String> {
+fn get_bubble_chat_history(
+    context: State<'_, ChatContext>,
+) -> Result<Vec<ChatHistoryEntry>, String> {
     let mut entries = context
         .0
         .lock()
         .map_err(|_| "无法读取对话历史".to_string())?
         .clone();
-    entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    entries.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     entries.truncate(20);
     Ok(entries)
 }
@@ -3875,14 +4025,59 @@ fn validate_save_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveTextResult {
+    saved: bool,
+    path: Option<String>,
+}
+
+const SAVE_TEXT_EXTENSIONS: [&str; 12] = [
+    "txt", "md", "json", "csv", "py", "js", "ts", "html", "css", "rs", "toml", "log",
+];
+
+/// The save dialog is shown by the backend so a compromised webview cannot write
+/// to an arbitrary path without a human completing the native dialog.
 #[tauri::command]
-fn save_generated_text(path: String, content: String, overwrite: bool) -> Result<(), String> {
-    let path = PathBuf::from(path);
+async fn save_generated_text(
+    app: AppHandle,
+    default_name: String,
+    content: String,
+) -> Result<SaveTextResult, String> {
+    let dialog_app = app.clone();
+    let file_name = if default_name.trim().is_empty() {
+        "piko-response.md".to_string()
+    } else {
+        default_name
+    };
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        dialog_app
+            .dialog()
+            .file()
+            .add_filter("文本文件", &SAVE_TEXT_EXTENSIONS)
+            .set_file_name(file_name)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|error| format!("保存对话框执行失败：{error}"))?;
+
+    let Some(file_path) = picked else {
+        return Ok(SaveTextResult {
+            saved: false,
+            path: None,
+        });
+    };
+    let path = file_path
+        .into_path()
+        .map_err(|error| format!("无法解析保存路径：{error}"))?;
     validate_save_path(&path)?;
-    if path.exists() && !overwrite {
-        return Err("目标文件已存在，需要确认覆盖".to_string());
-    }
-    fs::write(path, content).map_err(|error| format!("保存文件失败：{error}"))
+    // The native save dialog already asks the user to confirm replacing an
+    // existing file, so writing here honours that confirmation.
+    fs::write(&path, content).map_err(|error| format!("保存文件失败：{error}"))?;
+    Ok(SaveTextResult {
+        saved: true,
+        path: Some(path.to_string_lossy().to_string()),
+    })
 }
 
 fn read_text_attachment(path: &Path) -> Result<(TextAttachment, AttachmentPreview), String> {
@@ -4116,6 +4311,93 @@ fn update_html_preview_enabled(app: AppHandle, enabled: bool) -> Result<AppSetti
     Ok(settings)
 }
 
+/// Cached AI-generated HTML served to the sandboxed preview iframe through the
+/// dedicated `preview` protocol, so the strict main-window CSP never applies to it.
+#[derive(Default)]
+struct HtmlPreviewStore(Mutex<HashMap<String, String>>);
+
+const MAX_LIVE_HTML_PREVIEW_FRAMES: usize = 32;
+
+const PREVIEW_FRAME_CSP: &str = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src * data: blob:; font-src * data:; connect-src 'none'; form-action 'none'; base-uri 'none'";
+
+fn preview_frame_token() -> String {
+    static PREVIEW_FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() as u64)
+        .unwrap_or(0);
+    format!(
+        "frame-{:x}-{:x}",
+        nanos,
+        PREVIEW_FRAME_COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+#[tauri::command]
+fn create_html_preview_frame(
+    store: State<'_, HtmlPreviewStore>,
+    html: String,
+) -> Result<String, String> {
+    if html.len() > MAX_TEXT_ATTACHMENT_BYTES * 16 {
+        return Err("HTML 内容过大，无法预览".to_string());
+    }
+    let token = preview_frame_token();
+    let mut frames = store
+        .0
+        .lock()
+        .map_err(|_| "无法写入 HTML 预览缓存".to_string())?;
+    if frames.len() >= MAX_LIVE_HTML_PREVIEW_FRAMES {
+        frames.clear();
+    }
+    frames.insert(token.clone(), html);
+    Ok(token)
+}
+
+#[tauri::command]
+fn remove_html_preview_frame(store: State<'_, HtmlPreviewStore>, token: String) {
+    if let Ok(mut frames) = store.0.lock() {
+        frames.remove(&token);
+    }
+}
+
+fn serve_html_preview_frame(store: &HtmlPreviewStore, uri: &str) -> tauri::http::Response<Vec<u8>> {
+    let token = uri.rsplit('/').next().unwrap_or("");
+    let not_found = || {
+        let mut response = tauri::http::Response::new(b"preview frame not found".to_vec());
+        *response.status_mut() = tauri::http::StatusCode::NOT_FOUND;
+        response
+    };
+    if token.is_empty() {
+        return not_found();
+    }
+    let html = {
+        let frames = match store.0.lock() {
+            Ok(frames) => frames,
+            Err(_) => return not_found(),
+        };
+        match frames.get(token) {
+            Some(html) => html.clone(),
+            None => return not_found(),
+        }
+    };
+    let mut response = tauri::http::Response::new(html.into_bytes());
+    *response.status_mut() = tauri::http::StatusCode::OK;
+    let headers = response.headers_mut();
+    headers.insert(
+        tauri::http::header::CONTENT_TYPE,
+        tauri::http::HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    headers.insert(
+        tauri::http::header::CONTENT_SECURITY_POLICY,
+        tauri::http::HeaderValue::from_static(PREVIEW_FRAME_CSP),
+    );
+    headers.insert(
+        tauri::http::header::CACHE_CONTROL,
+        tauri::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
 #[tauri::command]
 async fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
     let settings = read_settings(&app);
@@ -4141,6 +4423,22 @@ async fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String> {
         .into_iter()
         .map(|id| ModelInfo { id })
         .collect())
+}
+
+#[tauri::command]
+async fn test_connection(app: AppHandle) -> Result<String, String> {
+    let settings = read_settings(&app);
+    validate_ai_settings(&settings.ai)?;
+    let client = http_client(&settings.ai)?;
+    let request = request_builder(
+        &client,
+        &settings.ai,
+        reqwest::Method::POST,
+        pet_companion_generation_url(&settings.ai)?,
+    )
+    .json(&connection_test_body(&settings.ai)?);
+    let _ = send_checked_request(request).await?;
+    Ok("连接成功".to_string())
 }
 
 fn extract_model_ids(provider: &str, body: &Value) -> Vec<String> {
@@ -4560,8 +4858,8 @@ async fn stream_chat(
     context: &ChatContext,
     registry: &PluginRegistry,
     drafts: &ActionDrafts,
-    memory_db: &memory::MemoryDb,
-    cache: &memory::CandidateCache,
+    memory_db: &Arc<memory::MemoryDb>,
+    cache: &Arc<memory::CandidateCache>,
     input: StreamChatInput<'_>,
 ) -> Result<StreamChatOutcome, String> {
     let StreamChatInput {
@@ -4593,21 +4891,28 @@ async fn stream_chat(
         .map_err(|_| "无法读取当前对话上下文".to_string())?
         .clone();
 
-    // Build memory context from relevant long-term memories
-    let memory_context_text = memory_db
-        .build_context(memory::BuildContextInput {
-            current_query: Some(prompt.to_string()),
-            window_type: None,
-            limit: Some(10),
-        })
-        .ok()
-        .map(|memories| {
-            memories
-                .iter()
-                .map(|m| format!("- [{}] {}: {}", m.memory_type.label(), m.title, m.content))
-                .collect::<Vec<_>>()
-                .join("\n")
-        });
+    // Build memory context from relevant long-term memories.
+    // SQLite 调用是阻塞操作，移入 spawn_blocking 以免卡住 tokio worker。
+    let blocking_db = memory_db.clone();
+    let blocking_query = prompt.to_string();
+    let memory_context_text = tauri::async_runtime::spawn_blocking(move || {
+        blocking_db
+            .build_context(memory::BuildContextInput {
+                current_query: Some(blocking_query),
+                window_type: None,
+                limit: Some(10),
+            })
+            .ok()
+            .map(|memories| {
+                memories
+                    .iter()
+                    .map(|m| format!("- [{}] {}: {}", m.memory_type.label(), m.title, m.content))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+    })
+    .await
+    .map_err(|error| format!("读取记忆上下文失败：{error}"))?;
 
     let mut request_body = chat_request_body(
         &settings,
@@ -4719,7 +5024,18 @@ async fn stream_chat(
                 );
                 return Ok(StreamChatOutcome::ActionProposed);
             }
-            let result = registry.execute(app, call.clone())?;
+            // Plugin execution (WASM compile + run) is blocking work; keep it
+            // off the async runtime workers.
+            let result = {
+                let registry = registry.clone();
+                let blocking_app = app.clone();
+                let blocking_call = call.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    registry.execute(&blocking_app, blocking_call)
+                })
+                .await
+                .map_err(|error| format!("插件执行任务失败：{error}"))??
+            };
             tool_results.push((id, call, result));
         }
         append_provider_tool_results(&mut request_body, &settings.ai.provider, &tool_results)?;
@@ -4734,7 +5050,11 @@ async fn stream_chat(
             .unwrap_or_default()
             .as_secs(),
     };
-    append_chat_history(app, history_entry.clone())?;
+    let history_app = app.clone();
+    let blocking_entry = history_entry.clone();
+    tauri::async_runtime::spawn_blocking(move || append_chat_history(&history_app, blocking_entry))
+        .await
+        .map_err(|error| format!("保存对话历史失败：{error}"))??;
     let mut session_history = context
         .0
         .lock()
@@ -4752,15 +5072,27 @@ async fn stream_chat(
             request_id: request_id.to_string(),
         },
     );
-    let (confirmed_count, pending_count) = match memory::auto_capture_from_chat(
-        memory_db,
-        cache,
-        &history_entry.prompt,
-        &history_entry.response,
-    ) {
-        Ok(counts) => counts,
-        Err(error) => {
+    let capture_db = memory_db.clone();
+    let capture_cache = cache.clone();
+    let capture_prompt = history_entry.prompt.clone();
+    let capture_response = history_entry.response.clone();
+    let (confirmed_count, pending_count) = match tauri::async_runtime::spawn_blocking(move || {
+        memory::auto_capture_from_chat(
+            &capture_db,
+            &capture_cache,
+            &capture_prompt,
+            &capture_response,
+        )
+    })
+    .await
+    {
+        Ok(Ok(counts)) => counts,
+        Ok(Err(error)) => {
             eprintln!("memory capture failed: {error}");
+            (0, 0)
+        }
+        Err(error) => {
+            eprintln!("memory capture task failed: {error}");
             (0, 0)
         }
     };
@@ -4833,8 +5165,8 @@ async fn chat_start(
     drafts: State<'_, ActionDrafts>,
     attachments: State<'_, TextAttachmentStore>,
     captures: State<'_, ScreenCaptureStore>,
-    memory_db: State<'_, memory::MemoryDb>,
-    cache: State<'_, memory::CandidateCache>,
+    memory_db: State<'_, Arc<memory::MemoryDb>>,
+    cache: State<'_, Arc<memory::CandidateCache>>,
     input: ChatStartInput,
 ) -> Result<(), String> {
     let attachment = attachments
@@ -5237,23 +5569,54 @@ async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
     })
 }
 
+const MAX_UPDATE_ASSET_BYTES: u64 = 512 * 1024 * 1024;
+
+const UPDATE_ASSET_EXTENSIONS: [&str; 9] = [
+    "exe", "msi", "dmg", "appimage", "deb", "rpm", "zip", "json", "sig",
+];
+
+/// Restrict the name to a bare file inside the updates directory: no absolute
+/// paths, no traversal, and only installer-shaped extensions.
+fn sanitize_update_file_name(raw: Option<String>) -> Result<String, String> {
+    let candidate = raw.unwrap_or_else(|| "piko-update.bin".to_string());
+    let trimmed = candidate.trim();
+    let name = Path::new(trimmed)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        .ok_or_else(|| "更新包文件名无效".to_string())?;
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .ok_or_else(|| "更新包缺少扩展名".to_string())?;
+    if !UPDATE_ASSET_EXTENSIONS.contains(&extension.as_str()) {
+        return Err("不支持的更新包类型".to_string());
+    }
+    Ok(name.to_string())
+}
+
 #[tauri::command]
 async fn download_update_asset(
     app: AppHandle,
     download_url: String,
     asset_name: Option<String>,
 ) -> Result<DownloadedUpdate, String> {
-    if download_url.trim().is_empty() {
+    let url = download_url.trim().to_string();
+    if url.is_empty() {
         return Err("未提供可下载的更新地址".to_string());
     }
+    if !url.to_ascii_lowercase().starts_with("https://") {
+        return Err("更新包必须通过 HTTPS 下载".to_string());
+    }
+    let file_name = sanitize_update_file_name(asset_name)?;
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(300))
         .build()
         .map_err(|e| e.to_string())?;
 
     let response = client
-        .get(download_url.trim())
+        .get(&url)
         .header("User-Agent", "im-robot-update-downloader")
         .send()
         .await
@@ -5261,20 +5624,46 @@ async fn download_update_asset(
         .error_for_status()
         .map_err(|e| e.to_string())?;
 
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-    let file_name = asset_name
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| "piko-update.bin".to_string());
+    if let Some(total) = response.content_length() {
+        if total > MAX_UPDATE_ASSET_BYTES {
+            return Err("更新包过大，已取消下载".to_string());
+        }
+    }
+
     let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     let update_dir = cache_dir.join("updates");
-    std::fs::create_dir_all(&update_dir).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&update_dir).map_err(|e| e.to_string())?;
     let file_path = update_dir.join(&file_name);
-    std::fs::write(&file_path, &bytes).map_err(|e| e.to_string())?;
+
+    let mut file = fs::File::create(&file_path).map_err(|e| e.to_string())?;
+    let mut downloaded: u64 = 0;
+    let mut response = response;
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(error) => {
+                drop(file);
+                let _ = fs::remove_file(&file_path);
+                return Err(format!("下载更新包失败：{error}"));
+            }
+        };
+        downloaded += chunk.len() as u64;
+        if downloaded > MAX_UPDATE_ASSET_BYTES {
+            drop(file);
+            let _ = fs::remove_file(&file_path);
+            return Err("更新包过大，已取消下载".to_string());
+        }
+        if let Err(error) = file.write_all(&chunk) {
+            let _ = fs::remove_file(&file_path);
+            return Err(format!("写入更新包失败：{error}"));
+        }
+    }
 
     Ok(DownloadedUpdate {
         file_path: file_path.to_string_lossy().to_string(),
         file_name,
-        downloaded_bytes: bytes.len() as u64,
+        downloaded_bytes: downloaded,
     })
 }
 
@@ -5353,6 +5742,11 @@ pub fn run() {
         .manage(TextAttachmentStore::default())
         .manage(ScreenCaptureStore::default())
         .manage(app_awareness::ForegroundAppState::default())
+        .manage(HtmlPreviewStore::default())
+        .register_uri_scheme_protocol("preview", |ctx, request| {
+            let store = ctx.app_handle().state::<HtmlPreviewStore>();
+            serve_html_preview_frame(&store, request.uri().as_str())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -5363,8 +5757,9 @@ pub fn run() {
         .setup(|app| {
             // Initialize memory database
             let memory_db = memory::init_memory_db(app.handle()).expect("无法初始化内存数据库");
-            app.manage(memory_db);
-            app.manage(memory::CandidateCache::default());
+            // Arc 包装让异步命令可以把阻塞的 SQLite 调用移入 spawn_blocking
+            app.manage(Arc::new(memory_db));
+            app.manage(Arc::new(memory::CandidateCache::default()));
             app.manage(typing_activity::TypingActivityState::new(app.handle()));
 
             configure_tray(app)?;
@@ -5453,8 +5848,11 @@ pub fn run() {
             update_work_rhythm_preferences,
             update_ai_settings,
             update_html_preview_enabled,
+            create_html_preview_frame,
+            remove_html_preview_frame,
             generate_pet_companion_response,
             list_models,
+            test_connection,
             chat_start,
             chat_cancel,
             get_bubble_chat_history,
@@ -5519,20 +5917,22 @@ mod tests {
         append_session_chat_history, build_attachment_prompt, calendar_conflict_note,
         calendar_delete_batch_input_from_value, calendar_event_batch_input_from_value,
         calendar_event_input_from_value, chat_request_body, chat_url, clamp_pet_position,
-        coalesce_calendar_delete_calls, collect_due_reminders,
+        coalesce_calendar_delete_calls, collect_due_reminders, connection_test_body,
         create_calendar_event_record_at_path, decode_openai_tool_calls,
         delete_calendar_event_batch_record_at_path, extract_chat_deltas, extract_model_ids,
         find_calendar_conflicts, idle_threshold_seconds,
         looks_like_unconfirmed_local_action_response, models_url, monitor_contains,
         next_idle_state, next_repeat_due, normalize_base_url, parse_data_url,
-        prompt_requests_local_action, provider_tools, read_calendar_events_from_path,
-        read_text_attachment, render_icalendar, should_bypass_system_proxy, system_prompt,
-        text_for_speech, today_focus_minutes, update_anthropic_tool_calls,
+        pet_companion_generation_url, preview_frame_token, prompt_requests_local_action,
+        provider_tools, read_calendar_events_from_path, read_text_attachment, render_icalendar,
+        sanitize_update_file_name, serve_html_preview_frame, should_bypass_system_proxy,
+        system_prompt, text_for_speech, today_focus_minutes, update_anthropic_tool_calls,
         update_gemini_tool_calls, update_openai_tool_calls, validate_ai_settings,
         validate_declarative_plugin, validate_save_path, version_parts, AiSettings, AppSettings,
         CalendarEvent, ChatEvent, ChatHistoryEntry, DeclarativePluginPackage, FocusRecord,
-        OpenAiToolCallAccumulator, PluginManifest, PluginRegistry, PluginToolManifest, Reminder,
-        ScreenCapture, TextAttachment, ToolCall,
+        HtmlPreviewStore, OpenAiToolCallAccumulator, PluginManifest, PluginRegistry,
+        PluginToolManifest, Reminder, ScreenCapture, TextAttachment, ToolCall,
+        PREVIEW_FRAME_CSP,
     };
     use chrono::{Duration as ChronoDuration, Local, TimeZone};
     use std::{
@@ -5587,6 +5987,57 @@ mod tests {
         assert!(validate_save_path(PathBuf::from("script.rs").as_path()).is_ok());
         assert!(validate_save_path(PathBuf::from("archive.zip").as_path()).is_err());
         assert!(validate_save_path(PathBuf::from("README").as_path()).is_err());
+    }
+
+    #[test]
+    fn sanitizes_update_asset_names() {
+        assert_eq!(
+            sanitize_update_file_name(Some("Piko_1.2.7_x64-setup.exe".to_string())).unwrap(),
+            "Piko_1.2.7_x64-setup.exe"
+        );
+        assert_eq!(
+            sanitize_update_file_name(Some("../evil/piko_1.0.0_aarch64.dmg".to_string())).unwrap(),
+            "piko_1.0.0_aarch64.dmg"
+        );
+        assert_eq!(
+            sanitize_update_file_name(Some("latest.json".to_string())).unwrap(),
+            "latest.json"
+        );
+        assert!(sanitize_update_file_name(Some("../../../../etc/passwd".to_string())).is_err());
+        assert!(sanitize_update_file_name(Some("C:\\Windows\\evil.exe".to_string())).is_err());
+        assert!(sanitize_update_file_name(Some("payload.sh".to_string())).is_err());
+        assert!(sanitize_update_file_name(Some("no-extension".to_string())).is_err());
+        assert!(sanitize_update_file_name(Some("   ".to_string())).is_err());
+    }
+
+    #[test]
+    fn serves_preview_frames_from_dedicated_protocol() {
+        let store = HtmlPreviewStore::default();
+        let mut frames = store.0.lock().unwrap();
+        frames.insert("frame-abc".to_string(), "<p>hi</p>".to_string());
+        drop(frames);
+
+        let response = serve_html_preview_frame(&store, "http://preview.localhost/frame/frame-abc");
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-security-policy")
+                .and_then(|value| value.to_str().ok()),
+            Some(PREVIEW_FRAME_CSP)
+        );
+        assert_eq!(response.body(), b"<p>hi</p>");
+
+        let missing = serve_html_preview_frame(&store, "http://preview.localhost/frame/unknown");
+        assert_eq!(missing.status(), 404);
+    }
+
+    #[test]
+    fn mints_unique_preview_frame_tokens() {
+        let first = preview_frame_token();
+        let second = preview_frame_token();
+        assert_ne!(first, second);
+        assert!(first.starts_with("frame-"));
     }
 
     #[test]
@@ -5750,6 +6201,25 @@ mod tests {
             normalize_base_url(" http://localhost:11434/v1/ "),
             "http://localhost:11434/v1"
         );
+    }
+
+    #[test]
+    fn builds_openai_compatible_connection_test_request() {
+        let settings = AiSettings {
+            provider: "openai-compatible".to_string(),
+            base_url: "https://example.test/v1".to_string(),
+            model: "my-model".to_string(),
+            ..Default::default()
+        };
+        let body = connection_test_body(&settings).unwrap();
+        assert_eq!(
+            pet_companion_generation_url(&settings).unwrap(),
+            "https://example.test/v1/chat/completions"
+        );
+        assert_eq!(body["model"], "my-model");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["max_tokens"], 1);
     }
 
     #[test]

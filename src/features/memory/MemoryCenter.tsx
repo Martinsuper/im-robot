@@ -31,6 +31,15 @@ export function MemoryCenter() {
   const [error, setError] = useState("");
   const [view, setView] = useState<"list" | "search" | "recent">("list");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSeqRef = useRef(0);
+
+  // 卸载时清理搜索防抖 timer
+  useEffect(
+    () => () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    },
+    []
+  );
 
   // Detail modal
   const [selectedMemory, setSelectedMemory] = useState<MemoryItem | null>(null);
@@ -55,8 +64,9 @@ export function MemoryCenter() {
       const items = await runCommand<MemoryItem[]>("list_memories", { input });
       setMemories(items);
       setError("");
-    } catch {
+    } catch (error) {
       setMemories([]);
+      setError(String(error));
     }
   }
 
@@ -65,8 +75,9 @@ export function MemoryCenter() {
       const items = await runCommand<MemoryItem[]>("get_recent_memories", { limit: 20 });
       setMemories(items);
       setError("");
-    } catch {
+    } catch (error) {
       setMemories([]);
+      setError(String(error));
     }
   }
 
@@ -74,8 +85,9 @@ export function MemoryCenter() {
     try {
       const items = await runCommand<MemoryCandidate[]>("get_pending_candidates", {});
       setPendingCandidates(items);
-    } catch {
+    } catch (error) {
       setPendingCandidates([]);
+      setError(String(error));
     }
   }
 
@@ -85,8 +97,9 @@ export function MemoryCenter() {
         limit: 5,
       });
       setSummaries(items);
-    } catch {
+    } catch (error) {
       setSummaries([]);
+      setError(String(error));
     }
   }
 
@@ -110,6 +123,8 @@ export function MemoryCenter() {
       void loadMemories();
       return;
     }
+    // 请求序号：慢响应不能覆盖更新的搜索结果
+    const requestSeq = ++searchSeqRef.current;
     setIsSearching(true);
     setView("search");
     const input: SearchMemoriesInput = {
@@ -119,12 +134,17 @@ export function MemoryCenter() {
     };
     try {
       const items = await runCommand<MemoryItem[]>("search_memories", { input });
+      if (requestSeq !== searchSeqRef.current) return;
       setMemories(items);
       setError("");
-    } catch {
+    } catch (error) {
+      if (requestSeq !== searchSeqRef.current) return;
       setMemories([]);
+      setError(String(error));
     } finally {
-      setIsSearching(false);
+      if (requestSeq === searchSeqRef.current) {
+        setIsSearching(false);
+      }
     }
   }
 
@@ -140,9 +160,13 @@ export function MemoryCenter() {
 
   useEffect(() => {
     if (!isTauriRuntime) return;
-    void loadMemories();
-    void loadPending();
-    void loadSummaries();
+    // loader 含 setState，直接在 effect 内同步调用会触发级联渲染；
+    // 放进微任务等价于挂载后的异步加载，也符合事件回调形态。
+    queueMicrotask(() => {
+      void loadMemories();
+      void loadPending();
+      void loadSummaries();
+    });
     const unlisten = listen("memories-updated", () => {
       void loadMemories();
       void loadPending();
@@ -448,7 +472,7 @@ export function MemoryCenter() {
       {subView === "reflections" && (
         <>
           {summaries.length === 0 ? (
-            <p className="empty-state">还没有反思总结。点击"反思"按钮运行第一次反思。</p>
+            <p className="empty-state">还没有反思总结。点击“反思”按钮运行第一次反思。</p>
           ) : (
             <div className="reflection-list">
               {summaries.map((s) => (

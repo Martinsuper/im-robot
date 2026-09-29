@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { isTauriRuntime, runCommand } from "../../app/appRuntime";
+import { isTauriRuntime, reportCommandError, runCommand } from "../../app/appRuntime";
 
 const DRAG_THRESHOLD_PX = 4;
 const STROKE_DISTANCE_PX = 24;
@@ -59,7 +59,7 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     petPos.current = requested;
     void runCommand<[number, number]>("move_pet", requested).then(([actualX, actualY]) => {
       petPos.current = { x: actualX, y: actualY };
-    });
+    }).catch(reportCommandError("move_pet"));
   }
 
   function movePetBy(dx: number, dy: number) {
@@ -121,7 +121,8 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
           x: event.screenX - x,
           y: event.screenY - y,
         };
-      });
+      })
+      .catch(reportCommandError("get_pet_position"));
     setDragOrigin({ x: event.screenX, y: event.screenY });
   };
 

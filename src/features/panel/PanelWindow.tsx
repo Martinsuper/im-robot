@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -20,7 +20,6 @@ import type {
   ChatHistoryEntry,
   FocusSnapshot,
   InstalledPlugin,
-  ModelInfo,
   OnboardingStatus,
   PanelTab,
   QuietMode,
@@ -60,7 +59,7 @@ import {
   useLive2DModelId,
   usePetVisualStyle,
 } from "../app/appShared";
-import { isTauriRuntime, runCommand, runCommandAndRefresh } from "../app/appRuntime";
+import { isTauriRuntime, runCommand, runCommandAndRefresh, runCommandQuiet, reportCommandError } from "../app/appRuntime";
 
 type ChatHistoryFilter = "all" | "attachment" | "screenshot" | "code" | "link" | "long";
 
@@ -112,7 +111,6 @@ function chatHistoryMatchesSearch(entry: ChatHistoryEntry, search: string) {
 }
 
 export function PanelWindow() {
-  const mountedRef = useRef(true);
   const [panelTab, setPanelTab] = useState<PanelTab>("companion");
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
@@ -265,13 +263,6 @@ export function PanelWindow() {
   }
 
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
       setQuietMode(settings.quietMode);
       setAiSettings(settings.ai);
@@ -286,27 +277,31 @@ export function PanelWindow() {
       setBreakReminderQuietHoursEnd(settings.breakReminderQuietHoursEnd);
       setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
       setConnectionStatus(settings.hasApiKey ? "已配置密钥" : "等待测试");
+    }).catch(reportCommandError("get_settings"));
+    // loader 含 setState，放进微任务等价于挂载后的异步加载，
+    // 避免 effect 内同步调用造成级联渲染。
+    queueMicrotask(() => {
+      void loadChatHistory();
+      void loadReminders();
+      void loadCalendarEvents();
+      void loadCalendarSyncStatus();
+      void loadWorkRhythmState();
     });
-    void loadChatHistory();
-    void loadReminders();
-    void loadCalendarEvents();
-    void loadCalendarSyncStatus();
-    void loadWorkRhythmState();
-    void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, []).then(setExternalPlugins);
-    void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
+    void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, []).then(setExternalPlugins).catch(reportCommandError("list_external_plugins"));
+    void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState).catch(reportCommandError("get_focus_state"));
     void runCommand<OnboardingStatus>("get_onboarding_status", undefined, {
       required: false,
       completed: true,
       version: "",
-    }).then(setOnboardingStatus);
+    }).then(setOnboardingStatus).catch(reportCommandError("get_onboarding_status"));
     void runCommand<string>("screen_capture_permission_status", undefined, "截图时按需申请").then(
       setScreenCapturePermission,
-    );
+    ).catch(reportCommandError("screen_capture_permission_status"));
     if (isTauriRuntime) {
-      void isEnabled().then(setAutostartEnabled);
+      void isEnabled().then(setAutostartEnabled).catch(reportCommandError("autostart isEnabled"));
       void isPermissionGranted().then((granted) => {
         setNotificationPermission(granted ? "已授权" : "按需申请");
-      });
+      }).catch(reportCommandError("notification isPermissionGranted"));
     }
 
     if (!isTauriRuntime) return;
@@ -345,9 +340,7 @@ export function PanelWindow() {
       setBreakReminderQuietHoursEnd(event.payload.breakReminderQuietHoursEnd);
       setHtmlPreviewEnabled(event.payload.htmlPreviewEnabled);
     });
-    const refreshFocus = window.setInterval(() => {
-      void runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot).then(setFocusState);
-    }, 1000);
+    // focus-updated 事件已推送状态，无需每秒轮询
     const refreshInteraction = () => {
       setInteractionStats(loadInteractionStats());
       setGrowthSnapshot(loadGrowthSnapshot());
@@ -357,9 +350,7 @@ export function PanelWindow() {
     const refreshFromStorage = () => refreshInteraction();
     window.addEventListener("storage", refreshFromStorage);
     return () => {
-      void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
-      });
+      void unlisten.then((dispose) => dispose());
       void unlistenHistory.then((dispose) => dispose());
       void unlistenCalendar.then((dispose) => dispose());
       void unlistenCalendarSync.then((dispose) => dispose());
@@ -370,19 +361,18 @@ export function PanelWindow() {
       void unlistenInteraction.then((dispose) => dispose());
       void unlistenGrowth.then((dispose) => dispose());
       window.removeEventListener("storage", refreshFromStorage);
-      window.clearInterval(refreshFocus);
     };
   }, []);
 
-  useEffect(() => {
-    if (!filteredChatHistory.length) {
-      setSelectedHistoryId("");
-      return;
-    }
-    if (!filteredChatHistory.some((entry) => entry.id === selectedHistoryId)) {
-      setSelectedHistoryId(filteredChatHistory[0].id);
-    }
-  }, [filteredChatHistory, selectedHistoryId]);
+  // 选中项失效时在渲染期收敛到合法值（React 官方的 render 调整模式），
+  // 避免在 effect 内同步 setState。
+  if (
+    filteredChatHistory.length === 0
+      ? selectedHistoryId !== ""
+      : !filteredChatHistory.some((entry) => entry.id === selectedHistoryId)
+  ) {
+    setSelectedHistoryId(filteredChatHistory.length ? filteredChatHistory[0].id : "");
+  }
 
   async function refreshOnboardingStatus() {
     const status = await runCommand<OnboardingStatus>("get_onboarding_status", undefined, {
@@ -396,11 +386,7 @@ export function PanelWindow() {
 
   function updateQuietMode(mode: QuietMode) {
     setQuietMode(mode);
-    void runCommand<AppSettings>("update_quiet_mode", { quietMode: mode }, {
-      ...defaultAppSettings,
-      quietMode: mode,
-      ai: aiSettings,
-    });
+    runCommandQuiet("update_quiet_mode", { quietMode: mode });
   }
 
   function updateAiField<Key extends keyof AiSettings>(key: Key, value: AiSettings[Key]) {
@@ -433,11 +419,8 @@ export function PanelWindow() {
     setConnectionStatus("正在连接...");
     try {
       await saveAiSettings();
-      const models = await runCommand<ModelInfo[]>("list_models", undefined, [
-        { id: aiSettings.model },
-      ]);
-      const modelNames = models.map((model) => model.id).join("、");
-      setConnectionStatus(models.length ? `已连接：${modelNames}` : "已连接，未发现模型");
+      await runCommand<string>("test_connection");
+      setConnectionStatus("连接成功");
     } catch (error) {
       setConnectionStatus(`连接失败：${String(error)}`);
     } finally {
@@ -1004,7 +987,7 @@ export function PanelWindow() {
               void runCommand<AppSettings>("reset_onboarding", undefined, {
                 ...defaultAppSettings,
                 companionName,
-              }).then(() => refreshOnboardingStatus());
+              }).then(() => refreshOnboardingStatus()).catch(reportCommandError("reset_onboarding"));
             }}
           >
             重新运行引导

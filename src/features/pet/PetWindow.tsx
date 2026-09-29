@@ -13,7 +13,7 @@ import {
   useLive2DModelId,
   usePetVisualStyle,
 } from "../app/appShared";
-import { runCommand } from "../app/appRuntime";
+import { runCommand, runCommandQuiet, reportCommandError } from "../app/appRuntime";
 import { initialPetState, reducePetState } from "./petState";
 import { setBubbleCompanionMessage } from "../chat/bubbleMessage";
 import type { ChatEvent } from "../chat/chatTypes";
@@ -72,6 +72,12 @@ function getIdleRhythmProfile(style: PetMotionStyle): IdleRhythmProfile {
   }
 }
 
+// 事件回调的时间戳在事件触发时取值；抽到模块级是为了让渲染期定义的
+// 回调体里不出现不纯调用（react-hooks/purity）。
+function eventTimestamp() {
+  return Date.now();
+}
+
 function PetWindowContent() {
   const [petState, dispatch] = useReducer(reducePetState, initialPetState);
   const [companionName, setCompanionName] = useState("Piko");
@@ -85,8 +91,7 @@ function PetWindowContent() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const petRef = useRef<HTMLDivElement>(null);
-  const [attentionPulse, setAttentionPulse] = useState(false);
-  const idleStartRef = useRef(Date.now());
+  const [pulseActive, setPulseActive] = useState(false);
   const petVisualStyle = usePetVisualStyle();
   const live2dModelId = useLive2DModelId();
   const noticeTimer = useRef<number>(0);
@@ -111,20 +116,20 @@ function PetWindowContent() {
     onDragEnd: (distance) => {
       handleHumanInteraction({
         type: "drag_end",
-        timestamp: Date.now(),
+        timestamp: eventTimestamp(),
         payload: { distancePx: distance },
       });
     },
     onStroke: (distance, duration) => {
       handleHumanInteraction({
         type: "pet_stroke",
-        timestamp: Date.now(),
+        timestamp: eventTimestamp(),
         intensity: Math.min(1, distance / 120),
         payload: { durationMs: duration, distancePx: distance },
       });
     },
     onClick: () => {
-      handleHumanInteraction({ type: "click", timestamp: Date.now() });
+      handleHumanInteraction({ type: "click", timestamp: eventTimestamp() });
     },
     onLongPress: (position) => {
       setContextMenu({ x: position.x, y: position.y });
@@ -194,11 +199,11 @@ function PetWindowContent() {
       void getPetSpeechForInteraction(event.type, bondTier, livePersonality, describePersonality(livePersonality)).then((message) => {
         setBubbleCompanionMessage(message);
       });
-      void runCommand("show_bubble");
+      runCommandQuiet("show_bubble");
     }
 
     if (result.openPanel) {
-      void runCommand("open_panel");
+      runCommandQuiet("open_panel");
     }
   }
 
@@ -216,47 +221,55 @@ function PetWindowContent() {
     });
   }
 
-  function scheduleFidget() {
-    const delay = idleRhythm.fidgetDelayMin + Math.random() * (idleRhythm.fidgetDelayMax - idleRhythm.fidgetDelayMin);
-    const fidgetTimer = window.setTimeout(() => {
-      if (petState.mode === "idle") {
-        dispatch({
-          type: "FIDGET",
-          intensity: motionStyle === "soft" ? "soft" : "normal",
-        });
-        const fidgetResetTimer = window.setTimeout(() => {
-          if (petState.mode === "idle") dispatch({ type: "RESET" });
-        }, idleRhythm.fidgetResetDelay);
-        return () => window.clearTimeout(fidgetResetTimer);
-      }
-      scheduleFidget();
-    }, delay);
-    return () => window.clearTimeout(fidgetTimer);
-  }
+  // 定时器回调里读取最新模式，避免闭包捕获过期的 petState
+  const petStateRef = useRef(petState);
+  useEffect(() => {
+    petStateRef.current = petState;
+  }, [petState]);
 
   useEffect(() => {
-    if (petState.mode === "idle") {
-      idleStartRef.current = Date.now();
-    } else {
-      setAttentionPulse(false);
-    }
-  }, [petState.mode, quietMode, motionStyle]);
+    let cancelled = false;
+    let fidgetTimer = 0;
+    let resetTimer = 0;
+    const scheduleNext = () => {
+      if (cancelled) return;
+      const delay = idleRhythm.fidgetDelayMin + Math.random() * (idleRhythm.fidgetDelayMax - idleRhythm.fidgetDelayMin);
+      fidgetTimer = window.setTimeout(() => {
+        if (cancelled) return;
+        if (quietMode !== "minimal" && petStateRef.current.mode === "idle") {
+          dispatch({
+            type: "FIDGET",
+            intensity: motionStyle === "soft" ? "soft" : "normal",
+          });
+          resetTimer = window.setTimeout(() => {
+            if (!cancelled && petStateRef.current.mode === "idle") dispatch({ type: "RESET" });
+          }, idleRhythm.fidgetResetDelay);
+        }
+        scheduleNext();
+      }, delay);
+    };
+    scheduleNext();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(fidgetTimer);
+      window.clearTimeout(resetTimer);
+    };
+  }, [motionStyle, idleRhythm, quietMode]);
 
   useEffect(() => {
     if (petState.mode !== "idle" || quietMode === "minimal") {
-      setAttentionPulse(false);
       return;
     }
+    const startedAt = Date.now();
     const interval = window.setInterval(() => {
-      const idleSeconds = (Date.now() - idleStartRef.current) / 1000;
-      if (idleSeconds > idleRhythm.attentionPulseAfterSeconds) {
-        setAttentionPulse(true);
-      } else {
-        setAttentionPulse(false);
-      }
+      const idleSeconds = (Date.now() - startedAt) / 1000;
+      setPulseActive(idleSeconds > idleRhythm.attentionPulseAfterSeconds);
     }, idleRhythm.attentionPulseIntervalMs);
     return () => window.clearInterval(interval);
   }, [petState.mode, quietMode, idleRhythm]);
+
+  // 可见的关注脉冲由内部状态与当前模式推导，模式切换时无需手动清除
+  const attentionPulse = pulseActive && petState.mode === "idle" && quietMode !== "minimal";
 
   useEffect(() => {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
@@ -264,7 +277,7 @@ function PetWindowContent() {
       setQuietMode(settings.quietMode);
       setSensingPaused(settings.sensingPaused);
       setTheme(settings.theme);
-    });
+    }).catch(reportCommandError("get_settings"));
   }, []);
 
   // Chat event subscription
@@ -408,12 +421,6 @@ function PetWindowContent() {
     };
   }, [contextMenu]);
 
-  useEffect(() => {
-    if (petState.mode === "idle" && quietMode !== "minimal") {
-      return scheduleFidget();
-    }
-  }, [petState.mode, quietMode, idleRhythm]);
-
   const prevReaction = useRef(petState.reaction);
   const prevEmotion = useRef(petState.emotion);
 
@@ -511,7 +518,7 @@ function PetWindowContent() {
                   fileName: files[0]?.name,
                 },
               });
-              void runCommand("prepare_text_attachment", { path });
+              runCommandQuiet("prepare_text_attachment", { path });
             }
           } else {
             const url = event.dataTransfer.getData("text/uri-list") || event.dataTransfer.getData("text/plain");
@@ -523,7 +530,7 @@ function PetWindowContent() {
                   message: url,
                 },
               });
-              void runCommand("show_bubble");
+              runCommandQuiet("show_bubble");
             }
           }
         }}

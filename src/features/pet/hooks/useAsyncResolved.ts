@@ -30,12 +30,17 @@ export function useAsyncResolved<T, D extends readonly unknown[]>(
 ): T {
   const [value, setValue] = useState<T>(fallback);
   const seqRef = useRef<number>(0);
+  const [prevDeps, setPrevDeps] = useState<D>(deps);
+
+  // deps 变化时在渲染期直接重置为 fallback（React 官方的 render 调整模式），
+  // 避免 effect 内同步 setState 造成级联渲染。
+  if (!depsMatch(prevDeps, deps)) {
+    setPrevDeps(deps);
+    setValue(fallback);
+  }
 
   useEffect(() => {
     const requestSeq = ++seqRef.current;
-
-    // 先设置为 fallback，表示正在加载中
-    setValue(fallback);
 
     void resolver(...deps).then((result) => {
       // 竞态检查：如果在此期间有新的请求发起，则忽略本次结果
@@ -51,4 +56,8 @@ export function useAsyncResolved<T, D extends readonly unknown[]>(
   }, [...deps]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return value;
+}
+
+function depsMatch(a: readonly unknown[], b: readonly unknown[]) {
+  return a.length === b.length && a.every((item, index) => Object.is(item, b[index]));
 }

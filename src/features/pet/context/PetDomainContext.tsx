@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useRef, useState, useEffect } from "react";
+import React, { createContext, useContext, useMemo, useState, useEffect } from "react";
 import {
   GrowthSnapshot,
   loadGrowthSnapshot,
@@ -110,11 +110,10 @@ export function PetDomainProvider({ children }: PetDomainProviderProps) {
   // 初始化 managers（使用 useMemo lazy init）
   const interactionManager = useMemo(() => new InteractionManager(), []);
   const personalityManager = useMemo(() => new PersonalityManager(loadPersonalityState()), []);
-  const behaviorSystemRef = useRef<BehaviorSystem | null>(null);
 
   // 初始状态
-  const [growthSnapshot] = useState<GrowthSnapshot>(() => loadGrowthSnapshot());
-  const [personalitySnapshot] = useState<PersonalityDimensions>(() => {
+  const [growthSnapshot, setGrowthSnapshot] = useState<GrowthSnapshot>(() => loadGrowthSnapshot());
+  const [personalitySnapshot, setPersonalitySnapshot] = useState<PersonalityDimensions>(() => {
     const stats = loadInteractionStats();
     const growth = loadGrowthSnapshot();
     return derivePersonalityFromSignals(stats, growth);
@@ -181,12 +180,9 @@ export function PetDomainProvider({ children }: PetDomainProviderProps) {
     }
   );
 
-  // 初始化 behaviorSystem（在 refs 中，因为需要在 effect 中启动/停止）
-  const behaviorSystem = useMemo(() => {
-    const system = new BehaviorSystem(personalityManager);
-    behaviorSystemRef.current = system;
-    return system;
-  }, [personalityManager]);
+  // 初始化 behaviorSystem（useState 惰性初始化保证渲染期纯净；
+  // system 需要在 effect 中启动/停止，实例本身生命周期与 Provider 一致）
+  const [behaviorSystem] = useState(() => new BehaviorSystem(personalityManager));
 
   // AI revision 计数（用于触发重新解析）
   const [, setAiRevision] = useState(0);
@@ -217,50 +213,46 @@ export function PetDomainProvider({ children }: PetDomainProviderProps) {
     };
   }, []);
 
-  // 监听 storage 事件和自定义事件刷新状态
+  // 监听 storage 事件和自定义事件刷新状态。
+  // 快照必须在事件后更新，否则 bondTier 等派生值会永远停留在挂载时的值。
   useEffect(() => {
-    const handleStorageChange = () => {
-      // 当 storage 变化时，重新加载状态
-      // 这里不直接设置 state，因为 PetDomainContext 不负责管理完整状态同步
-      // 主要由外部组件或 storage 事件驱动
+    const refreshFromStorage = () => {
+      const growth = loadGrowthSnapshot();
+      setGrowthSnapshot(growth);
+      setPersonalitySnapshot(derivePersonalityFromSignals(loadInteractionStats(), growth));
     };
 
-    window.addEventListener("storage", handleStorageChange);
-    window.addEventListener("piko-interaction-stats-changed", handleStorageChange as EventListener);
-    window.addEventListener("piko-growth-state-changed", handleStorageChange as EventListener);
+    window.addEventListener("storage", refreshFromStorage);
+    window.addEventListener("piko-interaction-stats-changed", refreshFromStorage as EventListener);
+    window.addEventListener("piko-growth-state-changed", refreshFromStorage as EventListener);
 
     return () => {
-      window.removeEventListener("storage", handleStorageChange);
-      window.removeEventListener("piko-interaction-stats-changed", handleStorageChange as EventListener);
-      window.removeEventListener("piko-growth-state-changed", handleStorageChange as EventListener);
+      window.removeEventListener("storage", refreshFromStorage);
+      window.removeEventListener("piko-interaction-stats-changed", refreshFromStorage as EventListener);
+      window.removeEventListener("piko-growth-state-changed", refreshFromStorage as EventListener);
     };
   }, []);
 
   // 在 behaviorSystem 上设置回调并启动/停止
   useEffect(() => {
-    const system = behaviorSystemRef.current;
-    if (!system) return;
-
     // 设置行为触发回调
-    system.setOnTrigger((event) => {
+    behaviorSystem.setOnTrigger((event) => {
       console.debug("[PetDomainContext] Behavior triggered:", event);
     });
 
     // 启动 behaviorSystem
-    system.start();
+    behaviorSystem.start();
 
     return () => {
-      system.stop();
+      behaviorSystem.stop();
     };
-  }, []);
+  }, [behaviorSystem]);
 
   // 当 behaviorProfile 和 behaviorPriority 解析完成后，更新到 behaviorSystem
   useEffect(() => {
-    const system = behaviorSystemRef.current;
-    if (!system) return;
-    system.setBehaviorProfile(behaviorProfile);
-    system.setBehaviorPriority(behaviorPriority);
-  }, [behaviorProfile, behaviorPriority]);
+    behaviorSystem.setBehaviorProfile(behaviorProfile);
+    behaviorSystem.setBehaviorPriority(behaviorPriority);
+  }, [behaviorSystem, behaviorProfile, behaviorPriority]);
 
   const contextValue = useMemo<PetDomainContextValue>(
     () => ({

@@ -238,6 +238,16 @@ export function Live2DCharacterPet({
   const [errorMessage, setErrorMessage] = useState("");
   const [profile, setProfile] = useState<Live2DCharacterProfile>({});
 
+  // 模型参数变化时在渲染期重置加载状态（React 官方的 render 调整模式），
+  // 避免在 effect 内同步 setState。
+  const modelKey = `${compact ? "1" : "0"}|${modelUrl ?? ""}|${profileUrl ?? ""}`;
+  const [renderedModelKey, setRenderedModelKey] = useState(modelKey);
+  if (renderedModelKey !== modelKey) {
+    setRenderedModelKey(modelKey);
+    setStatus("loading");
+    setErrorMessage("");
+  }
+
   const fallbackStyle = useMemo<CSSProperties>(() => ({
     ...style,
     opacity: status === "fallback" ? 1 : 0,
@@ -431,8 +441,6 @@ export function Live2DCharacterPet({
       }
     }
 
-    setStatus("loading");
-    setErrorMessage("");
     void initLive2D();
 
     return () => {

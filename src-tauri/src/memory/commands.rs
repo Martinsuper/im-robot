@@ -10,6 +10,7 @@ use super::reflection::{
 };
 use super::store::MemoryDb;
 use super::writer::{apply_candidate, extract_candidates, CandidateCache};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
@@ -34,7 +35,7 @@ fn now_unix() -> u64 {
 
 #[tauri::command]
 pub fn list_memories(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     input: Option<ListMemoriesInput>,
 ) -> Result<Vec<MemoryItem>, String> {
     let input = input.unwrap_or_default();
@@ -42,14 +43,14 @@ pub fn list_memories(
 }
 
 #[tauri::command]
-pub fn get_memory_detail(db: State<'_, MemoryDb>, id: String) -> Result<MemoryItem, String> {
+pub fn get_memory_detail(db: State<'_, Arc<MemoryDb>>, id: String) -> Result<MemoryItem, String> {
     db.get(&id)?.ok_or_else(|| "未找到该记忆".to_string())
 }
 
 #[tauri::command]
 pub fn create_memory(
     app: AppHandle,
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     input: CreateMemoryInput,
 ) -> Result<MemoryItem, String> {
     policy::validate_create_input(&input)?;
@@ -88,7 +89,7 @@ pub fn create_memory(
 #[tauri::command]
 pub fn update_memory(
     app: AppHandle,
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     id: String,
     input: UpdateMemoryInput,
 ) -> Result<MemoryItem, String> {
@@ -98,7 +99,7 @@ pub fn update_memory(
 }
 
 #[tauri::command]
-pub fn delete_memory(app: AppHandle, db: State<'_, MemoryDb>, id: String) -> Result<(), String> {
+pub fn delete_memory(app: AppHandle, db: State<'_, Arc<MemoryDb>>, id: String) -> Result<(), String> {
     db.delete(&id)?;
     let _ = app.emit_to("panel", "memories-updated", ());
     Ok(())
@@ -107,7 +108,7 @@ pub fn delete_memory(app: AppHandle, db: State<'_, MemoryDb>, id: String) -> Res
 #[tauri::command]
 pub fn clear_memories(
     app: AppHandle,
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     memory_type: Option<MemoryType>,
 ) -> Result<usize, String> {
     let count = match memory_type {
@@ -122,7 +123,7 @@ pub fn clear_memories(
 
 #[tauri::command]
 pub fn search_memories(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     input: SearchMemoriesInput,
 ) -> Result<Vec<MemoryItem>, String> {
     db.search(input)
@@ -130,7 +131,7 @@ pub fn search_memories(
 
 #[tauri::command]
 pub fn search_related_memories(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     input: SearchRelatedInput,
 ) -> Result<Vec<MemoryItem>, String> {
     db.search_related(input)
@@ -138,7 +139,7 @@ pub fn search_related_memories(
 
 #[tauri::command]
 pub fn get_recent_memories(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     limit: Option<usize>,
 ) -> Result<Vec<MemoryItem>, String> {
     db.get_recent(limit.unwrap_or(10))
@@ -146,21 +147,21 @@ pub fn get_recent_memories(
 
 #[tauri::command]
 pub fn build_memory_context(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     input: BuildContextInput,
 ) -> Result<Vec<MemoryItem>, String> {
     db.build_context(input)
 }
 
 #[tauri::command]
-pub fn pin_memory(app: AppHandle, db: State<'_, MemoryDb>, id: String) -> Result<(), String> {
+pub fn pin_memory(app: AppHandle, db: State<'_, Arc<MemoryDb>>, id: String) -> Result<(), String> {
     db.pin(&id)?;
     let _ = app.emit_to("panel", "memories-updated", ());
     Ok(())
 }
 
 #[tauri::command]
-pub fn unpin_memory(app: AppHandle, db: State<'_, MemoryDb>, id: String) -> Result<(), String> {
+pub fn unpin_memory(app: AppHandle, db: State<'_, Arc<MemoryDb>>, id: String) -> Result<(), String> {
     db.unpin(&id)?;
     let _ = app.emit_to("panel", "memories-updated", ());
     Ok(())
@@ -169,7 +170,7 @@ pub fn unpin_memory(app: AppHandle, db: State<'_, MemoryDb>, id: String) -> Resu
 #[tauri::command]
 pub fn feedback_memory(
     app: AppHandle,
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     input: FeedbackInput,
 ) -> Result<(), String> {
     db.add_feedback(&input)?;
@@ -178,13 +179,13 @@ pub fn feedback_memory(
 }
 
 #[tauri::command]
-pub fn add_memory_relation(db: State<'_, MemoryDb>, input: AddRelationInput) -> Result<(), String> {
+pub fn add_memory_relation(db: State<'_, Arc<MemoryDb>>, input: AddRelationInput) -> Result<(), String> {
     db.add_relation(&input)
 }
 
 #[tauri::command]
 pub fn remove_memory_relation(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     from_id: String,
     to_id: String,
     relation_type: String,
@@ -194,7 +195,7 @@ pub fn remove_memory_relation(
 
 #[tauri::command]
 pub fn get_memory_relations(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     memory_id: String,
 ) -> Result<Vec<super::model::MemoryRelation>, String> {
     db.get_relations(&memory_id)
@@ -204,7 +205,7 @@ pub fn get_memory_relations(
 
 #[tauri::command]
 pub fn capture_memory_candidates(
-    cache: State<'_, CandidateCache>,
+    cache: State<'_, Arc<CandidateCache>>,
     input: CaptureCandidateInput,
 ) -> Result<Vec<MemoryCandidate>, String> {
     let candidates = extract_candidates(&input);
@@ -215,7 +216,7 @@ pub fn capture_memory_candidates(
 
 #[tauri::command]
 pub fn get_pending_candidates(
-    cache: State<'_, CandidateCache>,
+    cache: State<'_, Arc<CandidateCache>>,
 ) -> Result<Vec<MemoryCandidate>, String> {
     let cached = cache.lock()?;
     Ok(cached
@@ -228,8 +229,8 @@ pub fn get_pending_candidates(
 #[tauri::command]
 pub fn apply_memory_candidates(
     app: AppHandle,
-    db: State<'_, MemoryDb>,
-    cache: State<'_, CandidateCache>,
+    db: State<'_, Arc<MemoryDb>>,
+    cache: State<'_, Arc<CandidateCache>>,
     input: ApplyCandidateInput,
 ) -> Result<Option<MemoryItem>, String> {
     let item = {
@@ -244,7 +245,7 @@ pub fn apply_memory_candidates(
 
 #[tauri::command]
 pub fn reject_memory_candidate(
-    cache: State<'_, CandidateCache>,
+    cache: State<'_, Arc<CandidateCache>>,
     candidate_id: String,
 ) -> Result<(), String> {
     let mut cached = cache.lock()?;
@@ -257,7 +258,7 @@ pub fn reject_memory_candidate(
 #[tauri::command]
 pub fn reflect_memory_now(
     app: AppHandle,
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     reflection_type: Option<String>,
 ) -> Result<ReflectionSummary, String> {
     let summary = match reflection_type.as_deref() {
@@ -270,7 +271,7 @@ pub fn reflect_memory_now(
 
 #[tauri::command]
 pub fn get_memory_summaries(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     summary_type: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<ReflectionSummary>, String> {
@@ -280,7 +281,7 @@ pub fn get_memory_summaries(
 #[tauri::command]
 pub fn merge_memories_cmd(
     app: AppHandle,
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     input: MergeMemoriesInput,
 ) -> Result<MemoryItem, String> {
     let item = merge_memories(&db, &input.keep_id, &input.remove_id)?;
@@ -290,7 +291,7 @@ pub fn merge_memories_cmd(
 
 #[tauri::command]
 pub fn get_merge_candidates(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
 ) -> Result<Vec<(MemoryItem, MemoryItem)>, String> {
     let recent = db.get_recent(100)?;
     let refs: Vec<&MemoryItem> = recent.iter().collect();
@@ -350,7 +351,7 @@ fn titles_similar(a: &str, b: &str) -> bool {
 #[tauri::command]
 pub fn abstract_semantic_from_events(
     app: AppHandle,
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     memory_type: Option<MemoryType>,
     min_count: Option<usize>,
 ) -> Result<Option<MemoryItem>, String> {
@@ -389,7 +390,7 @@ pub fn abstract_semantic_from_events(
 // === Phase 3+: Expiration & Maintenance ===
 
 #[tauri::command]
-pub fn expire_old_memories(app: AppHandle, db: State<'_, MemoryDb>) -> Result<usize, String> {
+pub fn expire_old_memories(app: AppHandle, db: State<'_, Arc<MemoryDb>>) -> Result<usize, String> {
     let count = db.expire_old_memories()?;
     if count > 0 {
         let _ = app.emit_to("panel", "memories-updated", ());
@@ -398,14 +399,14 @@ pub fn expire_old_memories(app: AppHandle, db: State<'_, MemoryDb>) -> Result<us
 }
 
 #[tauri::command]
-pub fn recalculate_confidence(db: State<'_, MemoryDb>) -> Result<usize, String> {
+pub fn recalculate_confidence(db: State<'_, Arc<MemoryDb>>) -> Result<usize, String> {
     db.recalculate_confidence()
 }
 
 // === Import/Export ===
 
 #[tauri::command]
-pub fn export_memories(db: State<'_, MemoryDb>) -> Result<MemoryExport, String> {
+pub fn export_memories(db: State<'_, Arc<MemoryDb>>) -> Result<MemoryExport, String> {
     let (memories, relations) = db.export_all()?;
     Ok(MemoryExport {
         version: "1.0".to_string(),
@@ -417,7 +418,7 @@ pub fn export_memories(db: State<'_, MemoryDb>) -> Result<MemoryExport, String> 
 
 #[tauri::command]
 pub fn memory_preview_import(
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     input: MemoryImportInput,
 ) -> Result<super::model::ImportPreview, String> {
     let total = input.data.memories.len();
@@ -454,7 +455,7 @@ pub fn memory_preview_import(
 #[tauri::command]
 pub fn import_memories(
     app: AppHandle,
-    db: State<'_, MemoryDb>,
+    db: State<'_, Arc<MemoryDb>>,
     input: MemoryImportInput,
 ) -> Result<usize, String> {
     let count = db.import_memories(&input.data.memories, &input.data.relations, &input.mode)?;

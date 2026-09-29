@@ -1,7 +1,7 @@
 import { useEffect, useState, type MouseEvent } from "react";
 import type { CaptureSelection } from "../../types/appTypes";
 import { normalizeCaptureSelection } from "../app/appShared";
-import { runCommand } from "../app/appRuntime";
+import { runCommand, runCommandQuiet } from "../app/appRuntime";
 
 export function CaptureWindow() {
   const [origin, setOrigin] = useState<{ x: number; y: number }>();
@@ -26,7 +26,7 @@ export function CaptureWindow() {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") void runCommand("cancel_screen_capture");
+      if (event.key === "Escape") runCommandQuiet("cancel_screen_capture");
       if (event.key === "Enter" && hasSelection) void confirm();
     }
     window.addEventListener("keydown", handleKeyDown);

@@ -4,16 +4,14 @@ import { isTauriRuntime } from "../../app/appRuntime";
 
 export type EventHandler<T> = (payload: T) => void;
 
-export type EventSubscription<T> = {
-  eventName: string;
-  handler: EventHandler<T>;
-};
-
 /**
  * Hook for subscribing to a single Tauri event.
  *
- * Automatically registers the event listener when in Tauri runtime,
- * and cleans up on unmount or when dependencies change.
+ * handler 通过 ref 透传，因此传入内联函数也不会触发重新订阅；
+ * 只在 eventName / deps 变化时重订阅。
+ *
+ * 卸载或依赖变化时无条件注销监听——包括 listen() promise 尚未 resolve
+ * 就卸载的情况（resolve 后补注销），不会泄漏监听器。
  *
  * @param eventName - The name of the Tauri event to listen for
  * @param handler - Callback function invoked when the event fires
@@ -24,99 +22,48 @@ export function useTauriEventSubscription<T>(
   handler: EventHandler<T>,
   deps: readonly unknown[] = []
 ): void {
-  const mountedRef = useRef(true);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-
+  const handlerRef = useRef(handler);
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+    handlerRef.current = handler;
+  });
 
   useEffect(() => {
     if (!isTauriRuntime) return;
 
-    let cancelled = false;
-
-    void listen<T>(eventName, (event) => {
-      if (mountedRef.current) {
-        handler(event.payload);
+    let active = true;
+    let disposed = false;
+    let unlisten: UnlistenFn | null = null;
+    const registration = listen<T>(eventName, (event) => {
+      if (active) {
+        handlerRef.current(event.payload);
       }
-    }).then((unlisten) => {
-      if (!cancelled && mountedRef.current) {
-        unlistenRef.current = unlisten;
+    });
+
+    const disposeOnce = (dispose: UnlistenFn) => {
+      if (disposed) return;
+      disposed = true;
+      void dispose();
+    };
+
+    void registration.then((dispose) => {
+      if (active) {
+        unlisten = dispose;
+      } else {
+        // 注册完成前组件已卸载，在这里补上注销
+        disposeOnce(dispose);
       }
     });
 
     return () => {
-      cancelled = true;
-      if (unlistenRef.current) {
-        const dispose = unlistenRef.current;
-        unlistenRef.current = null;
-        void dispose();
+      active = false;
+      if (unlisten) {
+        disposeOnce(unlisten);
+        unlisten = null;
+      } else {
+        void registration.then(disposeOnce);
       }
     };
+    // handler 经 ref 透传，不参与依赖；deps 由调用方声明
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventName, handler, ...deps]);
-}
-
-/**
- * Hook for subscribing to multiple Tauri events at once.
- *
- * Registers all event listeners when in Tauri runtime,
- * and cleans up all subscriptions on unmount or when dependencies change.
- *
- * @param subscriptions - Array of event subscription configurations
- * @param deps - Additional dependencies that trigger re-subscription
- */
-export function useTauriEventSubscriptions(
-  subscriptions: EventSubscription<any>[],
-  deps: readonly unknown[] = []
-): void {
-  const mountedRef = useRef(true);
-  const unlistenRefs = useRef<Map<string, UnlistenFn>>(new Map());
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isTauriRuntime) return;
-
-    const pendingUnlistens = new Map<string, Promise<UnlistenFn>>();
-
-    for (const { eventName, handler } of subscriptions) {
-      const unlistenPromise = listen(eventName, (event) => {
-        if (mountedRef.current) {
-          handler(event.payload);
-        }
-      });
-
-      pendingUnlistens.set(eventName, unlistenPromise);
-
-      unlistenPromise.then((unlisten) => {
-        if (mountedRef.current) {
-          unlistenRefs.current.set(eventName, unlisten);
-        }
-      });
-    }
-
-    return () => {
-      for (const [, unlistenOrPromise] of unlistenRefs.current) {
-        void unlistenOrPromise();
-      }
-      unlistenRefs.current.clear();
-
-      for (const [, unlistenPromise] of pendingUnlistens) {
-        void unlistenPromise.then((unlisten) => {
-          void unlisten();
-        });
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subscriptions, ...deps]);
+  }, [eventName, ...deps]);
 }

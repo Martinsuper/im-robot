@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { runCommand } from '../app/appRuntime';
 import { useTranslation } from '../i18n/I18nProvider';
 
 type OnboardingStep = 'name' | 'ai' | 'complete';
@@ -57,14 +58,14 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
           apiKey: apiKey || null,
         },
       });
-      await invoke('list_models');
+      await invoke('test_connection');
       setTestResult('success');
     } catch {
       setTestResult('error');
     } finally {
       setTesting(false);
     }
-  }, []);
+  }, [selectedProvider, baseUrl, model, apiKey]);
 
   const handleNext = useCallback(async () => {
     if (step === 'name') {
@@ -103,9 +104,9 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
   }, [step, companionName, selectedProvider, baseUrl, model, apiKey, onComplete]);
 
   const handleSkip = useCallback(() => {
-    void invoke('skip_onboarding').finally(() => {
+    void runCommand("skip_onboarding").finally(() => {
       onSkip();
-    });
+    }).catch((error) => console.error("[piko] skip_onboarding failed:", error));
   }, [onSkip]);
 
   return (

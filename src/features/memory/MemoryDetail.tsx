@@ -43,14 +43,29 @@ export function MemoryDetail({
   const [editContent, setEditContent] = useState(memory.content);
   const [isEditing, setIsEditing] = useState(false);
 
-  useEffect(() => {
+  // 记忆内容变化时在渲染期重置编辑态（React 官方的 render 调整模式），
+  // 避免在 effect 内同步 setState。
+  const [editSource, setEditSource] = useState(() => ({
+    id: memory.id,
+    title: memory.title,
+    content: memory.content,
+  }));
+  if (
+    editSource.id !== memory.id ||
+    editSource.title !== memory.title ||
+    editSource.content !== memory.content
+  ) {
+    setEditSource({ id: memory.id, title: memory.title, content: memory.content });
     setEditTitle(memory.title);
     setEditContent(memory.content);
     setIsEditing(false);
+  }
+
+  useEffect(() => {
     void runCommand<MemoryRelation[]>("get_memory_relations", {
       memoryId: memory.id,
     }).then(setRelations).catch(() => setRelations([]));
-  }, [memory.id, memory.title, memory.content]);
+  }, [memory.id]);
 
   async function handleSave() {
     try {

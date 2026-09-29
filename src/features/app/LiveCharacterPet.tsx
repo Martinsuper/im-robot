@@ -283,7 +283,8 @@ export function LiveCharacterPet({
   const themeStateRef = useRef<{ theme: keyof typeof POSE_CLIPS; previous: keyof typeof POSE_CLIPS; startedAt: number }>({
     theme: "idle",
     previous: "idle",
-    startedAt: performance.now(),
+    // 渲染期不能调用 performance.now()，起始时间在首个动画帧内惰性填充
+    startedAt: 0,
   });
   const [ready, setReady] = useState(false);
 
@@ -383,8 +384,8 @@ export function LiveCharacterPet({
       const sourceRatio = source.w / source.h;
       const poseScale = poseTransform.scale;
       const fitScale = 0.9;
-      let renderW = Math.min(widthPx * globalScale, heightPx * sourceRatio * globalScale) * fitScale * poseScale;
-      let renderH = renderW / sourceRatio;
+      const renderW = Math.min(widthPx * globalScale, heightPx * sourceRatio * globalScale) * fitScale * poseScale;
+      const renderH = renderW / sourceRatio;
 
       const bob = Math.sin(time * (pose === "sleepy" ? 0.001 : 0.0021)) * (pose === "sleepy" ? 3 : pose === "celebrate" ? 7 : 4);
       const sway = Math.sin(time * (pose === "playful" ? 0.003 : 0.0012)) * (pose === "playful" ? 5 : 1.7);
@@ -479,6 +480,9 @@ export function LiveCharacterPet({
       ctx.restore();
 
       if (image) {
+        if (themeStateRef.current.startedAt === 0) {
+          themeStateRef.current.startedAt = time;
+        }
         const { theme, previous, startedAt } = themeStateRef.current;
         const clip = POSE_CLIPS[theme];
         const prevClip = POSE_CLIPS[previous];

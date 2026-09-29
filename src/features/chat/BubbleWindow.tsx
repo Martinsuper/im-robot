@@ -1,7 +1,7 @@
 import { FormEvent, isValidElement, type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { ActionConfirmationCard, getConfirmationChoices } from "./ActionConfirmationCard";
@@ -9,13 +9,18 @@ import { getBubbleCompanionMessage } from "./bubbleMessage";
 import type { ActionDraft, ActionExecution, ChatEvent } from "./chatTypes";
 import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry, ScreenshotPreview, Theme } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
-import { isTauriRuntime, runCommand } from "../app/appRuntime";
+import { isTauriRuntime, runCommand, runCommandQuiet } from "../app/appRuntime";
 import { extractHtmlPreviewSource, HtmlPreviewFrame } from "./HtmlPreviewFrame";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
+
+type SaveTextResult = {
+  saved: boolean;
+  path: string | null;
+};
 
 function extractMarkdownText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -26,7 +31,8 @@ function extractMarkdownText(node: ReactNode): string {
 
 function textForSpeech(text: string) {
   return text
-    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{1F1E6}-\u{1F1FF}‍︎️⃣]/gu, "");
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{1F1E6}-\u{1F1FF}]/gu, "")
+    .replace(/\u200D|\uFE0E|\uFE0F|\u20E3/g, "");
 }
 
 function MarkdownContent({ children }: { children: string }) {
@@ -257,7 +263,6 @@ export function BubbleWindow() {
   const hasInputContext = Boolean(attachment || screenshot || attachmentError || isDraggingFile);
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
-  const mountedRef = useRef(true);
   const previewReplyTimer = useRef<number | undefined>(undefined);
   const skeletonHideTimer = useRef<number | undefined>(undefined);
   const receivedFirstDelta = useRef(false);
@@ -312,29 +317,22 @@ export function BubbleWindow() {
     if (!isTauriRuntime) return;
     void runCommand<ChatHistoryEntry[]>("get_bubble_chat_history", undefined, []).then((entries) => {
       if (entries) setChatHistory(entries);
-    });
+    }).catch((error) => console.error("[piko] get_bubble_chat_history failed:", error));
   }
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   useEffect(() => {
     void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
       setCompanionName(settings.companionName);
       setTheme(settings.theme);
       setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
-    });
+    }).catch((error) => console.error("[piko] get_settings failed:", error));
     refreshChatHistory();
   }, []);
 
   useEffect(() => {
     return () => {
       window.speechSynthesis?.cancel();
-      if (isTauriRuntime) void runCommand("stop_local_speech");
+      if (isTauriRuntime) runCommandQuiet("stop_local_speech");
       clearSkeletonHideTimer();
     };
   }, []);
@@ -348,7 +346,7 @@ export function BubbleWindow() {
     });
     return () => {
       void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
+        dispose();
       });
     };
   }, []);
@@ -357,7 +355,8 @@ export function BubbleWindow() {
     if (!isTauriRuntime) return;
     const refreshScreenshot = () => {
       void runCommand<ScreenshotPreview | null>("get_screen_capture_preview", undefined, null)
-        .then((preview) => setScreenshot(preview ?? undefined));
+        .then((preview) => setScreenshot(preview ?? undefined))
+        .catch((error) => console.error("[piko] get_screen_capture_preview failed:", error));
     };
     refreshScreenshot();
     const unlisten = listen<ScreenshotPreview>("screenshot-ready", (event) => {
@@ -368,7 +367,7 @@ export function BubbleWindow() {
     });
     return () => {
       void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
+        dispose();
       });
       void unlistenFocus.then((dispose) => dispose());
     };
@@ -433,7 +432,7 @@ export function BubbleWindow() {
 
     return () => {
       void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
+        dispose();
       });
     };
   }, []);
@@ -452,7 +451,7 @@ export function BubbleWindow() {
     });
     return () => {
       void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
+        dispose();
       });
     };
   }, []);
@@ -482,7 +481,7 @@ export function BubbleWindow() {
 
     return () => {
       void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
+        dispose();
       });
     };
   }, []);
@@ -563,7 +562,7 @@ export function BubbleWindow() {
       setMessage("已停止生成。");
       return;
     }
-    void runCommand("chat_cancel", { requestId });
+    runCommandQuiet("chat_cancel", { requestId });
   }
 
   async function copyResult() {
@@ -713,18 +712,13 @@ export function BubbleWindow() {
       setSaveError("桌面版中可保存回复到本地文件。");
       return;
     }
-    const path = await save({
-      defaultPath: "piko-response.md",
-      filters: [{ name: "文本文件", extensions: ["txt", "md", "json", "csv", "py", "js", "ts", "html", "css", "rs", "toml", "log"] }],
-    });
-    if (!path) return;
     try {
-      await runCommand("save_generated_text", { path, content: message, overwrite: false });
+      const result = await runCommand<SaveTextResult>("save_generated_text", {
+        defaultName: "piko-response.md",
+        content: message,
+      });
+      if (!result.saved) return;
     } catch (error) {
-      if (String(error).includes("目标文件已存在") && window.confirm("目标文件已存在，是否覆盖？")) {
-        await runCommand("save_generated_text", { path, content: message, overwrite: true });
-        return;
-      }
       setSaveError(String(error));
     }
   }

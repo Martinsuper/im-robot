@@ -12,6 +12,7 @@ dist
 dist-ssr
 artifacts
 *.local
+.tauri
 
 # Editor directories and files
 .vscode/*
