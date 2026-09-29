@@ -56,7 +56,7 @@ struct BubbleSize {
     height: u32,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
     quiet_mode: String,
@@ -413,6 +413,20 @@ struct CalendarPlugin;
 #[derive(Clone)]
 struct PluginRegistry {
     plugins: Mutex<HashMap<String, Arc<dyn PikoPlugin>>>,
+}
+
+// std::sync::Mutex 没有 Clone 实现，手动从锁内克隆映射（Arc 仅增加引用计数）
+impl Clone for PluginRegistry {
+    fn clone(&self) -> Self {
+        let plugins = self
+            .plugins
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        Self {
+            plugins: Mutex::new(plugins),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1209,7 +1223,7 @@ fn execute_wasm_plugin(
         .stderr(stderr.clone())
         .build_p1();
     let mut store = Store::new(engine, wasi);
-    let limits = StoreLimitsBuilder::new()
+    let mut limits = StoreLimitsBuilder::new()
         .memory_size(WASM_PLUGIN_MAX_MEMORY_BYTES)
         .memories(1)
         .tables(WASM_PLUGIN_MAX_TABLES)
@@ -4338,7 +4352,7 @@ fn create_html_preview_frame(
     store: State<'_, HtmlPreviewStore>,
     html: String,
 ) -> Result<String, String> {
-    if html.len() > MAX_TEXT_ATTACHMENT_BYTES * 16 {
+    if html.len() > (MAX_TEXT_ATTACHMENT_BYTES * 16) as usize {
         return Err("HTML 内容过大，无法预览".to_string());
     }
     let token = preview_frame_token();
@@ -5055,11 +5069,14 @@ async fn stream_chat(
     tauri::async_runtime::spawn_blocking(move || append_chat_history(&history_app, blocking_entry))
         .await
         .map_err(|error| format!("保存对话历史失败：{error}"))??;
-    let mut session_history = context
-        .0
-        .lock()
-        .map_err(|_| "无法更新当前对话上下文".to_string())?;
-    append_session_chat_history(&mut session_history, history_entry.clone());
+    // 锁守卫不能跨 await，先在块内更新会话历史
+    {
+        let mut session_history = context
+            .0
+            .lock()
+            .map_err(|_| "无法更新当前对话上下文".to_string())?;
+        append_session_chat_history(&mut session_history, history_entry.clone());
+    }
     let _ = app.emit_to("panel", "chat-history-updated", ());
 
     if cancelled.load(Ordering::Relaxed) {
@@ -5745,7 +5762,7 @@ pub fn run() {
         .manage(HtmlPreviewStore::default())
         .register_uri_scheme_protocol("preview", |ctx, request| {
             let store = ctx.app_handle().state::<HtmlPreviewStore>();
-            serve_html_preview_frame(&store, request.uri().as_str())
+            serve_html_preview_frame(&store, request.uri().path())
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
