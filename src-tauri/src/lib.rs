@@ -5931,8 +5931,7 @@ mod tests {
         validate_declarative_plugin, validate_save_path, version_parts, AiSettings, AppSettings,
         CalendarEvent, ChatEvent, ChatHistoryEntry, DeclarativePluginPackage, FocusRecord,
         HtmlPreviewStore, OpenAiToolCallAccumulator, PluginManifest, PluginRegistry,
-        PluginToolManifest, Reminder, ScreenCapture, TextAttachment, ToolCall,
-        PREVIEW_FRAME_CSP,
+        PluginToolManifest, Reminder, ScreenCapture, TextAttachment, ToolCall, PREVIEW_FRAME_CSP,
     };
     use chrono::{Duration as ChronoDuration, Local, TimeZone};
     use std::{

@@ -39,3 +39,13 @@ jobs:
         working-directory: src-tauri
       - run: cargo test
         working-directory: src-tauri
+
+  rust-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --lib
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri

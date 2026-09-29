@@ -117,6 +117,7 @@ function InlineToolbar({
         type="button"
         className={`inline-toolbar__btn${copyFeedback ? " inline-toolbar__btn--feedback" : ""}`}
         onClick={onCopy}
+        aria-label="复制结果"
         title="复制结果"
       >
         {copyFeedback ? "✓" : "📋"}
@@ -125,11 +126,18 @@ function InlineToolbar({
         type="button"
         className={`inline-toolbar__btn${isSpeaking ? " inline-toolbar__btn--active" : ""}`}
         onClick={onSpeech}
+        aria-label={isSpeaking ? "停止朗读" : "朗读回复"}
         title={isSpeaking ? "停止朗读" : "朗读回复"}
       >
         {isSpeaking ? "🔊⏹" : "🔊"}
       </button>
-      <button type="button" className="inline-toolbar__btn" onClick={onSave} title="保存回复">
+      <button
+        type="button"
+        className="inline-toolbar__btn"
+        onClick={onSave}
+        aria-label="保存回复"
+        title="保存回复"
+      >
         💾
       </button>
       <details className="inline-more-menu" data-no-drag>

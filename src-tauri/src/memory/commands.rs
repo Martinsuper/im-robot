@@ -99,7 +99,11 @@ pub fn update_memory(
 }
 
 #[tauri::command]
-pub fn delete_memory(app: AppHandle, db: State<'_, Arc<MemoryDb>>, id: String) -> Result<(), String> {
+pub fn delete_memory(
+    app: AppHandle,
+    db: State<'_, Arc<MemoryDb>>,
+    id: String,
+) -> Result<(), String> {
     db.delete(&id)?;
     let _ = app.emit_to("panel", "memories-updated", ());
     Ok(())
@@ -161,7 +165,11 @@ pub fn pin_memory(app: AppHandle, db: State<'_, Arc<MemoryDb>>, id: String) -> R
 }
 
 #[tauri::command]
-pub fn unpin_memory(app: AppHandle, db: State<'_, Arc<MemoryDb>>, id: String) -> Result<(), String> {
+pub fn unpin_memory(
+    app: AppHandle,
+    db: State<'_, Arc<MemoryDb>>,
+    id: String,
+) -> Result<(), String> {
     db.unpin(&id)?;
     let _ = app.emit_to("panel", "memories-updated", ());
     Ok(())
@@ -179,7 +187,10 @@ pub fn feedback_memory(
 }
 
 #[tauri::command]
-pub fn add_memory_relation(db: State<'_, Arc<MemoryDb>>, input: AddRelationInput) -> Result<(), String> {
+pub fn add_memory_relation(
+    db: State<'_, Arc<MemoryDb>>,
+    input: AddRelationInput,
+) -> Result<(), String> {
     db.add_relation(&input)
 }
 

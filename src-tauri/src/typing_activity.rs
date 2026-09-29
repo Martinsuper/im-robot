@@ -1,5 +1,5 @@
 use chrono::TimeZone;
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use rdev::{listen, Event, EventType, Key};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, sync::Mutex, thread, time::Duration};
@@ -256,7 +256,7 @@ fn current_day_key(now: u64) -> String {
         .to_string()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn keypress_delta(key: Key) -> i64 {
     match key {
         Key::Backspace | Key::Delete | Key::KpDelete => -1,
@@ -455,6 +455,119 @@ mod macos_keyboard_monitor {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn virtual_key_delta(vk: u32) -> i64 {
+    match vk {
+        // Delete/backspace（含小键盘 Del/小数点）。
+        0x08 | 0x2E | 0x6E => -1,
+        // Space, tab, return.
+        0x09 | 0x0D | 0x20 => 1,
+        // 主键盘标点（VK_OEM_*）、数字行与字母键。
+        0x30..=0x39 | 0x41..=0x5A | 0xBA..=0xC0 | 0xDB..=0xDF | 0xE2 => 1,
+        // 小键盘数字与四则运算键。
+        0x60..=0x69 | 0x6A | 0x6B | 0x6D | 0x6F => 1,
+        _ => 0,
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows_keyboard_monitor {
+    use super::{is_sensing_paused, virtual_key_delta, TypingActivityState};
+    use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::{thread, time::Duration};
+    use tauri::{AppHandle, Manager};
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WAIT_OBJECT_0, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, DispatchMessageW, MsgWaitForMultipleObjectsEx, PeekMessageW,
+        SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, HOOKPROC, MSG, MWMO_INPUTAVAILABLE,
+        PM_REMOVE, QS_ALLINPUT, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    };
+
+    /// WH_KEYBOARD_LL 的钩子回调没有 user_data 参数，用进程级指针传递 AppHandle。
+    /// 指针在监控线程启动时写入、随进程存活，钩子只在该窗口期内解引用。
+    static MONITOR_APP: AtomicPtr<AppHandle> = AtomicPtr::new(std::ptr::null_mut());
+
+    fn monitor_app() -> Option<&'static AppHandle> {
+        let pointer = MONITOR_APP.load(Ordering::Acquire);
+        if pointer.is_null() {
+            None
+        } else {
+            Some(unsafe { &*pointer })
+        }
+    }
+
+    unsafe extern "system" fn keyboard_hook_proc(
+        code: i32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if code >= 0 {
+            let message = wparam.0 as u32;
+            if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
+                if let Some(app) = monitor_app() {
+                    let delta = virtual_key_delta(message);
+                    if delta != 0 {
+                        let state = app.state::<TypingActivityState>();
+                        // 暂停感知时 record_keypress 内部会跳过统计
+                        let _ = state.record_keypress(app, delta);
+                    }
+                }
+            }
+        }
+        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+    }
+
+    pub fn run(app: AppHandle) {
+        MONITOR_APP.store(Box::into_raw(Box::new(app)), Ordering::Release);
+
+        loop {
+            let Some(app) = monitor_app() else {
+                return;
+            };
+
+            // 暂停感知：保持无钩子状态，等恢复后再装，250ms 轮询恢复标记
+            if is_sensing_paused(app) {
+                thread::sleep(Duration::from_millis(250));
+                continue;
+            }
+
+            let hook = match unsafe {
+                SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0)
+            } {
+                Ok(hook) => hook,
+                Err(error) => {
+                    eprintln!("typing monitor: SetWindowsHookExW failed: {error}");
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
+            };
+
+            // 非阻塞消息泵：低级钩子依赖本线程泵消息才会收到回调；
+            // 每 250ms 醒来检查暂停标记，一旦暂停立即卸载钩子。
+            loop {
+                let waited = unsafe {
+                    MsgWaitForMultipleObjectsEx(None, 250, QS_ALLINPUT, MWMO_INPUTAVAILABLE)
+                };
+                if is_sensing_paused(app) {
+                    break;
+                }
+                if waited == WAIT_OBJECT_0 {
+                    let mut message = MSG::default();
+                    while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
+                        unsafe { DispatchMessageW(&message) };
+                    }
+                }
+            }
+
+            unsafe {
+                if let Err(error) = UnhookWindowsHookEx(hook) {
+                    eprintln!("typing monitor: UnhookWindowsHookEx failed: {error}");
+                }
+            }
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 pub fn start_keyboard_monitor(app: &AppHandle) {
     let app = app.clone();
@@ -465,7 +578,13 @@ pub fn start_keyboard_monitor(app: &AppHandle) {
     });
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub fn start_keyboard_monitor(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || windows_keyboard_monitor::run(app));
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn start_keyboard_monitor(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || {
@@ -514,5 +633,23 @@ mod tests {
         assert_eq!(macos_keycode_delta(51), -1); // Delete/backspace
         assert_eq!(macos_keycode_delta(123), 0); // Left arrow
         assert_eq!(macos_keycode_delta(56), 0); // Shift
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::virtual_key_delta;
+
+    #[test]
+    fn virtual_key_delta_counts_text_keys_without_layout_lookup() {
+        assert_eq!(virtual_key_delta(0x41), 1); // A
+        assert_eq!(virtual_key_delta(0x30), 1); // 0
+        assert_eq!(virtual_key_delta(0x20), 1); // Space
+        assert_eq!(virtual_key_delta(0x60), 1); // Keypad 0
+        assert_eq!(virtual_key_delta(0x08), -1); // Backspace
+        assert_eq!(virtual_key_delta(0x2E), -1); // Delete
+        assert_eq!(virtual_key_delta(0x25), 0); // Left arrow
+        assert_eq!(virtual_key_delta(0x10), 0); // Shift
+        assert_eq!(virtual_key_delta(0xE5), 0); // VK_PROCESSKEY（IME 组合中）
     }
 }

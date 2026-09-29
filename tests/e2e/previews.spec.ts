@@ -13,6 +13,11 @@ test("bubble preview exposes text, file and screenshot entry points", async ({ p
   await expect(page.getByLabel("发送给 Piko 的问题")).toBeVisible();
   await expect(page.getByRole("button", { name: "选择文件" })).toBeVisible();
   await expect(page.getByRole("button", { name: "截图提问" })).toBeVisible();
+
+  // 行内工具栏（朗读/保存）在有回复内容后才出现：预览模式先发送一条消息
+  await page.getByLabel("发送给 Piko 的问题").fill("你好");
+  await page.locator("form.prompt-form").getByRole("button").last().click();
+  await expect(page.getByText("这是浏览器预览回复：你好")).toBeVisible({ timeout: 5000 });
   await expect(page.getByRole("button", { name: "朗读回复" })).toBeVisible();
   await expect(page.getByRole("button", { name: "保存回复" })).toBeVisible();
 });

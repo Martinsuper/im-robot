@@ -34,6 +34,10 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = "0.4"
 wasmtime = "45"
 wasmtime-wasi = "45"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+# Linux 键盘监控走 rdev；Windows 用自带的 WH_KEYBOARD_LL 钩子（可随暂停感知卸载，
+# 也避免把 rdev 打进 Windows 包引发杀软误报），macOS 用 CGEventTap。
 rdev = "0.5.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -44,5 +48,6 @@ objc2-foundation = "0.3"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
