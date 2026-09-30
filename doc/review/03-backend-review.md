@@ -1,6 +1,12 @@
 # 后端审查（src-tauri/）
 
-> **修复记录（2026-09-29）**：B2 已修复（`MemoryDb`/`CandidateCache` 改为 `Arc` 管理，`build_context`/`auto_capture_from_chat`/`append_chat_history`/插件执行全部移入 `spawn_blocking`）；B3 已修复（settings 进程内 mtime 缓存，读路径命中缓存不再读盘，写盘成功同步缓存/失败失效）。B1 已启动（2026-09-30）：settings.rs 模块（类型+缓存+keyring）已拆出并经双平台 CI 验证，其余模块按同一模式逐个抽取。B4（thiserror 错误体系）待处理。
+> **修复记录（2026-09-29）**：B2 已修复（`MemoryDb`/`CandidateCache` 改为 `Arc` 管理，`build_context`/`auto_capture_from_chat`/`append_chat_history`/插件执行全部移入 `spawn_blocking`）；B3 已修复（settings 进程内 mtime 缓存，读路径命中缓存不再读盘，写盘成功同步缓存/失败失效）。B1 进行中（2026-09-30）：已拆出 4 个模块并逐个经双平台 CI 验证——settings.rs（类型+缓存+keyring）、
+providers.rs（URL/HTTP 客户端/SSE 解析/工具调用累积，351 行）、updates.rs（GitHub Releases 检查+受控下载，261 行）、
+tts.rs（本地语音，93 行）。lib.rs 从 6719 行降至 6268 行。
+**剩余模块的耦合注意**：reminders/calendar 的结构体字段被插件系统、聊天工具调用、导入导出大量直接访问，
+抽取时需先把 Reminder/CalendarEvent 字段改 pub(crate) 并迁移输入结构体；rhythm/capture 的状态类型
+（FocusTimer/ScreenCaptureStore 等）由 lib.rs builder 管理，可保持 manage 不动、仅迁移函数。
+B4（thiserror 错误体系）建议随各模块抽取同步进行。
 
 技术栈：Tauri 2 + Rust。全后端共 11307 行，以下问题均给出 `file:line` 证据。安全问题见 [01-安全](01-security-review.md)，本篇聚焦结构与工程质量。
 
