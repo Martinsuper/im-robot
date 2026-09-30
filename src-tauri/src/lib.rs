@@ -48,7 +48,10 @@ pub use settings::{
     app_settings_path, persist_settings, read_api_key, read_settings, update_api_key, AiSettings,
     AppSettings,
 };
-pub use updates::{check_for_updates, check_for_updates_extended, download_update_asset};
+pub use updates::{
+    check_for_updates, check_for_updates_extended, download_update_asset,
+    sanitize_update_file_name, version_parts,
+};
 
 const PET_MARGIN: i32 = 16;
 /// How many pixels of the pet window stay visible when tucked at screen edge.
