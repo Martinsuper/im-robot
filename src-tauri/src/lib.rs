@@ -39,7 +39,8 @@ pub mod typing_activity;
 pub use providers::{
     chat_url, connection_test_body, extract_chat_deltas, http_client, is_local_provider,
     models_url, normalize_base_url, pet_companion_generation_url, provider_kind, request_builder,
-    send_checked_request, should_bypass_system_proxy, update_provider_tool_calls,
+    send_checked_request, should_bypass_system_proxy, update_anthropic_tool_calls,
+    update_gemini_tool_calls, update_openai_tool_calls, update_provider_tool_calls,
     validate_ai_settings, ModelInfo, OpenAiToolCallAccumulator, ProviderKind,
 };
 pub use settings::{
