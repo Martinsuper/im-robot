@@ -31,6 +31,7 @@ pub mod app_awareness;
 pub mod capture;
 pub mod memory;
 pub mod providers;
+pub mod reminders;
 pub mod rhythm;
 pub mod settings;
 pub mod sync;
@@ -46,6 +47,13 @@ pub use providers::{
     send_checked_request, should_bypass_system_proxy, update_anthropic_tool_calls,
     update_gemini_tool_calls, update_openai_tool_calls, update_provider_tool_calls,
     validate_ai_settings, ModelInfo, OpenAiToolCallAccumulator, ProviderKind,
+};
+pub use reminders::{
+    collect_due_reminders, create_reminder, create_reminder_record, delete_reminder,
+    delete_reminder_record, list_reminders, next_repeat_due, persist_reminders,
+    process_due_reminders, read_reminders, reminder_delete_input_from_value,
+    reminder_input_from_value, reminders_path, repeat_rule_label, watch_reminders, Reminder,
+    ReminderDeleteInput, ReminderInput,
 };
 pub use rhythm::{
     emit_focus_updated, emit_work_rhythm_updated, is_within_quiet_hours, today_focus_minutes,
@@ -213,26 +221,6 @@ struct TextAttachmentStore(Mutex<Option<TextAttachment>>);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct Reminder {
-    id: String,
-    title: String,
-    due_at: u64,
-    status: String,
-    #[serde(default = "default_repeat_rule")]
-    repeat: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ReminderInput {
-    title: String,
-    due_at: u64,
-    #[serde(default = "default_repeat_rule")]
-    repeat: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct CalendarEvent {
     id: String,
     title: String,
@@ -371,10 +359,6 @@ struct IdleDetection(Mutex<bool>);
 
 #[derive(Default)]
 struct CalendarNotificationCache(Mutex<HashSet<String>>);
-
-fn default_repeat_rule() -> String {
-    "none".to_string()
-}
 
 impl ReminderPlugin {
     fn tool_manifests() -> Vec<PluginToolManifest> {
@@ -784,13 +768,6 @@ fn chat_history_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|directory| directory.join("chat-history.json"))
 }
 
-fn reminders_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|directory| directory.join("reminders.json"))
-}
-
 fn calendar_events_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
@@ -837,24 +814,6 @@ fn append_session_chat_history(history: &mut Vec<ChatHistoryEntry>, entry: ChatH
 
     history.insert(0, entry);
     history.truncate(MAX_SESSION_CHAT_HISTORY);
-}
-
-fn read_reminders(app: &AppHandle) -> Vec<Reminder> {
-    reminders_path(app)
-        .and_then(|path| fs::read_to_string(path).ok())
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_default()
-}
-
-fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), String> {
-    let path = reminders_path(app).ok_or_else(|| "无法获取提醒记录路径".to_string())?;
-    let directory = path
-        .parent()
-        .ok_or_else(|| "无法获取提醒记录目录".to_string())?;
-    let json = serde_json::to_string(reminders).map_err(|error| error.to_string())?;
-
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    fs::write(path, json).map_err(|error| error.to_string())
 }
 
 fn read_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
@@ -1070,16 +1029,6 @@ fn unix_timestamp() -> u64 {
         .as_secs()
 }
 
-fn reminder_id() -> String {
-    format!(
-        "reminder-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    )
-}
-
 fn calendar_event_id() -> String {
     format!(
         "calendar-event-{}",
@@ -1098,15 +1047,6 @@ fn action_draft_id() -> String {
             .unwrap_or_default()
             .as_nanos()
     )
-}
-
-fn repeat_rule_label(repeat: &str) -> &str {
-    match repeat {
-        "daily" => "每天",
-        "weekly" => "每周",
-        "weekdays" => "工作日",
-        _ => "仅一次",
-    }
 }
 
 fn find_calendar_conflicts(
@@ -1318,20 +1258,6 @@ fn tool_timestamp(value: &Value) -> Result<u64, String> {
     u64::try_from(parsed.timestamp()).map_err(|_| "时间不能早于 1970 年".to_string())
 }
 
-fn reminder_input_from_value(value: &Value) -> Result<ReminderInput, String> {
-    let title = value["title"]
-        .as_str()
-        .ok_or_else(|| "提醒标题不能为空".to_string())?
-        .to_string();
-    let due_at = tool_timestamp(&value["dueAt"])?;
-    let repeat = value["repeat"].as_str().unwrap_or("none").to_string();
-    Ok(ReminderInput {
-        title,
-        due_at,
-        repeat,
-    })
-}
-
 fn calendar_event_input_from_value(value: &Value) -> Result<CalendarEventInput, String> {
     let title = value["title"]
         .as_str()
@@ -1375,14 +1301,6 @@ fn format_tool_timestamp(value: Option<u64>) -> Option<String> {
 }
 
 #[derive(Clone, Debug)]
-struct ReminderDeleteInput {
-    id: String,
-    title: Option<String>,
-    due_at: Option<u64>,
-    repeat: Option<String>,
-}
-
-#[derive(Clone, Debug)]
 struct CalendarDeleteInput {
     id: String,
     title: Option<String>,
@@ -1393,19 +1311,6 @@ struct CalendarDeleteInput {
 #[derive(Clone, Debug)]
 struct CalendarDeleteBatchInput {
     events: Vec<CalendarDeleteInput>,
-}
-
-fn reminder_delete_input_from_value(value: &Value) -> Result<ReminderDeleteInput, String> {
-    let id = value["id"]
-        .as_str()
-        .ok_or_else(|| "提醒 ID 不能为空".to_string())?
-        .to_string();
-    Ok(ReminderDeleteInput {
-        id,
-        title: value["title"].as_str().map(str::to_string),
-        due_at: value["dueAt"].as_str().and_then(tool_timestamp_str),
-        repeat: value["repeat"].as_str().map(str::to_string),
-    })
 }
 
 fn calendar_delete_input_from_value(value: &Value) -> Result<CalendarDeleteInput, String> {
@@ -1963,62 +1868,6 @@ fn get_bubble_chat_history(
 }
 
 #[tauri::command]
-fn list_reminders(app: AppHandle) -> Vec<Reminder> {
-    let mut reminders = read_reminders(&app);
-    reminders.sort_by_key(|reminder| reminder.due_at);
-    reminders
-}
-
-fn create_reminder_record(app: &AppHandle, input: ReminderInput) -> Result<Reminder, String> {
-    let title = input.title.trim();
-    if title.is_empty() {
-        return Err("提醒内容不能为空".to_string());
-    }
-    if title.chars().count() > 120 {
-        return Err("提醒内容不能超过 120 个字符".to_string());
-    }
-    if input.due_at <= unix_timestamp() {
-        return Err("提醒时间必须晚于当前时间".to_string());
-    }
-    if !matches!(
-        input.repeat.as_str(),
-        "none" | "daily" | "weekly" | "weekdays"
-    ) {
-        return Err("不支持的重复提醒规则".to_string());
-    }
-
-    let reminder = Reminder {
-        id: reminder_id(),
-        title: title.to_string(),
-        due_at: input.due_at,
-        status: "pending".to_string(),
-        repeat: input.repeat,
-    };
-    let mut reminders = read_reminders(app);
-    reminders.push(reminder.clone());
-    persist_reminders(app, &reminders)?;
-    let _ = app.emit_to("panel", "reminders-updated", ());
-    Ok(reminder)
-}
-
-fn delete_reminder_record(app: &AppHandle, input: ReminderDeleteInput) -> Result<Reminder, String> {
-    let mut reminders = read_reminders(app);
-    let index = reminders
-        .iter()
-        .position(|reminder| reminder.id == input.id)
-        .ok_or_else(|| "未找到该提醒".to_string())?;
-    let deleted = reminders.remove(index);
-    persist_reminders(app, &reminders)?;
-    let _ = app.emit_to("panel", "reminders-updated", ());
-    Ok(deleted)
-}
-
-#[tauri::command]
-fn create_reminder(app: AppHandle, input: ReminderInput) -> Result<Reminder, String> {
-    create_reminder_record(&app, input)
-}
-
-#[tauri::command]
 fn list_calendar_events(app: AppHandle) -> Vec<CalendarEvent> {
     let mut events = read_calendar_events(&app);
     events.sort_by_key(|event| event.start_at);
@@ -2394,79 +2243,6 @@ fn reject_chat_action(drafts: State<'_, ActionDrafts>, id: String) -> Result<(),
     Ok(())
 }
 
-#[tauri::command]
-fn delete_reminder(app: AppHandle, id: String) -> Result<(), String> {
-    let mut reminders = read_reminders(&app);
-    let previous_len = reminders.len();
-    reminders.retain(|reminder| reminder.id != id);
-    if reminders.len() == previous_len {
-        return Err("未找到该提醒".to_string());
-    }
-    persist_reminders(&app, &reminders)?;
-    let _ = app.emit_to("panel", "reminders-updated", ());
-    Ok(())
-}
-
-fn collect_due_reminders(reminders: &mut [Reminder], now: u64) -> Vec<Reminder> {
-    let mut due = Vec::new();
-    for reminder in reminders {
-        if reminder.status == "pending" && reminder.due_at <= now {
-            due.push(reminder.clone());
-            if reminder.repeat == "none" {
-                reminder.status = "triggered".to_string();
-            } else {
-                reminder.due_at = next_repeat_due(reminder.due_at, &reminder.repeat, now);
-            }
-        }
-    }
-    due
-}
-
-fn next_repeat_due(mut due_at: u64, repeat: &str, now: u64) -> u64 {
-    loop {
-        due_at += match repeat {
-            "weekly" => 7 * 24 * 60 * 60,
-            _ => 24 * 60 * 60,
-        };
-        if repeat == "weekdays" {
-            while matches!((due_at / 86_400 + 4) % 7, 0 | 6) {
-                due_at += 24 * 60 * 60;
-            }
-        }
-        if due_at > now {
-            return due_at;
-        }
-    }
-}
-
-fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String> {
-    let now = unix_timestamp();
-    let mut reminders = read_reminders(app);
-    let due = collect_due_reminders(&mut reminders, now);
-    if due.is_empty() {
-        return Ok(due);
-    }
-
-    persist_reminders(app, &reminders)?;
-    for reminder in &due {
-        let _ = app
-            .notification()
-            .builder()
-            .title("Piko 提醒")
-            .body(&reminder.title)
-            .show();
-        let _ = app.emit_to(
-            "pet",
-            "pet-visual-event",
-            PetVisualEvent::ReminderFired {
-                message: format!("提醒：{}", reminder.title),
-            },
-        );
-    }
-    let _ = app.emit_to("panel", "reminders-updated", ());
-    Ok(due)
-}
-
 fn collect_due_calendar_events(
     events: &[CalendarEvent],
     now: u64,
@@ -2524,14 +2300,6 @@ fn process_due_calendar_events(app: &AppHandle) -> Result<Vec<CalendarEvent>, St
     }
 
     Ok(due)
-}
-
-fn watch_reminders(app: &AppHandle) {
-    let app = app.clone();
-    thread::spawn(move || loop {
-        let _ = process_due_reminders(&app);
-        thread::sleep(Duration::from_secs(1));
-    });
 }
 
 fn watch_calendar_events(app: &AppHandle) {
@@ -4241,9 +4009,9 @@ pub fn run() {
             rhythm::pause_focus,
             rhythm::resume_focus,
             rhythm::stop_focus,
-            list_reminders,
-            create_reminder,
-            delete_reminder,
+            reminders::list_reminders,
+            reminders::create_reminder,
+            reminders::delete_reminder,
             list_calendar_events,
             create_calendar_event,
             delete_calendar_event,
