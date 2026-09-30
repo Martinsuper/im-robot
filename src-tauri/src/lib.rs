@@ -8,7 +8,7 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
-    process::{Child, Command},
+    process::Command,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
@@ -35,6 +35,7 @@ pub mod memory;
 pub mod providers;
 pub mod settings;
 pub mod sync;
+pub mod tts;
 pub mod typing_activity;
 pub mod updates;
 pub use providers::{
@@ -48,6 +49,7 @@ pub use settings::{
     app_settings_path, persist_settings, read_api_key, read_settings, update_api_key, AiSettings,
     AppSettings,
 };
+pub use tts::{speak_local_text, stop_local_speech, text_for_speech, LocalTts};
 pub use updates::{
     check_for_updates, check_for_updates_extended, download_update_asset,
     sanitize_update_file_name, version_parts,
@@ -194,9 +196,6 @@ struct ChatRequests(Mutex<HashMap<String, Arc<AtomicBool>>>);
 
 #[derive(Default)]
 struct ChatContext(Mutex<Vec<ChatHistoryEntry>>);
-
-#[derive(Default)]
-struct LocalTts(Mutex<Option<Child>>);
 
 #[derive(Clone, Debug)]
 struct TextAttachment {
@@ -2271,91 +2270,6 @@ fn get_bubble_chat_history(
     Ok(entries)
 }
 
-fn stop_local_tts(tts: &LocalTts) -> Result<(), String> {
-    let mut active = tts
-        .0
-        .lock()
-        .map_err(|_| "无法读取本地朗读状态".to_string())?;
-    if let Some(mut child) = active.take() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    Ok(())
-}
-
-fn is_emoji_component(character: char) -> bool {
-    matches!(
-        character as u32,
-        0x1F1E6..=0x1F1FF
-            | 0x1F300..=0x1FAFF
-            | 0x2300..=0x23FF
-            | 0x2600..=0x27BF
-            | 0x2B00..=0x2BFF
-            | 0xFE0E..=0xFE0F
-            | 0x200D
-            | 0x20E3
-    )
-}
-
-fn text_for_speech(text: &str) -> String {
-    text.chars()
-        .filter(|character| !is_emoji_component(*character))
-        .collect::<String>()
-}
-
-fn spawn_local_tts(text: &str) -> Result<Child, String> {
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("say")
-            .arg("--")
-            .arg(text)
-            .spawn()
-            .map_err(|error| format!("无法启动 macOS 本地朗读：{error}"))
-    }
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Add-Type -AssemblyName System.Speech; $speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer; $speaker.Speak($env:PIKO_TTS_TEXT)",
-            ])
-            .env("PIKO_TTS_TEXT", text)
-            .spawn()
-            .map_err(|error| format!("无法启动 Windows 本地朗读：{error}"))
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("spd-say")
-            .arg("--")
-            .arg(text)
-            .spawn()
-            .map_err(|error| format!("无法启动 Linux 本地朗读，请安装 speech-dispatcher：{error}"))
-    }
-}
-
-#[tauri::command]
-fn speak_local_text(tts: State<'_, LocalTts>, text: String) -> Result<(), String> {
-    let text = text_for_speech(&text);
-    let text = text.trim();
-    if text.is_empty() {
-        return Err("没有可朗读的内容".to_string());
-    }
-    stop_local_tts(&tts)?;
-    let child = spawn_local_tts(text)?;
-    *tts.0
-        .lock()
-        .map_err(|_| "无法更新本地朗读状态".to_string())? = Some(child);
-    Ok(())
-}
-
-#[tauri::command]
-fn stop_local_speech(tts: State<'_, LocalTts>) -> Result<(), String> {
-    stop_local_tts(&tts)
-}
-
-#[tauri::command]
 fn list_reminders(app: AppHandle) -> Vec<Reminder> {
     let mut reminders = read_reminders(&app);
     reminders.sort_by_key(|reminder| reminder.due_at);
@@ -5041,8 +4955,8 @@ pub fn run() {
             list_chat_history,
             clear_chat_history,
             clear_chat_context,
-            speak_local_text,
-            stop_local_speech,
+            tts::speak_local_text,
+            tts::stop_local_speech,
             get_focus_state,
             get_typing_stats_today,
             get_work_rhythm_state,
