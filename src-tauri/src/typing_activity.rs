@@ -479,8 +479,8 @@ mod windows_keyboard_monitor {
     use windows::Win32::Foundation::{LPARAM, LRESULT, WAIT_OBJECT_0, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, MsgWaitForMultipleObjectsEx, PeekMessageW,
-        SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, HOOKPROC, MSG, MWMO_INPUTAVAILABLE,
-        PM_REMOVE, QS_ALLINPUT, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+        SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, MSG, MWMO_INPUTAVAILABLE, PM_REMOVE,
+        QS_ALLINPUT, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
     };
 
     /// WH_KEYBOARD_LL 的钩子回调没有 user_data 参数，用进程级指针传递 AppHandle。

@@ -26,7 +26,7 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
-use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::WasiCtxBuilder;
 
 // --- Module declarations for new features ---
@@ -1200,8 +1200,11 @@ fn execute_wasm_plugin(
 
     let engine = wasm_plugin_engine();
     let module = Module::from_file(engine, &module_path).map_err(|e| e.to_string())?;
-    let mut linker = Linker::<wasmtime_wasi::p1::WasiP1Ctx>::new(engine);
-    wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |ctx| ctx).map_err(|e| e.to_string())?;
+    // store 数据是 (WasiP1Ctx, StoreLimits) 元组：ResourceLimiter 必须从
+    // store 数据内部取（闭包返回的引用生命周期绑定在 &mut T 上）
+    let mut linker = Linker::<(wasmtime_wasi::p1::WasiP1Ctx, StoreLimits)>::new(engine);
+    wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |ctx| &mut ctx.0)
+        .map_err(|e| e.to_string())?;
     let plugin_id = package.manifest.id.clone();
     let manifest = package.manifest.clone();
 
@@ -1221,14 +1224,19 @@ fn execute_wasm_plugin(
         .stdout(stdout.clone())
         .stderr(stderr.clone())
         .build_p1();
-    let mut store = Store::new(engine, wasi);
-    let mut limits = StoreLimitsBuilder::new()
-        .memory_size(WASM_PLUGIN_MAX_MEMORY_BYTES)
-        .memories(1)
-        .tables(WASM_PLUGIN_MAX_TABLES)
-        .table_elements(WASM_PLUGIN_MAX_TABLE_ELEMENTS)
-        .build();
-    store.limiter(move |_| &mut limits);
+    let mut store = Store::new(
+        engine,
+        (
+            wasi,
+            StoreLimitsBuilder::new()
+                .memory_size(WASM_PLUGIN_MAX_MEMORY_BYTES)
+                .memories(1)
+                .tables(WASM_PLUGIN_MAX_TABLES)
+                .table_elements(WASM_PLUGIN_MAX_TABLE_ELEMENTS)
+                .build(),
+        ),
+    );
+    store.limiter(|(_wasi, limits)| limits);
     store
         .set_fuel(WASM_PLUGIN_FUEL)
         .map_err(|e| e.to_string())?;
