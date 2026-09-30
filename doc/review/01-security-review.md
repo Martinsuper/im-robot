@@ -1,6 +1,7 @@
 # 安全审查
 
-> **修复记录（2026-09-29）**：S1 已修复（CSP 已设置、asset 协议整体禁用并移除 `protocol-asset` feature、HTML 预览迁移至独立 `preview` 自定义协议并带专属 CSP）；S2 已修复（保存对话框改由后端弹出，注入脚本无法再绕过对话框直接写盘）；S3 已修复（HTTPS 强制、文件名消毒、扩展名白名单、流式下载 + 512MB 上限）；S4 已修复（fuel 计量 20M 指令 + StoreLimitsBuilder 64MB 内存上限 + 移入 spawn_blocking）。S5 待处理。
+> **修复记录（2026-09-29）**：S1 已修复（CSP 已设置、asset 协议整体禁用并移除 `protocol-asset` feature、HTML 预览迁移至独立 `preview` 自定义协议并带专属 CSP）；S2 已修复（保存对话框改由后端弹出，注入脚本无法再绕过对话框直接写盘）；S3 已修复（HTTPS 强制、文件名消毒、扩展名白名单、流式下载 + 512MB 上限）；S4 已修复（fuel 计量 20M 指令 + StoreLimitsBuilder 64MB 内存上限 + 移入 spawn_blocking）。
+> **S5 已修复（2026-09-30）**：Windows 用 windows crate 的 WH_KEYBOARD_LL 钩子替换 rdev——监控线程带 250ms 非阻塞消息泵，暂停感知时真正 UnhookWindowsHookEx、恢复后自动重装；rdev 移至 unix 专属依赖，Windows 包不再含其代码；CI 新增 rust-windows job，Windows 专属代码首次获得编译与测试验证（此前 Linux CI 完全不覆盖）。
 > 注意：本机缺少 Windows SDK 无法本地编译，Rust 改动需 CI 验证。
 
 ## 1. 威胁模型前提

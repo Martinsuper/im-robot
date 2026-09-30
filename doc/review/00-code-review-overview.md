@@ -1,8 +1,9 @@
 # Piko 代码审查总览
 
-> **修复状态（2026-09-29）**：阶段一"止血"已全部完成，阶段二"缺陷修复"已完成除性能打磨外的主体。
-> 已修复项在下方总表中以 ✅ 标注。Rust 侧改动因本机缺少 Windows SDK 无法本地编译，需以 CI（`cargo check` / `clippy -D warnings` / `cargo test`）结果为准。
-> 详见各分册中的「修复记录」小节。
+> **修复状态（2026-09-30）**：阶段一、二全部完成并经 CI（linux + windows 双平台）验证全绿；
+> 阶段三重构已启动：F2 完成 settings 状态合并（useAppSettings），B1 完成 settings.rs 模块拆分（lib.rs 6960→6690 行，已建立逐模块抽取模式）；
+> 另完成 F7 死代码清理（-1306 行）与 S5 Windows 键盘钩子改造（可随暂停感知卸载，附带新增 rust-windows CI job）。
+> 剩余：F2 逐 tab 抽取、B1 其余 9 个模块、B4 thiserror 迁移。详见各分册「修复记录」。
 
 ## 1. 审查范围与方法
 
@@ -34,15 +35,15 @@
 | S2 | 安全 | 高 | ✅ | `save_generated_text` 无目录限制，可写任意路径 | [01-安全](01-security-review.md) |
 | S3 | 安全 | 高 | ✅ | `download_update_asset` 路径未消毒且下载内容无校验 | [01-安全](01-security-review.md) |
 | S4 | 安全 | 中 | ✅ | WASM 插件无 fuel/epoch/内存限制，死循环插件永久挂死 tokio worker | [01-安全](01-security-review.md) |
-| S5 | 安全 | 中 | ⬜ | 全局键盘钩子启动即安装、无法卸载，隐私与杀软误报风险 | [01-安全](01-security-review.md) |
+| S5 | 安全 | 中 | ✅ | 全局键盘钩子启动即安装、无法卸载，隐私与杀软误报风险 | [01-安全](01-security-review.md) |
 | F1 | 前端 | 高 | ✅ | `useTauriEventSubscription` 每次渲染重订阅，且存在监听器永久泄漏竞态 | [02-前端](02-frontend-review.md) |
-| F2 | 前端 | 高 | ⬜ | `PanelWindow.tsx` 1448 行、45+ useState 的上帝组件 | [02-前端](02-frontend-review.md) |
+| F2 | 前端 | 高 | ◐ | `PanelWindow.tsx` 1448 行、45+ useState 的上帝组件（settings 已合并为 useAppSettings） | [02-前端](02-frontend-review.md) |
 | F3 | 前端 | 高 | ✅ | 全库 100 处 `runCommand` 零 `.catch`，大量 unhandled rejection 与静默吞错 | [02-前端](02-frontend-review.md) |
 | F4 | 前端 | 中 | ✅ | listen 清理用 `mountedRef` 条件跳过 dispose；多个 timer/防抖未清理 | [02-前端](02-frontend-review.md) |
 | F5 | 前端 | 中 | ✅ | PetDomainContext 快照挂载后永不更新；同窗口事件双通道重复 setState | [02-前端](02-frontend-review.md) |
 | F6 | 前端 | 中 | ⬜ | i18n 仅 Onboarding 接入，其余 UI 硬编码中文，三份 locale 严重脱节 | [02-前端](02-frontend-review.md) |
-| F7 | 前端 | 中 | ◐ | 约 1300 行死代码（已删 useTauriEventSubscriptions；optimization/outfit 待删） | [02-前端](02-frontend-review.md) |
-| B1 | 后端 | 高 | ⬜ | `lib.rs` 6719 行混杂 13 个领域、71 个 command | [03-后端](03-backend-review.md) |
+| F7 | 前端 | 中 | ✅ | 约 1300 行死代码（pet/optimization、pet/outfit、useTauriEventSubscriptions） | [02-前端](02-frontend-review.md) |
+| B1 | 后端 | 高 | ◐ | `lib.rs` 6719 行混杂 13 个领域、71 个 command（settings.rs 已拆出） | [03-后端](03-backend-review.md) |
 | B2 | 后端 | 中 | ✅ | async `stream_chat` 中同步调用 rusqlite/文件 I/O，零 `spawn_blocking` | [03-后端](03-backend-review.md) |
 | B3 | 后端 | 中 | ✅ | 9+ 个轮询线程每 1-2 秒重读 settings.json（每 2 秒至少 3 次） | [03-后端](03-backend-review.md) |
 | B4 | 后端 | 中 | ⬜ | 错误全部为 String（141 处），`persist_settings` 静默吞错，`init_memory_db` 失败直接崩溃 | [03-后端](03-backend-review.md) |

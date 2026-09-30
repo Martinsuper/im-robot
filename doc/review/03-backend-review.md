@@ -1,6 +1,6 @@
 # 后端审查（src-tauri/）
 
-> **修复记录（2026-09-29）**：B2 已修复（`MemoryDb`/`CandidateCache` 改为 `Arc` 管理，`build_context`/`auto_capture_from_chat`/`append_chat_history`/插件执行全部移入 `spawn_blocking`）；B3 已修复（settings 进程内 mtime 缓存，读路径命中缓存不再读盘，写盘成功同步缓存/失败失效）。B1（lib.rs 拆分）、B4（thiserror 错误体系）待处理。本机缺少 Windows SDK 无法本地编译，需 CI 验证。
+> **修复记录（2026-09-29）**：B2 已修复（`MemoryDb`/`CandidateCache` 改为 `Arc` 管理，`build_context`/`auto_capture_from_chat`/`append_chat_history`/插件执行全部移入 `spawn_blocking`）；B3 已修复（settings 进程内 mtime 缓存，读路径命中缓存不再读盘，写盘成功同步缓存/失败失效）。B1 已启动（2026-09-30）：settings.rs 模块（类型+缓存+keyring）已拆出并经双平台 CI 验证，其余模块按同一模式逐个抽取。B4（thiserror 错误体系）待处理。
 
 技术栈：Tauri 2 + Rust。全后端共 11307 行，以下问题均给出 `file:line` 证据。安全问题见 [01-安全](01-security-review.md)，本篇聚焦结构与工程质量。
 
