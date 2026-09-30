@@ -61,6 +61,17 @@ struct BubbleSize {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AiSettingsInput {
+    provider: String,
+    base_url: String,
+    model: String,
+    temperature: f32,
+    timeout_seconds: u64,
+    api_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ChatStartInput {
     request_id: String,
     prompt: String,
