@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::{Cursor, Write},
+    io::Cursor,
     path::{Path, PathBuf},
     process::{Child, Command},
     sync::{
@@ -2230,6 +2230,7 @@ fn screen_capture_permission_status() -> String {
     }
 }
 
+#[tauri::command]
 fn list_chat_history(app: AppHandle) -> Vec<ChatHistoryEntry> {
     read_chat_history(&app)
 }

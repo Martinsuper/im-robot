@@ -1,6 +1,6 @@
 //! 更新检查与安装包下载：GitHub Releases 查询、版本比较与受控下载。
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use std::{fs, io::Write, path::Path, time::Duration};
 use tauri::{AppHandle, Manager};
@@ -250,7 +250,6 @@ pub async fn check_for_updates() -> Result<UpdateInfo, String> {
     })
 }
 
-#[tauri::command]
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
