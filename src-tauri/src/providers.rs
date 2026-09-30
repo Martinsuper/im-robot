@@ -4,7 +4,7 @@ use crate::settings::{read_api_key, AiSettings};
 use serde_json::{json, Value};
 use std::time::Duration;
 
-pub(crate) fn extract_chat_deltas(provider: &str, line: &str) -> Vec<String> {
+pub fn extract_chat_deltas(provider: &str, line: &str) -> Vec<String> {
     let Some(data) = line.strip_prefix("data:") else {
         return Vec::new();
     };
@@ -37,7 +37,7 @@ pub(crate) fn extract_chat_deltas(provider: &str, line: &str) -> Vec<String> {
     }
 }
 
-pub(crate) fn pet_companion_generation_url(settings: &AiSettings) -> Result<String, String> {
+pub fn pet_companion_generation_url(settings: &AiSettings) -> Result<String, String> {
     let base_url = normalize_base_url(&settings.base_url);
     match provider_kind(&settings.provider) {
         Some(ProviderKind::OpenAiCompatible) => Ok(format!("{base_url}/chat/completions")),
@@ -50,7 +50,7 @@ pub(crate) fn pet_companion_generation_url(settings: &AiSettings) -> Result<Stri
     }
 }
 
-pub(crate) fn chat_url(settings: &AiSettings) -> Result<String, String> {
+pub fn chat_url(settings: &AiSettings) -> Result<String, String> {
     let base_url = normalize_base_url(&settings.base_url);
     match provider_kind(&settings.provider) {
         Some(ProviderKind::OpenAiCompatible) => Ok(format!("{base_url}/chat/completions")),
@@ -63,11 +63,11 @@ pub(crate) fn chat_url(settings: &AiSettings) -> Result<String, String> {
     }
 }
 
-pub(crate) fn models_url(settings: &AiSettings) -> String {
+pub fn models_url(settings: &AiSettings) -> String {
     format!("{}/models", normalize_base_url(&settings.base_url))
 }
 
-pub(crate) fn connection_test_body(settings: &AiSettings) -> Result<Value, String> {
+pub fn connection_test_body(settings: &AiSettings) -> Result<Value, String> {
     match provider_kind(&settings.provider) {
         Some(ProviderKind::OpenAiCompatible) => Ok(json!({
             "model": settings.model,
@@ -88,7 +88,7 @@ pub(crate) fn connection_test_body(settings: &AiSettings) -> Result<Value, Strin
     }
 }
 
-pub(crate) async fn send_checked_request(
+pub async fn send_checked_request(
     request: reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, String> {
     let response = request
@@ -113,11 +113,11 @@ pub(crate) async fn send_checked_request(
     }
 }
 
-pub(crate) fn is_local_provider(provider: &str) -> bool {
+pub fn is_local_provider(provider: &str) -> bool {
     matches!(provider, "lmstudio" | "openai-compatible")
 }
 
-pub(crate) fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
+pub fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
     if provider_kind(&settings.provider).is_none() {
         return Err("不支持的模型服务类型".to_string());
     }
@@ -136,7 +136,7 @@ pub(crate) fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> 
     Ok(())
 }
 
-pub(crate) fn should_bypass_system_proxy(base_url: &str) -> bool {
+pub fn should_bypass_system_proxy(base_url: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(base_url) else {
         return false;
     };
@@ -154,7 +154,7 @@ pub(crate) fn should_bypass_system_proxy(base_url: &str) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
-pub(crate) fn http_client(settings: &AiSettings) -> Result<reqwest::Client, String> {
+pub fn http_client(settings: &AiSettings) -> Result<reqwest::Client, String> {
     let mut builder =
         reqwest::Client::builder().timeout(Duration::from_secs(settings.timeout_seconds));
     if should_bypass_system_proxy(&settings.base_url) {
@@ -163,7 +163,7 @@ pub(crate) fn http_client(settings: &AiSettings) -> Result<reqwest::Client, Stri
     builder.build().map_err(|error| error.to_string())
 }
 
-pub(crate) fn request_builder(
+pub fn request_builder(
     client: &reqwest::Client,
     settings: &AiSettings,
     method: reqwest::Method,
@@ -188,18 +188,18 @@ pub(crate) fn request_builder(
     }
 }
 
-pub(crate) fn normalize_base_url(base_url: &str) -> String {
+pub fn normalize_base_url(base_url: &str) -> String {
     base_url.trim().trim_end_matches('/').to_string()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ProviderKind {
+pub enum ProviderKind {
     OpenAiCompatible,
     Anthropic,
     Gemini,
 }
 
-pub(crate) fn provider_kind(provider: &str) -> Option<ProviderKind> {
+pub fn provider_kind(provider: &str) -> Option<ProviderKind> {
     match provider {
         "openai-compatible" | "deepseek" | "dashscope" | "lmstudio" => {
             Some(ProviderKind::OpenAiCompatible)
@@ -210,7 +210,7 @@ pub(crate) fn provider_kind(provider: &str) -> Option<ProviderKind> {
     }
 }
 
-pub(crate) fn update_openai_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulator>) {
+pub fn update_openai_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulator>) {
     let Some(data) = line.strip_prefix("data:") else {
         return;
     };
@@ -243,7 +243,7 @@ pub(crate) fn update_openai_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCal
     }
 }
 
-pub(crate) fn update_anthropic_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulator>) {
+pub fn update_anthropic_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulator>) {
     let Some(data) = line.strip_prefix("data:") else {
         return;
     };
@@ -287,7 +287,7 @@ pub(crate) fn update_anthropic_tool_calls(line: &str, calls: &mut Vec<OpenAiTool
     }
 }
 
-pub(crate) fn update_gemini_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulator>) {
+pub fn update_gemini_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCallAccumulator>) {
     let Some(data) = line.strip_prefix("data:") else {
         return;
     };
@@ -316,7 +316,7 @@ pub(crate) fn update_gemini_tool_calls(line: &str, calls: &mut Vec<OpenAiToolCal
     }
 }
 
-pub(crate) fn update_provider_tool_calls(
+pub fn update_provider_tool_calls(
     provider: &str,
     line: &str,
     calls: &mut Vec<OpenAiToolCallAccumulator>,
@@ -329,7 +329,7 @@ pub(crate) fn update_provider_tool_calls(
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct OpenAiToolCallAccumulator {
+pub struct OpenAiToolCallAccumulator {
     stream_index: usize,
     id: String,
     name: String,
@@ -338,6 +338,6 @@ pub(crate) struct OpenAiToolCallAccumulator {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ModelInfo {
+pub struct ModelInfo {
     id: String,
 }
