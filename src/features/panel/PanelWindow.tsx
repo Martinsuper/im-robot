@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -33,7 +33,6 @@ import {
   PetSprite,
   clearCustomPetImagePath,
   countCalendarConflicts,
-  defaultAiSettings,
   defaultAppSettings,
   defaultCalendarEndTime,
   defaultCalendarStartTime,
@@ -60,6 +59,7 @@ import {
   usePetVisualStyle,
 } from "../app/appShared";
 import { isTauriRuntime, runCommand, runCommandAndRefresh, runCommandQuiet, reportCommandError } from "../app/appRuntime";
+import { useAppSettings } from "./useAppSettings";
 
 type ChatHistoryFilter = "all" | "attachment" | "screenshot" | "code" | "link" | "long";
 
@@ -112,10 +112,26 @@ function chatHistoryMatchesSearch(entry: ChatHistoryEntry, search: string) {
 
 export function PanelWindow() {
   const [panelTab, setPanelTab] = useState<PanelTab>("companion");
-  const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
-  const [aiSettings, setAiSettings] = useState<AiSettings>(defaultAiSettings);
-  const [companionName, setCompanionName] = useState("Piko");
-  const [theme, setTheme] = useState<Theme>("sage");
+  const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
+  const [appSettings, setAppSettings] = useAppSettings(
+    useCallback((loaded: AppSettings) => {
+      setConnectionStatus(loaded.hasApiKey ? "已配置密钥" : "等待测试");
+    }, []),
+  );
+  const {
+    quietMode,
+    companionName,
+    theme,
+    sensingPaused,
+    breakRemindersEnabled,
+    breakReminderIntervalMinutes,
+    breakReminderCooldownMinutes,
+    breakReminderQuietHoursEnabled,
+    breakReminderQuietHoursStart,
+    breakReminderQuietHoursEnd,
+    htmlPreviewEnabled,
+  } = appSettings;
+  const aiSettings = appSettings.ai;
   const petVisualStyle = usePetVisualStyle();
   const live2dModelId = useLive2DModelId();
   const customPetImagePath = useCustomPetImagePath();
@@ -125,14 +141,6 @@ export function PanelWindow() {
   const disabledLive2DModelOptions = live2dModelOptions.filter((option) => !option.enabled);
   const live2dModelLabel =
     live2dModelOptions.find((option) => option.value === live2dModelId)?.label ?? enabledLive2DModelOptions[0]?.label;
-  const [sensingPaused, setSensingPaused] = useState(false);
-  const [breakRemindersEnabled, setBreakRemindersEnabled] = useState(true);
-  const [breakReminderIntervalMinutes, setBreakReminderIntervalMinutes] = useState(45);
-  const [breakReminderCooldownMinutes, setBreakReminderCooldownMinutes] = useState(30);
-  const [breakReminderQuietHoursEnabled, setBreakReminderQuietHoursEnabled] = useState(false);
-  const [breakReminderQuietHoursStart, setBreakReminderQuietHoursStart] = useState("22:00");
-  const [breakReminderQuietHoursEnd, setBreakReminderQuietHoursEnd] = useState("08:00");
-  const [htmlPreviewEnabled, setHtmlPreviewEnabled] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [preferencesStatus, setPreferencesStatus] = useState("");
   const [notificationPermission, setNotificationPermission] = useState("按需申请");
@@ -142,7 +150,6 @@ export function PanelWindow() {
   const [downloadedUpdatePath, setDownloadedUpdatePath] = useState("");
   const [isDownloadingUpdate, setIsDownloadingUpdate] = useState(false);
   const [apiKey, setApiKey] = useState("");
-  const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
   const [isTesting, setIsTesting] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState("");
@@ -263,21 +270,7 @@ export function PanelWindow() {
   }
 
   useEffect(() => {
-    void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
-      setQuietMode(settings.quietMode);
-      setAiSettings(settings.ai);
-      setCompanionName(settings.companionName);
-      setTheme(settings.theme);
-      setSensingPaused(settings.sensingPaused);
-      setBreakRemindersEnabled(settings.breakRemindersEnabled);
-      setBreakReminderIntervalMinutes(settings.breakReminderIntervalMinutes);
-      setBreakReminderCooldownMinutes(settings.breakReminderCooldownMinutes);
-      setBreakReminderQuietHoursEnabled(settings.breakReminderQuietHoursEnabled);
-      setBreakReminderQuietHoursStart(settings.breakReminderQuietHoursStart);
-      setBreakReminderQuietHoursEnd(settings.breakReminderQuietHoursEnd);
-      setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
-      setConnectionStatus(settings.hasApiKey ? "已配置密钥" : "等待测试");
-    }).catch(reportCommandError("get_settings"));
+    // 设置的加载与订阅由 useAppSettings 负责
     // loader 含 setState，放进微任务等价于挂载后的异步加载，
     // 避免 effect 内同步调用造成级联渲染。
     queueMicrotask(() => {
@@ -326,20 +319,7 @@ export function PanelWindow() {
     const unlistenFocus = listen<FocusSnapshot>("focus-updated", (event) => {
       setFocusState(event.payload);
     });
-    const unlistenSettings = listen<AppSettings>("settings-updated", (event) => {
-      setQuietMode(event.payload.quietMode);
-      setAiSettings(event.payload.ai);
-      setCompanionName(event.payload.companionName);
-      setTheme(event.payload.theme);
-      setSensingPaused(event.payload.sensingPaused);
-      setBreakRemindersEnabled(event.payload.breakRemindersEnabled);
-      setBreakReminderIntervalMinutes(event.payload.breakReminderIntervalMinutes);
-      setBreakReminderCooldownMinutes(event.payload.breakReminderCooldownMinutes);
-      setBreakReminderQuietHoursEnabled(event.payload.breakReminderQuietHoursEnabled);
-      setBreakReminderQuietHoursStart(event.payload.breakReminderQuietHoursStart);
-      setBreakReminderQuietHoursEnd(event.payload.breakReminderQuietHoursEnd);
-      setHtmlPreviewEnabled(event.payload.htmlPreviewEnabled);
-    });
+    // settings-updated 订阅由 useAppSettings 负责
     // focus-updated 事件已推送状态，无需每秒轮询
     const refreshInteraction = () => {
       setInteractionStats(loadInteractionStats());
@@ -357,7 +337,6 @@ export function PanelWindow() {
       void unlistenWorkRhythm.then((dispose) => dispose());
       void unlistenTyping.then((dispose) => dispose());
       void unlistenFocus.then((dispose) => dispose());
-      void unlistenSettings.then((dispose) => dispose());
       void unlistenInteraction.then((dispose) => dispose());
       void unlistenGrowth.then((dispose) => dispose());
       window.removeEventListener("storage", refreshFromStorage);
@@ -385,21 +364,24 @@ export function PanelWindow() {
   }
 
   function updateQuietMode(mode: QuietMode) {
-    setQuietMode(mode);
+    setAppSettings((current) => ({ ...current, quietMode: mode }));
     runCommandQuiet("update_quiet_mode", { quietMode: mode });
   }
 
   function updateAiField<Key extends keyof AiSettings>(key: Key, value: AiSettings[Key]) {
-    setAiSettings((current) => ({ ...current, [key]: value }));
+    setAppSettings((current) => ({ ...current, ai: { ...current.ai, [key]: value } }));
   }
 
   function updateProvider(provider: string) {
     const preset = providerOptions.find((option) => option.value === provider);
-    setAiSettings((current) => ({
+    setAppSettings((current) => ({
       ...current,
-      provider,
-      baseUrl: preset?.baseUrl ?? current.baseUrl,
-      model: preset?.model ?? current.model,
+      ai: {
+        ...current.ai,
+        provider,
+        baseUrl: preset?.baseUrl ?? current.ai.baseUrl,
+        model: preset?.model ?? current.ai.model,
+      },
     }));
   }
 
@@ -409,7 +391,7 @@ export function PanelWindow() {
       { input: { ...aiSettings, apiKey: apiKey || undefined } },
       { ...defaultAppSettings, ai: aiSettings },
     );
-    setAiSettings(settings.ai);
+    setAppSettings((current) => ({ ...current, ai: settings.ai }));
     setApiKey("");
     return settings;
   }
@@ -566,9 +548,12 @@ export function PanelWindow() {
         { input: { companionName, theme, sensingPaused } },
         { ...defaultAppSettings, companionName, theme, sensingPaused, ai: aiSettings },
       );
-      setCompanionName(settings.companionName);
-      setTheme(settings.theme);
-      setSensingPaused(settings.sensingPaused);
+      setAppSettings((current) => ({
+        ...current,
+        companionName: settings.companionName,
+        theme: settings.theme,
+        sensingPaused: settings.sensingPaused,
+      }));
       setPreferencesStatus("已保存");
     } catch (error) {
       setPreferencesStatus(String(error));
@@ -601,12 +586,15 @@ export function PanelWindow() {
           ai: aiSettings,
         },
       );
-      setBreakRemindersEnabled(settings.breakRemindersEnabled);
-      setBreakReminderIntervalMinutes(settings.breakReminderIntervalMinutes);
-      setBreakReminderCooldownMinutes(settings.breakReminderCooldownMinutes);
-      setBreakReminderQuietHoursEnabled(settings.breakReminderQuietHoursEnabled);
-      setBreakReminderQuietHoursStart(settings.breakReminderQuietHoursStart);
-      setBreakReminderQuietHoursEnd(settings.breakReminderQuietHoursEnd);
+      setAppSettings((current) => ({
+        ...current,
+        breakRemindersEnabled: settings.breakRemindersEnabled,
+        breakReminderIntervalMinutes: settings.breakReminderIntervalMinutes,
+        breakReminderCooldownMinutes: settings.breakReminderCooldownMinutes,
+        breakReminderQuietHoursEnabled: settings.breakReminderQuietHoursEnabled,
+        breakReminderQuietHoursStart: settings.breakReminderQuietHoursStart,
+        breakReminderQuietHoursEnd: settings.breakReminderQuietHoursEnd,
+      }));
       setPreferencesStatus("休息提醒设置已保存");
     } catch (error) {
       setPreferencesStatus(String(error));
@@ -620,7 +608,7 @@ export function PanelWindow() {
         { enabled },
         { ...defaultAppSettings, htmlPreviewEnabled: enabled, ai: aiSettings },
       );
-      setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
+      setAppSettings((current) => ({ ...current, htmlPreviewEnabled: settings.htmlPreviewEnabled }));
       setPreferencesStatus("HTML 预览插件已更新");
     } catch (error) {
       setPreferencesStatus(`HTML 预览插件更新失败：${String(error)}`);
@@ -911,12 +899,12 @@ export function PanelWindow() {
             <input
               value={companionName}
               maxLength={24}
-              onChange={(event) => setCompanionName(event.currentTarget.value)}
+              onChange={(event) => setAppSettings((current) => ({ ...current, companionName: event.currentTarget.value }))}
             />
           </label>
           <label>
             <span>主题色</span>
-            <select value={theme} onChange={(event) => setTheme(event.currentTarget.value as Theme)}>
+            <select value={theme} onChange={(event) => setAppSettings((current) => ({ ...current, theme: event.currentTarget.value as Theme }))}>
               <option value="sage">鼠尾草绿</option>
               <option value="blue">湖水蓝</option>
               <option value="peach">暖桃色</option>
@@ -966,7 +954,7 @@ export function PanelWindow() {
             <input
               type="checkbox"
               checked={!sensingPaused}
-              onChange={(event) => setSensingPaused(!event.currentTarget.checked)}
+              onChange={(event) => setAppSettings((current) => ({ ...current, sensingPaused: !event.currentTarget.checked }))}
             />
             <span>主动感知</span>
           </label>
@@ -1021,7 +1009,7 @@ export function PanelWindow() {
             <input
               type="checkbox"
               checked={breakRemindersEnabled}
-              onChange={(event) => setBreakRemindersEnabled(event.currentTarget.checked)}
+              onChange={(event) => setAppSettings((current) => ({ ...current, breakRemindersEnabled: event.currentTarget.checked }))}
             />
             <span>开启休息提醒</span>
           </label>
@@ -1034,7 +1022,7 @@ export function PanelWindow() {
                 max="240"
                 step="5"
                 value={breakReminderIntervalMinutes}
-                onChange={(event) => setBreakReminderIntervalMinutes(Number(event.currentTarget.value))}
+                onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderIntervalMinutes: Number(event.currentTarget.value) }))}
               />
             </label>
             <label>
@@ -1045,7 +1033,7 @@ export function PanelWindow() {
                 max="240"
                 step="5"
                 value={breakReminderCooldownMinutes}
-                onChange={(event) => setBreakReminderCooldownMinutes(Number(event.currentTarget.value))}
+                onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderCooldownMinutes: Number(event.currentTarget.value) }))}
               />
             </label>
           </div>
@@ -1053,7 +1041,7 @@ export function PanelWindow() {
             <input
               type="checkbox"
               checked={breakReminderQuietHoursEnabled}
-              onChange={(event) => setBreakReminderQuietHoursEnabled(event.currentTarget.checked)}
+              onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderQuietHoursEnabled: event.currentTarget.checked }))}
             />
             <span>启用静默时段</span>
           </label>
@@ -1063,7 +1051,7 @@ export function PanelWindow() {
               <input
                 type="time"
                 value={breakReminderQuietHoursStart}
-                onChange={(event) => setBreakReminderQuietHoursStart(event.currentTarget.value)}
+                onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderQuietHoursStart: event.currentTarget.value }))}
               />
             </label>
             <label>
@@ -1071,7 +1059,7 @@ export function PanelWindow() {
               <input
                 type="time"
                 value={breakReminderQuietHoursEnd}
-                onChange={(event) => setBreakReminderQuietHoursEnd(event.currentTarget.value)}
+                onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderQuietHoursEnd: event.currentTarget.value }))}
               />
             </label>
           </div>
