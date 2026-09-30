@@ -1995,10 +1995,7 @@ fn persist_settings(app: &AppHandle, settings: &AppSettings) {
         *cache = None;
         return;
     }
-    if let Some(mtime) = fs::metadata(&path)
-        .and_then(|metadata| metadata.modified())
-        .ok()
-    {
+    if let Ok(mtime) = fs::metadata(&path).and_then(|metadata| metadata.modified()) {
         let mut cache = SETTINGS_CACHE
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -6027,7 +6024,16 @@ mod tests {
             "latest.json"
         );
         assert!(sanitize_update_file_name(Some("../../../../etc/passwd".to_string())).is_err());
-        assert!(sanitize_update_file_name(Some("C:\\Windows\\evil.exe".to_string())).is_err());
+        // Windows 上反斜杠是路径分隔符，file_name() 会提取出裸文件名（同样无法逃逸
+        // updates 目录）；Unix 上整串不是合法文件名，直接拒绝。
+        if cfg!(windows) {
+            assert_eq!(
+                sanitize_update_file_name(Some("C:\\Windows\\evil.exe".to_string())).unwrap(),
+                "evil.exe"
+            );
+        } else {
+            assert!(sanitize_update_file_name(Some("C:\\Windows\\evil.exe".to_string())).is_err());
+        }
         assert!(sanitize_update_file_name(Some("payload.sh".to_string())).is_err());
         assert!(sanitize_update_file_name(Some("no-extension".to_string())).is_err());
         assert!(sanitize_update_file_name(Some("   ".to_string())).is_err());
@@ -6859,7 +6865,13 @@ mod tests {
 
         assert_eq!(draft.plugin_id, "piko.calendar");
         assert!(draft.summary.contains("项目评审"));
-        assert!(draft.summary.contains("2026-06-01 11:00"));
+        // 摘要按本地时区渲染，期望值同样做时区换算，保证跨时区可移植
+        let expected_start = chrono::DateTime::parse_from_rfc3339("2026-06-01T11:00:00+08:00")
+            .unwrap()
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        assert!(draft.summary.contains(&expected_start));
     }
 
     #[test]
@@ -6899,10 +6911,20 @@ mod tests {
 
         assert_eq!(reminder_draft.tool_name, "delete_reminder");
         assert!(reminder_draft.summary.contains("提交周报"));
-        assert!(reminder_draft.summary.contains("2026-06-01 18:00"));
+        let expected_due = chrono::DateTime::parse_from_rfc3339("2026-06-01T18:00:00+08:00")
+            .unwrap()
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        assert!(reminder_draft.summary.contains(&expected_due));
         assert_eq!(calendar_draft.tool_name, "delete_event");
         assert!(calendar_draft.summary.contains("项目评审"));
-        assert!(calendar_draft.summary.contains("2026-06-01 11:00"));
+        let expected_start = chrono::DateTime::parse_from_rfc3339("2026-06-01T11:00:00+08:00")
+            .unwrap()
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        assert!(calendar_draft.summary.contains(&expected_start));
     }
 
     #[test]
