@@ -5606,6 +5606,11 @@ fn sanitize_update_file_name(raw: Option<String>) -> Result<String, String> {
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty() && *name != "." && *name != "..")
         .ok_or_else(|| "更新包文件名无效".to_string())?;
+    // Unix 上反斜杠不是路径分隔符（file_name() 会原样保留），为让行为跨平台
+    // 一致，名字里残留任何分隔符一律拒绝——合法的 GitHub 资产名不会包含它们。
+    if name.contains('\\') || name.contains('/') {
+        return Err("更新包文件名无效".to_string());
+    }
     let extension = name
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
