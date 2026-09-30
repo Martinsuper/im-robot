@@ -1,6 +1,7 @@
 //! AI 提供方适配层：URL 构造、HTTP 客户端、鉴权、SSE 增量解析与工具调用累积。
 
 use crate::settings::{read_api_key, AiSettings};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -330,14 +331,14 @@ pub fn update_provider_tool_calls(
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OpenAiToolCallAccumulator {
-    stream_index: usize,
-    id: String,
-    name: String,
-    arguments: String,
+    pub stream_index: usize,
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
-    id: String,
+    pub id: String,
 }
