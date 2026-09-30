@@ -77,7 +77,9 @@ pub fn speak_local_text(tts: State<'_, LocalTts>, text: String) -> Result<(), St
     }
     stop_local_tts(&tts)?;
     let child = spawn_local_tts(text)?;
-    *tts.0
+    let active: &LocalTts = &tts;
+    *active
+        .0
         .lock()
         .map_err(|_| "无法更新本地朗读状态".to_string())? = Some(child);
     Ok(())
@@ -88,6 +90,5 @@ pub fn stop_local_speech(tts: State<'_, LocalTts>) -> Result<(), String> {
     stop_local_tts(&tts)
 }
 
-#[tauri::command]
 #[derive(Default)]
 pub struct LocalTts(Mutex<Option<Child>>);

@@ -2270,6 +2270,7 @@ fn get_bubble_chat_history(
     Ok(entries)
 }
 
+#[tauri::command]
 fn list_reminders(app: AppHandle) -> Vec<Reminder> {
     let mut reminders = read_reminders(&app);
     reminders.sort_by_key(|reminder| reminder.due_at);
