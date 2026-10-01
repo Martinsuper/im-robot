@@ -1,7 +1,11 @@
 # 前端审查（src/）
 
 > **修复记录（2026-09-29）**：F1 已修复（hook 重写：handler 走 ref、deps 只留 eventName、无条件 dispose，附 4 个验收测试）；F3 已修复（新增 `runCommandQuiet` / `reportCommandError`，全部 fire-and-forget 与 `.then` 链补齐错误上报，MemoryCenter 吞错改为展示 `error` 状态）；F4 已修复（mountedRef 守卫全部改为无条件 dispose、scheduleFidget 重写为可取消的自续链、PanelWindow 每秒轮询删除、MemoryCenter 防抖清理、PetWindow 注意脉冲改推导状态）；F5 已修复（PetDomainContext 快照改为事件驱动刷新，修复 bondTier 冻结；MemoryCenter 搜索加请求序号防竞态）。其余 16 个 ESLint error（react-hooks v7 set-state-in-effect / purity / refs）已全部清零。
-> F2 第一步已完成（2026-09-30）：12 个 settings useState 合并为 useAppSettings hook，删除两份重复的 11-setter 同步块；逐 tab 抽取待继续。F7 已完成（2026-09-30）：pet/optimization、pet/outfit 共 1306 行删除。F6、同窗口事件双通道待处理。
+> F2 已完成（2026-10-01）：12 个 settings useState 合并为 useAppSettings hook 后，History/Reminders/Calendar/Settings
+四个大 tab 抽取为 src/features/panel/sections/ 组件（HistorySection 143 行、RemindersSection 131 行、
+CalendarSection 114 行、SettingsSection 394 行含 5 个子组件 + chatHistoryFilters.ts 50 行），
+PanelWindow 1423→954 行、render JSX 减 57%，状态与 handler 保留在 PanelWindow，DOM/选择器不变，
+tsc/eslint/75 单测/build/e2e 全绿。companion 与 about 的小段（<60 行/段）未抽，收益为负。F7 已完成。F6、双通道待处理。
 
 技术栈：React 19 + TypeScript（strict 全开）+ Vite。以下问题均给出 `file:line` 证据。
 
