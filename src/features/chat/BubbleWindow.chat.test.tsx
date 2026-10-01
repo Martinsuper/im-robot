@@ -331,7 +331,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     expect(screen.queryByText("正在生成回复")).toBeNull();
   });
 
-  it("chat_start 被拒绝时关闭思考状态（已知源码问题：骨架未随失败隐藏）", async () => {
+  it("chat_start 被拒绝时隐藏骨架并展示连接失败消息", async () => {
     queueUuids(["req-err"]);
     runCommandMock.mockImplementation((command: string) => {
       if (command === "get_settings") {
@@ -352,11 +352,8 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     submitPrompt("触发失败");
     // catch 分支执行了 setIsThinking(false)：停止按钮被发送按钮替换
     await waitFor(() => expect(screen.queryByTitle("停止生成")).toBeNull());
-    // 已知源码问题（BubbleWindow.tsx sendPrompt 的 chat_start .catch）：
-    // 未调用 setShowReplySkeleton(false) / clearSkeletonHideTimer()，
-    // 骨架停留在"正在生成回复"，连接失败的错误消息被骨架遮挡无法展示。
-    // 修复后应改为断言：骨架消失且展示 /模型服务连接失败/。
-    expect(screen.getByText("正在生成回复")).toBeTruthy();
-    expect(screen.queryByText(/模型服务连接失败/)).toBeNull();
+    // 骨架隐藏、错误消息可见（chat_start .catch 完整复位生成态）
+    expect(screen.queryByText("正在生成回复")).toBeNull();
+    expect(screen.getByText(/模型服务连接失败/)).toBeTruthy();
   });
 });
