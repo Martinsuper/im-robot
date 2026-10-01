@@ -33,7 +33,7 @@ base64 = "0.22"
 tauri-plugin-dialog = "^2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = "0.4"
-wasmtime = "45"
+wasmtime = "46"
 wasmtime-wasi = "45"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
