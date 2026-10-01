@@ -108,7 +108,7 @@ pub fn speak_local_text(tts: State<'_, LocalTts>, text: String) -> Result<(), St
 
 #[tauri::command]
 pub fn stop_local_speech(tts: State<'_, LocalTts>) -> Result<(), String> {
-    stop_local_tts(&tts)
+    Ok(stop_local_tts(&tts)?)
 }
 
 #[derive(Default)]
