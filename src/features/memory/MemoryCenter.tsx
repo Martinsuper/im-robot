@@ -15,6 +15,7 @@ import {
 import { MemoryCard } from "./MemoryCard";
 import { MemoryDetail } from "./MemoryDetail";
 import { runCommandAndRefresh } from "../app/appRuntime";
+import { useTranslation } from "../i18n/I18nProvider";
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
@@ -23,6 +24,7 @@ function runCommand<T>(command: string, args?: Record<string, unknown>) {
 }
 
 export function MemoryCenter() {
+  const { t, locale } = useTranslation();
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [filterType, setFilterType] = useState<MemoryType | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -181,7 +183,7 @@ export function MemoryCenter() {
       await runCommandAndRefresh("delete_memory", { id }, [reloadVisibleMemories]);
       setError("");
     } catch {
-      setError("删除失败");
+      setError(t("memory.error.deleteFailed", "删除失败"));
     }
   }
 
@@ -189,7 +191,7 @@ export function MemoryCenter() {
     try {
       await runCommand("pin_memory", { id });
     } catch {
-      setError("置顶失败");
+      setError(t("memory.error.pinFailed", "置顶失败"));
     }
   }
 
@@ -197,7 +199,7 @@ export function MemoryCenter() {
     try {
       await runCommand("unpin_memory", { id });
     } catch {
-      setError("取消置顶失败");
+      setError(t("memory.error.unpinFailed", "取消置顶失败"));
     }
   }
 
@@ -211,19 +213,19 @@ export function MemoryCenter() {
       await runCommand("feedback_memory", { input });
       setError("");
     } catch {
-      setError("反馈提交失败");
+      setError(t("memory.error.feedbackFailed", "反馈提交失败"));
     }
   }
 
   async function handleClearAll() {
     if (memories.length === 0) return;
-    if (!confirm("确定要清除全部记忆吗？此操作不可撤销。")) return;
+    if (!confirm(t("memory.confirm.clearAll", "确定要清除全部记忆吗？此操作不可撤销。"))) return;
     setIsClearing(true);
     try {
       await runCommandAndRefresh("clear_memories", {}, [reloadVisibleMemories]);
       setError("");
     } catch {
-      setError("清除失败");
+      setError(t("memory.error.clearFailed", "清除失败"));
     } finally {
       setIsClearing(false);
     }
@@ -236,7 +238,7 @@ export function MemoryCenter() {
       await Promise.all([loadSummaries(), loadMemories()]);
       setError("");
     } catch {
-      setError("反思失败");
+      setError(t("memory.error.reflectFailed", "反思失败"));
     } finally {
       setIsReflecting(false);
     }
@@ -248,7 +250,7 @@ export function MemoryCenter() {
         input: { candidateId, confirmed: true },
       }, [loadPending, loadMemories]);
     } catch {
-      setError("确认失败");
+      setError(t("memory.error.confirmFailed", "确认失败"));
     }
   }
 
@@ -257,7 +259,7 @@ export function MemoryCenter() {
       await runCommand("reject_memory_candidate", { candidateId });
       await loadPending();
     } catch {
-      setError("拒绝失败");
+      setError(t("memory.error.rejectFailed", "拒绝失败"));
     }
   }
 
@@ -266,9 +268,9 @@ export function MemoryCenter() {
       const data = await runCommand<MemoryExport>("export_memories", {});
       const json = JSON.stringify(data, null, 2);
       await navigator.clipboard.writeText(json);
-      setError("已复制记忆导出到剪贴板");
+      setError(t("memory.export.copied", "已复制记忆导出到剪贴板"));
     } catch {
-      setError("导出失败");
+      setError(t("memory.error.exportFailed", "导出失败"));
     }
   }
 
@@ -277,7 +279,7 @@ export function MemoryCenter() {
       <div className="section-heading">
         <div>
           <p className="eyebrow">MEMORY CENTER</p>
-          <h2>记忆中心</h2>
+          <h2>{t("memory.title", "记忆中心")}</h2>
         </div>
         <div className="section-heading__actions">
           <select
@@ -289,27 +291,37 @@ export function MemoryCenter() {
           >
             {MEMORY_TYPE_OPTIONS.map(({ label, value }) => (
               <option key={value} value={value}>
-                {label}
+                {value === "all"
+                  ? t("memory.filter.all", label)
+                  : t(`memory.type.${value}`, label)}
               </option>
             ))}
           </select>
-          <button type="button" onClick={handleExport} title="导出记忆">
-            导出
+          <button
+            type="button"
+            onClick={handleExport}
+            title={t("memory.actions.exportTitle", "导出记忆")}
+          >
+            {t("memory.actions.export", "导出")}
           </button>
           <button
             type="button"
             onClick={handleReflectNow}
             disabled={isReflecting}
-            title="运行记忆反思"
+            title={t("memory.actions.reflectTitle", "运行记忆反思")}
           >
-            {isReflecting ? "反思中…" : "反思"}
+            {isReflecting
+              ? t("memory.actions.reflecting", "反思中…")
+              : t("memory.actions.reflect", "反思")}
           </button>
           <button
             type="button"
             onClick={handleClearAll}
             disabled={isClearing || memories.length === 0}
           >
-            {isClearing ? "清除中…" : "清除全部"}
+            {isClearing
+              ? t("memory.actions.clearing", "清除中…")
+              : t("memory.actions.clearAll", "清除全部")}
           </button>
         </div>
       </div>
@@ -319,9 +331,9 @@ export function MemoryCenter() {
         <button
           type="button"
           className={subView === "memories" ? "is-active" : ""}
-          onClick={() => setSubView("memories")}
-        >
-          记忆列表
+            onClick={() => setSubView("memories")}
+          >
+            {t("memory.tabs.memories", "记忆列表")}
         </button>
         <button
           type="button"
@@ -331,7 +343,10 @@ export function MemoryCenter() {
             void loadPending();
           }}
         >
-          待确认 ({pendingCandidates.length})
+          {t("memory.tabs.pending", "待确认 ({count})").replace(
+            "{count}",
+            String(pendingCandidates.length),
+          )}
         </button>
         <button
           type="button"
@@ -341,7 +356,7 @@ export function MemoryCenter() {
             void loadSummaries();
           }}
         >
-          反思总结
+          {t("memory.tabs.reflections", "反思总结")}
         </button>
       </nav>
 
@@ -352,7 +367,7 @@ export function MemoryCenter() {
             <input
               type="text"
               className="memory-search__input"
-              placeholder="搜索记忆…"
+              placeholder={t("memory.search.placeholder", "搜索记忆…")}
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.currentTarget.value);
@@ -385,7 +400,7 @@ export function MemoryCenter() {
                 void loadMemories();
               }}
             >
-              全部
+              {t("memory.view.all", "全部")}
             </button>
             <button
               type="button"
@@ -395,11 +410,14 @@ export function MemoryCenter() {
                 void loadRecent();
               }}
             >
-              最近
+              {t("memory.view.recent", "最近")}
             </button>
             {view === "search" && (
               <span className="memory-search-info">
-                找到 {memories.length} 条结果
+                {t("memory.search.results", "找到 {count} 条结果").replace(
+                  "{count}",
+                  String(memories.length),
+                )}
               </span>
             )}
           </div>
@@ -409,8 +427,14 @@ export function MemoryCenter() {
           {memories.length === 0 ? (
             <p className="empty-state">
               {view === "search"
-                ? `没有找到与"${searchQuery}"相关的记忆。`
-                : "还没有记忆。Piko 会在和你互动时逐渐记住重要的事。"}
+                ? t("memory.empty.searchNoResult", "没有找到与\"{query}\"相关的记忆。").replace(
+                    "{query}",
+                    searchQuery,
+                  )
+                : t(
+                    "memory.empty.noMemories",
+                    "还没有记忆。Piko 会在和你互动时逐渐记住重要的事。",
+                  )}
             </p>
           ) : (
             <div className="memory-list">
@@ -433,16 +457,26 @@ export function MemoryCenter() {
       {subView === "pending" && (
         <>
           {pendingCandidates.length === 0 ? (
-            <p className="empty-state">没有待确认的记忆推断。</p>
+            <p className="empty-state">{t("memory.empty.noPending", "没有待确认的记忆推断。")}</p>
           ) : (
             <div className="memory-list">
               {pendingCandidates.map((cand) => (
                 <div key={cand.id} className="memory-card memory-card--pending">
                   <div className="memory-card__header">
                     <span className={`memory-type-badge memory-type-badge--${cand.memoryType}`}>
-                      待确认 · {cand.memoryType === "profile" ? "用户档案" : "事件记忆"}
+                      {t("memory.pending.badge", "待确认 · {type}").replace(
+                        "{type}",
+                        cand.memoryType === "profile"
+                          ? t("memory.type.profile", "用户档案")
+                          : t("memory.type.event", "事件记忆"),
+                      )}
                     </span>
-                    <span className="memory-card__source">置信度 {(cand.confidence * 100).toFixed(0)}%</span>
+                    <span className="memory-card__source">
+                      {t("memory.pending.confidence", "置信度 {value}%").replace(
+                        "{value}",
+                        (cand.confidence * 100).toFixed(0),
+                      )}
+                    </span>
                   </div>
                   <h3 className="memory-card__title">{cand.title}</h3>
                   <p className="memory-card__content">{cand.content}</p>
@@ -452,14 +486,14 @@ export function MemoryCenter() {
                       className="memory-confirm-btn"
                       onClick={() => handleConfirmCandidate(cand.id)}
                     >
-                      ✓ 确认记住
+                      {t("memory.pending.confirm", "✓ 确认记住")}
                     </button>
                     <button
                       type="button"
                       className="memory-reject-btn"
                       onClick={() => handleRejectCandidate(cand.id)}
                     >
-                      ✕ 忽略
+                      {t("memory.pending.reject", "✕ 忽略")}
                     </button>
                   </div>
                 </div>
@@ -472,17 +506,24 @@ export function MemoryCenter() {
       {subView === "reflections" && (
         <>
           {summaries.length === 0 ? (
-            <p className="empty-state">还没有反思总结。点击“反思”按钮运行第一次反思。</p>
+            <p className="empty-state">
+              {t(
+                "memory.empty.noReflections",
+                "还没有反思总结。点击“反思”按钮运行第一次反思。",
+              )}
+            </p>
           ) : (
             <div className="reflection-list">
               {summaries.map((s) => (
                 <div key={s.id} className="reflection-card">
                   <div className="reflection-card__header">
                     <span className={`reflection-badge reflection-badge--${s.summaryType}`}>
-                      {s.summaryType === "daily" ? "日反思" : "周反思"}
+                      {s.summaryType === "daily"
+                        ? t("memory.reflections.daily", "日反思")
+                        : t("memory.reflections.weekly", "周反思")}
                     </span>
                     <span className="reflection-date">
-                      {new Date(s.createdAt * 1000).toLocaleDateString("zh-CN")}
+                      {new Date(s.createdAt * 1000).toLocaleDateString(locale)}
                     </span>
                   </div>
                   <pre className="reflection-content">{s.content}</pre>

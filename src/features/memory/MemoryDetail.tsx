@@ -7,6 +7,7 @@ import {
   MEMORY_TYPE_LABELS,
   MEMORY_SOURCE_LABELS,
 } from "./memoryTypes";
+import { useTranslation } from "../i18n/I18nProvider";
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
@@ -14,17 +15,31 @@ function runCommand<T>(command: string, args?: Record<string, unknown>) {
   return isTauriRuntime ? invoke<T>(command, args) : Promise.resolve({} as T);
 }
 
-function formatDate(timestamp: number): string {
-  return new Date(timestamp * 1000).toLocaleString("zh-CN");
+type TranslateFn = (key: string, fallback?: string) => string;
+
+function formatDate(timestamp: number, locale: string): string {
+  return new Date(timestamp * 1000).toLocaleString(locale);
 }
 
-function formatTimeAgo(timestamp: number): string {
+function formatTimeAgo(timestamp: number, t: TranslateFn, locale: string): string {
   const seconds = Math.floor(Date.now() / 1000) - timestamp;
-  if (seconds < 60) return "刚刚";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
-  if (seconds < 604800) return `${Math.floor(seconds / 86400)} 天前`;
-  return new Date(timestamp * 1000).toLocaleDateString("zh-CN");
+  if (seconds < 60) return t("memory.detail.justNow", "刚刚");
+  if (seconds < 3600)
+    return t("memory.detail.minutesAgo", "{count} 分钟前").replace(
+      "{count}",
+      String(Math.floor(seconds / 60)),
+    );
+  if (seconds < 86400)
+    return t("memory.detail.hoursAgo", "{count} 小时前").replace(
+      "{count}",
+      String(Math.floor(seconds / 3600)),
+    );
+  if (seconds < 604800)
+    return t("memory.detail.daysAgo", "{count} 天前").replace(
+      "{count}",
+      String(Math.floor(seconds / 86400)),
+    );
+  return new Date(timestamp * 1000).toLocaleDateString(locale);
 }
 
 export function MemoryDetail({
@@ -38,6 +53,7 @@ export function MemoryDetail({
   onDeleted: () => void | Promise<void>;
   onUpdated?: (memory: MemoryItem) => void;
 }) {
+  const { t, locale } = useTranslation();
   const [relations, setRelations] = useState<MemoryRelation[]>([]);
   const [editTitle, setEditTitle] = useState(memory.title);
   const [editContent, setEditContent] = useState(memory.content);
@@ -83,7 +99,7 @@ export function MemoryDetail({
   }
 
   async function handleDelete() {
-    if (!confirm("确定要删除这条记忆吗？")) return;
+    if (!confirm(t("memory.confirm.delete", "确定要删除这条记忆吗？"))) return;
     try {
       await runCommand("delete_memory", { id: memory.id });
       await onDeleted();
@@ -116,9 +132,11 @@ export function MemoryDetail({
             <span
               className={`memory-type-badge memory-type-badge--${memory.memoryType}`}
             >
-              {MEMORY_TYPE_LABELS[memory.memoryType]}
+              {t(`memory.type.${memory.memoryType}`, MEMORY_TYPE_LABELS[memory.memoryType])}
             </span>
-            {memory.isPinned && <span className="pin-badge">📌 已置顶</span>}
+            {memory.isPinned && (
+              <span className="pin-badge">{t("memory.detail.pinned", "📌 已置顶")}</span>
+            )}
           </div>
           <button type="button" className="close-button" onClick={onClose}>
             ✕
@@ -129,14 +147,14 @@ export function MemoryDetail({
           {isEditing ? (
             <div className="memory-edit">
               <label>
-                <span>标题</span>
+                <span>{t("memory.detail.titleLabel", "标题")}</span>
                 <input
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.currentTarget.value)}
                 />
               </label>
               <label>
-                <span>内容</span>
+                <span>{t("memory.detail.contentLabel", "内容")}</span>
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.currentTarget.value)}
@@ -145,10 +163,10 @@ export function MemoryDetail({
               </label>
               <div className="memory-edit__actions">
                 <button type="button" onClick={() => setIsEditing(false)}>
-                  取消
+                  {t("memory.detail.cancel", "取消")}
                 </button>
                 <button type="button" onClick={handleSave}>
-                  保存
+                  {t("memory.detail.save", "保存")}
                 </button>
               </div>
             </div>
@@ -163,33 +181,33 @@ export function MemoryDetail({
         <div className="memory-detail__meta">
           <div className="meta-grid">
             <div>
-              <span className="meta-label">来源</span>
+              <span className="meta-label">{t("memory.detail.source", "来源")}</span>
               <span className="meta-value">
-                {MEMORY_SOURCE_LABELS[memory.source]}
+                {t(`memory.source.${memory.source}`, MEMORY_SOURCE_LABELS[memory.source])}
               </span>
             </div>
             <div>
-              <span className="meta-label">重要度</span>
+              <span className="meta-label">{t("memory.detail.importance", "重要度")}</span>
               <span className="meta-value">{"*".repeat(memory.importance)}</span>
             </div>
             <div>
-              <span className="meta-label">置信度</span>
+              <span className="meta-label">{t("memory.detail.confidence", "置信度")}</span>
               <span className="meta-value">
                 {(memory.confidence * 100).toFixed(0)}%
               </span>
             </div>
             <div>
-              <span className="meta-label">创建时间</span>
-              <span className="meta-value">{formatDate(memory.createdAt)}</span>
+              <span className="meta-label">{t("memory.detail.createdAt", "创建时间")}</span>
+              <span className="meta-value">{formatDate(memory.createdAt, locale)}</span>
             </div>
             <div>
-              <span className="meta-label">更新时间</span>
-              <span className="meta-value">{formatTimeAgo(memory.updatedAt)}</span>
+              <span className="meta-label">{t("memory.detail.updatedAt", "更新时间")}</span>
+              <span className="meta-value">{formatTimeAgo(memory.updatedAt, t, locale)}</span>
             </div>
             {memory.expiresAt && (
               <div>
-                <span className="meta-label">过期时间</span>
-                <span className="meta-value">{formatDate(memory.expiresAt)}</span>
+                  <span className="meta-label">{t("memory.detail.expiresAt", "过期时间")}</span>
+                  <span className="meta-value">{formatDate(memory.expiresAt, locale)}</span>
               </div>
             )}
           </div>
@@ -206,12 +224,15 @@ export function MemoryDetail({
 
           {relations.length > 0 && (
             <div className="memory-detail__relations">
-              <h4>相关记忆</h4>
+              <h4>{t("memory.detail.relatedMemories", "相关记忆")}</h4>
               <ul>
                 {relations.map((rel, i) => (
                   <li key={i}>
                     <span className="relation-type">
-                      {RELATION_LABELS[rel.relationType] || rel.relationType}
+                      {t(
+                        `memory.relation.${rel.relationType}`,
+                        RELATION_LABELS[rel.relationType] || rel.relationType,
+                      )}
                     </span>
                     <code>{rel.fromId === memory.id ? rel.toId : rel.fromId}</code>
                   </li>
@@ -223,13 +244,15 @@ export function MemoryDetail({
 
         <footer className="memory-detail__actions">
           <button type="button" onClick={() => setIsEditing(!isEditing)}>
-            {isEditing ? "取消" : "编辑"}
+            {isEditing ? t("memory.detail.cancel", "取消") : t("memory.detail.edit", "编辑")}
           </button>
           <button type="button" onClick={handlePin}>
-            {memory.isPinned ? "取消置顶" : "置顶"}
+            {memory.isPinned
+              ? t("memory.detail.unpin", "取消置顶")
+              : t("memory.detail.pin", "置顶")}
           </button>
           <button type="button" className="btn--danger" onClick={handleDelete}>
-            删除
+            {t("memory.detail.delete", "删除")}
           </button>
         </footer>
       </div>
