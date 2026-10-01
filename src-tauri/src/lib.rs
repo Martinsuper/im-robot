@@ -2241,6 +2241,20 @@ fn update_html_preview_enabled(app: AppHandle, enabled: bool) -> Result<AppSetti
     Ok(settings)
 }
 
+#[tauri::command]
+fn update_language(app: AppHandle, language: String) -> Result<AppSettings, String> {
+    if !settings::is_supported_language(&language) {
+        return Err("不支持的语言".to_string());
+    }
+    let mut settings = read_settings(&app);
+    settings.language = language;
+    persist_settings(&app, &settings);
+    let _ = app.emit_to("panel", "settings-updated", &settings);
+    let _ = app.emit_to("pet", "settings-updated", &settings);
+    let _ = app.emit_to("bubble", "settings-updated", &settings);
+    Ok(settings)
+}
+
 /// Cached AI-generated HTML served to the sandboxed preview iframe through the
 /// dedicated `preview` protocol, so the strict main-window CSP never applies to it.
 #[derive(Default)]
@@ -3490,6 +3504,7 @@ pub fn run() {
             rhythm::update_work_rhythm_preferences,
             update_ai_settings,
             update_html_preview_enabled,
+            update_language,
             create_html_preview_frame,
             remove_html_preview_frame,
             generate_pet_companion_response,

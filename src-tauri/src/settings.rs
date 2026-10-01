@@ -15,6 +15,8 @@ pub struct AppSettings {
     pub companion_name: String,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_language")]
+    pub language: String,
     #[serde(default)]
     pub sensing_paused: bool,
     #[serde(default = "default_break_reminders_enabled")]
@@ -57,6 +59,7 @@ impl Default for AppSettings {
             quiet_mode: "balanced".to_string(),
             companion_name: default_companion_name(),
             theme: default_theme(),
+            language: default_language(),
             sensing_paused: false,
             break_reminders_enabled: default_break_reminders_enabled(),
             break_reminder_interval_minutes: default_break_reminder_interval_minutes(),
@@ -79,6 +82,14 @@ fn default_companion_name() -> String {
 
 fn default_theme() -> String {
     "sage".to_string()
+}
+
+pub fn default_language() -> String {
+    "zh-CN".to_string()
+}
+
+pub fn is_supported_language(language: &str) -> bool {
+    matches!(language, "zh-CN" | "en-US" | "ja-JP")
 }
 
 fn default_break_reminders_enabled() -> bool {
