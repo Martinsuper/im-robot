@@ -28,7 +28,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version: $VERSION"
 
-      - name: Delete auto-created release and create draft
+      - name: Create release (abort if already published)
         id: create_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -37,13 +37,19 @@ jobs:
           TAG="v${{ steps.version.outputs.version }}"
           REPO="${{ github.repository }}"
 
-          # Delete any auto-created release
           echo "Looking for existing release: $TAG"
-          EXISTING_ID=$(gh release view "$TAG" --json databaseId --jq '.databaseId' 2>/dev/null || echo "")
-          if [ -n "$EXISTING_ID" ]; then
-            echo "Found release ID: $EXISTING_ID, deleting..."
+          EXISTING=$(gh release view "$TAG" --json databaseId,isDraft 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            EXISTING_ID=$(echo "$EXISTING" | jq -r '.databaseId')
+            IS_DRAFT=$(echo "$EXISTING" | jq -r '.isDraft')
+            if [ "$IS_DRAFT" != "true" ]; then
+              echo "release $TAG 已存在且已发布（id=$EXISTING_ID），中止以避免误删正式版。"
+              echo "如确需重建，请先在 GitHub 上手动删除该 release 或删除对应 tag。"
+              exit 1
+            fi
+            echo "Found draft release ID: $EXISTING_ID, deleting..."
             gh api -X DELETE "repos/$REPO/releases/$EXISTING_ID"
-            echo "Deleted auto-created release"
+            echo "Deleted draft release"
             sleep 2
           fi
 
