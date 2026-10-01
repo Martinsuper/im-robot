@@ -4,6 +4,35 @@ use crate::settings::{read_api_key, AiSettings};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::Duration;
+use thiserror::Error;
+
+/// 模块内函数的类型化错误。Display 保留原有中文文案，经
+/// `From<ProviderError> for String` 兼容 lib.rs 既有 `Result<_, String>` 调用点。
+#[derive(Debug, Error)]
+pub enum ProviderError {
+    #[error("不支持的模型服务类型")]
+    UnsupportedProvider,
+    #[error("Base URL 必须以 http:// 或 https:// 开头")]
+    InvalidBaseUrl,
+    #[error("模型名称不能为空")]
+    EmptyModel,
+    #[error("Temperature 必须在 0 到 2 之间")]
+    InvalidTemperature,
+    #[error("超时时间必须在 5 到 600 秒之间")]
+    InvalidTimeout,
+    #[error("请求失败：{0}")]
+    Request(String),
+    #[error("HTTP {0}：{1}")]
+    HttpStatus(u16, String),
+    #[error("HTTP 客户端初始化失败：{0}")]
+    Client(String),
+}
+
+impl From<ProviderError> for String {
+    fn from(error: ProviderError) -> Self {
+        error.to_string()
+    }
+}
 
 pub fn extract_chat_deltas(provider: &str, line: &str) -> Vec<String> {
     let Some(data) = line.strip_prefix("data:") else {
@@ -38,7 +67,7 @@ pub fn extract_chat_deltas(provider: &str, line: &str) -> Vec<String> {
     }
 }
 
-pub fn pet_companion_generation_url(settings: &AiSettings) -> Result<String, String> {
+pub fn pet_companion_generation_url(settings: &AiSettings) -> Result<String, ProviderError> {
     let base_url = normalize_base_url(&settings.base_url);
     match provider_kind(&settings.provider) {
         Some(ProviderKind::OpenAiCompatible) => Ok(format!("{base_url}/chat/completions")),
@@ -47,11 +76,11 @@ pub fn pet_companion_generation_url(settings: &AiSettings) -> Result<String, Str
             "{base_url}/models/{}:generateContent",
             settings.model.trim_start_matches("models/")
         )),
-        None => Err("不支持的模型服务类型".to_string()),
+        None => Err(ProviderError::UnsupportedProvider),
     }
 }
 
-pub fn chat_url(settings: &AiSettings) -> Result<String, String> {
+pub fn chat_url(settings: &AiSettings) -> Result<String, ProviderError> {
     let base_url = normalize_base_url(&settings.base_url);
     match provider_kind(&settings.provider) {
         Some(ProviderKind::OpenAiCompatible) => Ok(format!("{base_url}/chat/completions")),
@@ -60,7 +89,7 @@ pub fn chat_url(settings: &AiSettings) -> Result<String, String> {
             "{base_url}/models/{}:streamGenerateContent?alt=sse",
             settings.model.trim_start_matches("models/")
         )),
-        None => Err("不支持的模型服务类型".to_string()),
+        None => Err(ProviderError::UnsupportedProvider),
     }
 }
 
@@ -68,7 +97,7 @@ pub fn models_url(settings: &AiSettings) -> String {
     format!("{}/models", normalize_base_url(&settings.base_url))
 }
 
-pub fn connection_test_body(settings: &AiSettings) -> Result<Value, String> {
+pub fn connection_test_body(settings: &AiSettings) -> Result<Value, ProviderError> {
     match provider_kind(&settings.provider) {
         Some(ProviderKind::OpenAiCompatible) => Ok(json!({
             "model": settings.model,
@@ -85,17 +114,17 @@ pub fn connection_test_body(settings: &AiSettings) -> Result<Value, String> {
             "contents": [{ "role": "user", "parts": [{ "text": "Reply with OK." }] }],
             "generationConfig": { "maxOutputTokens": 1 }
         })),
-        None => Err("不支持的模型服务类型".to_string()),
+        None => Err(ProviderError::UnsupportedProvider),
     }
 }
 
 pub async fn send_checked_request(
     request: reqwest::RequestBuilder,
-) -> Result<reqwest::Response, String> {
+) -> Result<reqwest::Response, ProviderError> {
     let response = request
         .send()
         .await
-        .map_err(|error| format!("请求失败：{error}"))?;
+        .map_err(|error| ProviderError::Request(error.to_string()))?;
     let status = response.status();
     if status.is_success() {
         return Ok(response);
@@ -107,32 +136,28 @@ pub async fn send_checked_request(
     } else {
         detail
     };
-    if detail.is_empty() {
-        Err(format!("HTTP {}", status))
-    } else {
-        Err(format!("HTTP {}：{}", status, detail))
-    }
+    Err(ProviderError::HttpStatus(status.as_u16(), detail))
 }
 
 pub fn is_local_provider(provider: &str) -> bool {
     matches!(provider, "lmstudio" | "openai-compatible")
 }
 
-pub fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
+pub fn validate_ai_settings(settings: &AiSettings) -> Result<(), ProviderError> {
     if provider_kind(&settings.provider).is_none() {
-        return Err("不支持的模型服务类型".to_string());
+        return Err(ProviderError::UnsupportedProvider);
     }
     if !(settings.base_url.starts_with("http://") || settings.base_url.starts_with("https://")) {
-        return Err("Base URL 必须以 http:// 或 https:// 开头".to_string());
+        return Err(ProviderError::InvalidBaseUrl);
     }
     if settings.model.trim().is_empty() && !is_local_provider(&settings.provider) {
-        return Err("模型名称不能为空".to_string());
+        return Err(ProviderError::EmptyModel);
     }
     if !(0.0..=2.0).contains(&settings.temperature) {
-        return Err("Temperature 必须在 0 到 2 之间".to_string());
+        return Err(ProviderError::InvalidTemperature);
     }
     if !(5..=600).contains(&settings.timeout_seconds) {
-        return Err("超时时间必须在 5 到 600 秒之间".to_string());
+        return Err(ProviderError::InvalidTimeout);
     }
     Ok(())
 }
@@ -155,13 +180,15 @@ pub fn should_bypass_system_proxy(base_url: &str) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
-pub fn http_client(settings: &AiSettings) -> Result<reqwest::Client, String> {
+pub fn http_client(settings: &AiSettings) -> Result<reqwest::Client, ProviderError> {
     let mut builder =
         reqwest::Client::builder().timeout(Duration::from_secs(settings.timeout_seconds));
     if should_bypass_system_proxy(&settings.base_url) {
         builder = builder.no_proxy();
     }
-    builder.build().map_err(|error| error.to_string())
+    builder
+        .build()
+        .map_err(|error| ProviderError::Client(error.to_string()))
 }
 
 pub fn request_builder(

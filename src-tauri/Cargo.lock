@@ -2494,6 +2494,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "thiserror 2.0.18",
  "wasmtime",
  "wasmtime-wasi",
  "windows 0.58.0",

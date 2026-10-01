@@ -4,6 +4,41 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{fs, io::Write, path::Path, time::Duration};
 use tauri::{AppHandle, Manager};
+use thiserror::Error;
+
+/// 模块内函数的类型化错误。Display 保留原有中文文案，经
+/// `From<UpdateError> for String` 兼容命令边界既有的 `Result<_, String>` 签名。
+#[derive(Debug, Error)]
+pub enum UpdateError {
+    #[error("未提供可下载的更新地址")]
+    EmptyUrl,
+    #[error("更新包必须通过 HTTPS 下载")]
+    InsecureUrl,
+    #[error("更新包文件名无效")]
+    InvalidFileName,
+    #[error("更新包缺少扩展名")]
+    MissingExtension,
+    #[error("不支持的更新包类型")]
+    UnsupportedFileType,
+    #[error("更新包过大，已取消下载")]
+    TooLarge,
+    #[error("请求失败：{0}")]
+    Request(String),
+    #[error("下载更新包失败：{0}")]
+    Download(String),
+    #[error("写入更新包失败：{0}")]
+    Write(String),
+    #[error("保存文件失败：{0}")]
+    Io(String),
+    #[error("发布源没有返回版本号")]
+    MissingVersion,
+}
+
+impl From<UpdateError> for String {
+    fn from(error: UpdateError) -> Self {
+        error.to_string()
+    }
+}
 
 #[tauri::command]
 pub async fn download_update_asset(
@@ -13,39 +48,43 @@ pub async fn download_update_asset(
 ) -> Result<DownloadedUpdate, String> {
     let url = download_url.trim().to_string();
     if url.is_empty() {
-        return Err("未提供可下载的更新地址".to_string());
+        return Err(UpdateError::EmptyUrl.into());
     }
     if !url.to_ascii_lowercase().starts_with("https://") {
-        return Err("更新包必须通过 HTTPS 下载".to_string());
+        return Err(UpdateError::InsecureUrl.into());
     }
     let file_name = sanitize_update_file_name(asset_name)?;
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| UpdateError::Request(error.to_string()))?;
 
     let response = client
         .get(&url)
         .header("User-Agent", "im-robot-update-downloader")
         .send()
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|error| UpdateError::Request(error.to_string()))?
         .error_for_status()
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| UpdateError::Request(error.to_string()))?;
 
     if let Some(total) = response.content_length() {
         if total > MAX_UPDATE_ASSET_BYTES {
-            return Err("更新包过大，已取消下载".to_string());
+            return Err(UpdateError::TooLarge.into());
         }
     }
 
-    let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| UpdateError::Io(error.to_string()))?;
     let update_dir = cache_dir.join("updates");
-    fs::create_dir_all(&update_dir).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&update_dir).map_err(|error| UpdateError::Io(error.to_string()))?;
     let file_path = update_dir.join(&file_name);
 
-    let mut file = fs::File::create(&file_path).map_err(|e| e.to_string())?;
+    let mut file =
+        fs::File::create(&file_path).map_err(|error| UpdateError::Io(error.to_string()))?;
     let mut downloaded: u64 = 0;
     let mut response = response;
     loop {
@@ -55,18 +94,18 @@ pub async fn download_update_asset(
             Err(error) => {
                 drop(file);
                 let _ = fs::remove_file(&file_path);
-                return Err(format!("下载更新包失败：{error}"));
+                return Err(UpdateError::Download(error.to_string()).into());
             }
         };
         downloaded += chunk.len() as u64;
         if downloaded > MAX_UPDATE_ASSET_BYTES {
             drop(file);
             let _ = fs::remove_file(&file_path);
-            return Err("更新包过大，已取消下载".to_string());
+            return Err(UpdateError::TooLarge.into());
         }
         if let Err(error) = file.write_all(&chunk) {
             let _ = fs::remove_file(&file_path);
-            return Err(format!("写入更新包失败：{error}"));
+            return Err(UpdateError::Write(error.to_string()).into());
         }
     }
 
@@ -85,25 +124,25 @@ const UPDATE_ASSET_EXTENSIONS: [&str; 9] = [
 
 /// Restrict the name to a bare file inside the updates directory: no absolute
 /// paths, no traversal, and only installer-shaped extensions.
-pub fn sanitize_update_file_name(raw: Option<String>) -> Result<String, String> {
+pub fn sanitize_update_file_name(raw: Option<String>) -> Result<String, UpdateError> {
     let candidate = raw.unwrap_or_else(|| "piko-update.bin".to_string());
     let trimmed = candidate.trim();
     let name = Path::new(trimmed)
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty() && *name != "." && *name != "..")
-        .ok_or_else(|| "更新包文件名无效".to_string())?;
+        .ok_or(UpdateError::InvalidFileName)?;
     // Unix 上反斜杠不是路径分隔符（file_name() 会原样保留），为让行为跨平台
     // 一致，名字里残留任何分隔符一律拒绝——合法的 GitHub 资产名不会包含它们。
     if name.contains('\\') || name.contains('/') {
-        return Err("更新包文件名无效".to_string());
+        return Err(UpdateError::InvalidFileName);
     }
     let extension = name
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
-        .ok_or_else(|| "更新包缺少扩展名".to_string())?;
+        .ok_or(UpdateError::MissingExtension)?;
     if !UPDATE_ASSET_EXTENSIONS.contains(&extension.as_str()) {
-        return Err("不支持的更新包类型".to_string());
+        return Err(UpdateError::UnsupportedFileType);
     }
     Ok(name.to_string())
 }
@@ -116,7 +155,7 @@ pub async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| UpdateError::Request(error.to_string()))?;
 
     let response = client
         .get("https://api.github.com/repos/Martinsuper/im-robot/releases/latest")
@@ -124,7 +163,7 @@ pub async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| UpdateError::Request(error.to_string()))?;
 
     if !response.status().is_success() {
         return Ok(UpdateStatus {
@@ -138,7 +177,10 @@ pub async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
         });
     }
 
-    let release: Value = response.json().await.map_err(|e| e.to_string())?;
+    let release: Value = response
+        .json()
+        .await
+        .map_err(|error| UpdateError::Request(error.to_string()))?;
     let latest = release["tag_name"]
         .as_str()
         .unwrap_or("unknown")
@@ -227,15 +269,15 @@ pub async fn check_for_updates() -> Result<UpdateInfo, String> {
         .header(reqwest::header::USER_AGENT, "Piko-Desktop-Companion")
         .send()
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|error| UpdateError::Request(error.to_string()))?
         .error_for_status()
-        .map_err(|error| error.to_string())?
+        .map_err(|error| UpdateError::Request(error.to_string()))?
         .json::<Value>()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| UpdateError::Request(error.to_string()))?;
     let latest_version = response["tag_name"]
         .as_str()
-        .ok_or_else(|| "发布源没有返回版本号".to_string())?
+        .ok_or(UpdateError::MissingVersion)?
         .trim_start_matches('v')
         .to_string();
     let release_url = response["html_url"]
