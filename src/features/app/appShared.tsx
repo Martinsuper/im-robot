@@ -376,12 +376,15 @@ export function PetSprite({
   reaction = "none",
   compact = false,
   mouseDelta,
+  variant = "live",
 }: {
   mode?: keyof typeof petSpriteStates;
   emotion?: string;
   reaction?: string;
   compact?: boolean;
   mouseDelta?: { x: number; y: number };
+  /** live（默认）：真实 Live2D 实例；snapshot：渲染窗口内唯一 live 实例的静态快照，不占 WebGL 上下文。 */
+  variant?: "live" | "snapshot";
 }) {
   const sprite = petSpriteStates[mode];
   const visualStyle = usePetVisualStyle();
@@ -444,6 +447,7 @@ export function PetSprite({
           mouseDelta={mouseDelta}
           modelId={live2dModelId}
           profileUrl={getLive2DProfileUrl(live2dModelId)}
+          variant={variant}
         />
       </span>
     );

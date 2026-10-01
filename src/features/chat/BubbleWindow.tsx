@@ -195,7 +195,7 @@ function HistoryItem({
           </div>
           <div className="bubble-thread__ai-card bubble-thread__ai-card--history">
             <div className="bubble-thread__ai-sprite">
-              <PetSprite mode="idle" compact />
+              <PetSprite mode="idle" compact variant="snapshot" />
             </div>
             <div className="bubble-thread__ai-content">
               <MarkdownContent>{entry.response}</MarkdownContent>
@@ -241,7 +241,7 @@ function WelcomeState({ companionName, message }: { companionName: string; messa
   const { t } = useTranslation();
   return (
     <div className="bubble-welcome">
-      <PetSprite mode="idle" />
+      <PetSprite mode="idle" variant="snapshot" />
       <p className="bubble-welcome__greeting">
         {message || t("bubble.welcome.greeting", "你好，我是 {name}。今天想一起完成什么？").replace("{name}", companionName)}
       </p>
@@ -820,7 +820,7 @@ export function BubbleWindow() {
             {showReplySkeleton ? (
               <div className="bubble-thread__ai-card bubble-thread__ai-card--loading">
                 <div className="bubble-thread__ai-sprite">
-                  <PetSprite mode="thinking" compact />
+                  <PetSprite mode="thinking" compact variant="snapshot" />
                 </div>
                 <div className="bubble-skeleton" role="status" aria-live="polite" aria-busy="true">
                   <div className="bubble-skeleton__eyebrow">
@@ -854,14 +854,14 @@ export function BubbleWindow() {
             ) : htmlPreviewSource ? (
               <div className="bubble-thread__ai-card">
                 <div className="bubble-thread__ai-sprite">
-                  <PetSprite mode="idle" compact />
+                  <PetSprite mode="idle" compact variant="snapshot" />
                 </div>
                 <HtmlPreviewFrame source={htmlPreviewSource} />
               </div>
             ) : message.trim() ? (
               <div className={`bubble-thread__ai-card${isReplyEntering ? " bubble-thread__ai-card--entering" : ""}`}>
                 <div className="bubble-thread__ai-sprite">
-                  <PetSprite mode="idle" compact />
+                  <PetSprite mode="idle" compact variant="snapshot" />
                 </div>
                 <div className="bubble-thread__ai-content">
                   <MarkdownContent>{message}</MarkdownContent>

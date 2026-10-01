@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { Application as PixiApplication } from "pixi.js";
 import { LiveCharacterPet } from "./LiveCharacterPet";
+import { registerLive2DSnapshotSource, useLive2DSnapshotUrl } from "./live2dSnapshot";
+import type { Live2DPetVariant } from "./live2dSnapshot";
 
 const CUBISM_CORE_URL = "/live2d/core/live2dcubismcore.min.js";
 const DEFAULT_PROFILE_URL = "/live2d/profiles/official-mao.profile.json";
@@ -73,6 +75,8 @@ export interface Live2DCharacterPetProps {
   modelId?: string;
   modelUrl?: string;
   profileUrl?: string;
+  /** live：真实 Live2D 实例（每窗口唯一）；snapshot：订阅快照源渲染静态 <img>，不创建 WebGL 上下文。 */
+  variant?: Live2DPetVariant;
 }
 
 function loadScript(src: string) {
@@ -225,6 +229,7 @@ export function Live2DCharacterPet({
   modelId,
   modelUrl,
   profileUrl = DEFAULT_PROFILE_URL,
+  variant = "live",
 }: Live2DCharacterPetProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const modelRef = useRef<Live2DModelLike | null>(null);
@@ -237,6 +242,7 @@ export function Live2DCharacterPet({
   const [status, setStatus] = useState<Live2DStatus>("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [profile, setProfile] = useState<Live2DCharacterProfile>({});
+  const snapshotDataUrl = useLive2DSnapshotUrl(variant === "snapshot");
 
   // 模型参数变化时在渲染期重置加载状态（React 官方的 render 调整模式），
   // 避免在 effect 内同步 setState。
@@ -258,6 +264,8 @@ export function Live2DCharacterPet({
   }, [mouseDelta]);
 
   useEffect(() => {
+    // snapshot 模式不初始化 pixi/Live2D，避免创建额外 WebGL 上下文
+    if (variant === "snapshot") return;
     let disposed = false;
     let resizeObserver: ResizeObserver | undefined;
     const cleanupLive2D = () => {
@@ -321,6 +329,8 @@ export function Live2DCharacterPet({
           backgroundAlpha: 0,
           preference: "webgl",
           resolution: window.devicePixelRatio || 1,
+          // 保留绘图缓冲，供快照提供者以 canvas.toDataURL() 导出当前帧（窗口内其他 PetSprite 复用）
+          preserveDrawingBuffer: true,
         });
 
         if (disposed) {
@@ -447,7 +457,16 @@ export function Live2DCharacterPet({
       disposed = true;
       cleanupLive2D();
     };
-  }, [compact, modelUrl, profileUrl]);
+  }, [compact, modelUrl, profileUrl, variant]);
+
+  // live 实例就绪后注册为窗口内快照源；StrictMode 下的 注销→重注册 序列是幂等的
+  useEffect(() => {
+    if (variant !== "live" || status !== "ready") return;
+    registerLive2DSnapshotSource(() => appRef.current?.canvas ?? null);
+    return () => {
+      registerLive2DSnapshotSource(null);
+    };
+  }, [status, variant]);
 
   useEffect(() => {
     const model = modelRef.current;
@@ -467,6 +486,36 @@ export function Live2DCharacterPet({
       void model.expression?.(expression).catch(() => undefined);
     }
   }, [emotion, mode, profile, reaction, status]);
+
+  if (variant === "snapshot") {
+    return (
+      <span
+        className="live2d-character-pet"
+        data-live2d-model-id={modelId}
+        data-live2d-status={snapshotDataUrl ? "snapshot" : "loading"}
+        style={style}
+      >
+        {snapshotDataUrl ? (
+          <img
+            className="live2d-character-snapshot"
+            src={snapshotDataUrl}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+          />
+        ) : (
+          <LiveCharacterPet
+            mode={mode}
+            emotion={emotion}
+            reaction={reaction}
+            compact={compact}
+            mouseDelta={mouseDelta}
+            style={style}
+          />
+        )}
+      </span>
+    );
+  }
 
   return (
     <span
