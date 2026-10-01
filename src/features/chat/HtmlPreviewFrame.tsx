@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "../app/appRuntime";
+import { useTranslation } from "../i18n/I18nProvider";
 
 function isFullHtmlDocument(source: string) {
   const trimmed = source.trimStart();
@@ -68,6 +69,7 @@ export function previewFrameUrl(token: string) {
 }
 
 export function HtmlPreviewFrame({ source }: { source: string }) {
+  const { t } = useTranslation();
   const srcDoc = useMemo(() => wrapHtmlFragment(source), [source]);
   const [frameUrl, setFrameUrl] = useState<string | null>(null);
 
@@ -96,17 +98,17 @@ export function HtmlPreviewFrame({ source }: { source: string }) {
   }, [srcDoc]);
 
   return (
-    <section className="html-preview-card" aria-label="HTML 预览">
+    <section className="html-preview-card" aria-label={t("chat.preview.ariaLabel", "HTML 预览")}>
       <div className="html-preview-card__header">
-        <span>HTML 预览</span>
-        <span>沙箱 iframe</span>
+        <span>{t("chat.preview.title", "HTML 预览")}</span>
+        <span>{t("chat.preview.sandboxNote", "沙箱 iframe")}</span>
       </div>
       <iframe
         className="html-preview-frame"
         sandbox="allow-scripts allow-forms allow-modals"
         srcDoc={isTauriRuntime ? undefined : srcDoc}
         src={isTauriRuntime && frameUrl ? frameUrl : undefined}
-        title="Piko HTML 预览"
+        title={t("chat.preview.frameTitle", "Piko HTML 预览")}
         referrerPolicy="no-referrer"
       />
     </section>

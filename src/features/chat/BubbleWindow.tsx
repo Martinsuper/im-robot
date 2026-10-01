@@ -10,6 +10,7 @@ import type { ActionDraft, ActionExecution, ChatEvent } from "./chatTypes";
 import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry, ScreenshotPreview, Theme } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
 import { isTauriRuntime, runCommand, runCommandQuiet } from "../app/appRuntime";
+import { useTranslation } from "../i18n/I18nProvider";
 import { extractHtmlPreviewSource, HtmlPreviewFrame } from "./HtmlPreviewFrame";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -36,6 +37,7 @@ function textForSpeech(text: string) {
 }
 
 function MarkdownContent({ children }: { children: string }) {
+  const { t } = useTranslation();
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
@@ -63,7 +65,7 @@ function MarkdownContent({ children }: { children: string }) {
               type="button"
               onClick={() => void navigator.clipboard.writeText(extractMarkdownText(code).replace(/\n$/, ""))}
             >
-              复制代码
+              {t("bubble.copyCode", "复制代码")}
             </button>
             <pre>{code}</pre>
           </div>
@@ -110,6 +112,7 @@ function InlineToolbar({
   onClearContext: () => void;
   onOpenPanel: () => void;
 }) {
+  const { t } = useTranslation();
   if (!message.trim()) return null;
   return (
     <div className="inline-toolbar">
@@ -117,8 +120,8 @@ function InlineToolbar({
         type="button"
         className={`inline-toolbar__btn${copyFeedback ? " inline-toolbar__btn--feedback" : ""}`}
         onClick={onCopy}
-        aria-label="复制结果"
-        title="复制结果"
+        aria-label={t("bubble.copyResult", "复制结果")}
+        title={t("bubble.copyResult", "复制结果")}
       >
         {copyFeedback ? "✓" : "📋"}
       </button>
@@ -126,8 +129,8 @@ function InlineToolbar({
         type="button"
         className={`inline-toolbar__btn${isSpeaking ? " inline-toolbar__btn--active" : ""}`}
         onClick={onSpeech}
-        aria-label={isSpeaking ? "停止朗读" : "朗读回复"}
-        title={isSpeaking ? "停止朗读" : "朗读回复"}
+        aria-label={isSpeaking ? t("bubble.stopSpeaking", "停止朗读") : t("bubble.speakReply", "朗读回复")}
+        title={isSpeaking ? t("bubble.stopSpeaking", "停止朗读") : t("bubble.speakReply", "朗读回复")}
       >
         {isSpeaking ? "🔊⏹" : "🔊"}
       </button>
@@ -135,26 +138,26 @@ function InlineToolbar({
         type="button"
         className="inline-toolbar__btn"
         onClick={onSave}
-        aria-label="保存回复"
-        title="保存回复"
+        aria-label={t("bubble.saveReply", "保存回复")}
+        title={t("bubble.saveReply", "保存回复")}
       >
         💾
       </button>
       <details className="inline-more-menu" data-no-drag>
-        <summary className="inline-toolbar__btn" title="更多">⋯</summary>
+        <summary className="inline-toolbar__btn" title={t("bubble.more", "更多")}>⋯</summary>
         <div>
           <button
             type="button"
             className={htmlPreviewEnabled ? "is-active" : ""}
             onClick={() => onUpdateHtmlPreview(!htmlPreviewEnabled)}
           >
-            HTML 预览
+            {t("bubble.htmlPreview", "HTML 预览")}
           </button>
           <button type="button" onClick={onClearContext}>
-            清空上下文
+            {t("bubble.clearContext", "清空上下文")}
           </button>
           <button type="button" onClick={onOpenPanel}>
-            打开面板
+            {t("bubble.openPanel", "打开面板")}
           </button>
         </div>
       </details>
@@ -171,6 +174,7 @@ function HistoryItem({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className={`bubble-thread__history-item${isExpanded ? " bubble-thread__history-item--expanded" : ""}`}>
       <button type="button" className="bubble-thread__history-toggle" onClick={onToggle}>
@@ -196,7 +200,7 @@ function HistoryItem({
               type="button"
               className="inline-toolbar__btn"
               onClick={() => void navigator.clipboard.writeText(entry.response)}
-              title="复制"
+              title={t("bubble.copy", "复制")}
             >
               📋
             </button>
@@ -212,7 +216,7 @@ function HistoryItem({
                 utterance.lang = "zh-CN";
                 window.speechSynthesis.speak(utterance);
               }}
-              title="朗读"
+              title={t("bubble.speak", "朗读")}
             >
               🔊
             </button>
@@ -228,11 +232,12 @@ function HistoryItem({
 }
 
 function WelcomeState({ companionName, message }: { companionName: string; message: string }) {
+  const { t } = useTranslation();
   return (
     <div className="bubble-welcome">
       <PetSprite mode="idle" />
       <p className="bubble-welcome__greeting">
-        {message || `你好，我是 ${companionName}。今天想一起完成什么？`}
+        {message || t("bubble.welcome.greeting", "你好，我是 {name}。今天想一起完成什么？").replace("{name}", companionName)}
       </p>
     </div>
   );
@@ -241,6 +246,7 @@ function WelcomeState({ companionName, message }: { companionName: string; messa
 // --- Main Component ---
 
 export function BubbleWindow() {
+  const { t } = useTranslation();
   const [prompt, setPrompt] = useState("");
   const [message, setMessage] = useState("");
   const [companionName, setCompanionName] = useState("Piko");
@@ -283,17 +289,17 @@ export function BubbleWindow() {
     return "bubble-skeleton__line--medium";
   });
   const skeletonLabel = pendingPromptSummary.hasAttachment
-    ? "正在分析附件并生成回复"
+    ? t("bubble.skeleton.withAttachment", "正在分析附件并生成回复")
     : pendingPromptSummary.hasScreenshot
-      ? "正在分析截图并生成回复"
-      : "正在生成回复";
+      ? t("bubble.skeleton.withScreenshot", "正在分析截图并生成回复")
+      : t("bubble.skeleton.generating", "正在生成回复");
 
   const topbarStatus = useMemo(() => {
     if (memoryActivity) return { label: memoryActivity, pulse: false };
-    if (isSpeaking) return { label: "朗读中", pulse: false };
-    if (isThinking) return { label: "思考中…", pulse: true };
-    return { label: "在线", pulse: false };
-  }, [isThinking, isSpeaking, memoryActivity]);
+    if (isSpeaking) return { label: t("bubble.status.speaking", "朗读中"), pulse: false };
+    if (isThinking) return { label: t("bubble.status.thinking", "思考中…"), pulse: true };
+    return { label: t("bubble.status.online", "在线"), pulse: false };
+  }, [isThinking, isSpeaking, memoryActivity, t]);
 
   const hasCurrentTurn = Boolean(currentPrompt || message || pendingAction || showReplySkeleton);
   const showWelcome = !hasCurrentTurn && chatHistory.length === 0;
@@ -426,7 +432,7 @@ export function BubbleWindow() {
         clearSkeletonHideTimer();
         setShowReplySkeleton(false);
         setIsReplyEntering(false);
-        setMessage((current) => current || "已停止生成。");
+        setMessage((current) => current || t("bubble.stopped", "已停止生成。"));
         refreshChatHistory();
       }
       if (event.payload.type === "failed") {
@@ -443,16 +449,16 @@ export function BubbleWindow() {
         dispose();
       });
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
     const unlisten = listen<{ confirmed: number; pending: number }>("memory-captured", (event) => {
       const { confirmed, pending } = event.payload;
       if (pending > 0) {
-        setMemoryActivity(`💡 有 ${pending} 条记忆待确认`);
+        setMemoryActivity(t("bubble.memory.pending", "💡 有 {count} 条记忆待确认").replace("{count}", String(pending)));
       } else if (confirmed > 0) {
-        setMemoryActivity(`💡 已记住 ${confirmed} 条`);
+        setMemoryActivity(t("bubble.memory.confirmed", "💡 已记住 {count} 条").replace("{count}", String(confirmed)));
       }
       const timer = window.setTimeout(() => setMemoryActivity(""), 4000);
       return () => window.clearTimeout(timer);
@@ -462,7 +468,7 @@ export function BubbleWindow() {
         dispose();
       });
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -475,7 +481,7 @@ export function BubbleWindow() {
       setIsDraggingFile(false);
       if (event.payload.type !== "drop") return;
       if (event.payload.paths.length !== 1) {
-        setAttachmentError("一次只能处理一个文本文件。");
+        setAttachmentError(t("bubble.error.oneFileOnly", "一次只能处理一个文本文件。"));
         return;
       }
 
@@ -492,7 +498,7 @@ export function BubbleWindow() {
         dispose();
       });
     };
-  }, []);
+  }, [t]);
 
   // Auto-scroll thread to bottom when new messages arrive
   useEffect(() => {
@@ -529,7 +535,7 @@ export function BubbleWindow() {
     if (!isTauriRuntime) {
       previewReplyTimer.current = window.setTimeout(() => {
         previewReplyTimer.current = undefined;
-        setMessage(`这是浏览器预览回复：${requestPrompt}`);
+        setMessage(t("bubble.previewReply", "这是浏览器预览回复：{prompt}").replace("{prompt}", () => requestPrompt));
         setIsThinking(false);
         clearSkeletonHideTimer();
         setShowReplySkeleton(false);
@@ -547,7 +553,7 @@ export function BubbleWindow() {
       },
     }).catch((error) => {
       setIsThinking(false);
-      setMessage(`模型服务连接失败：${String(error)}`);
+      setMessage(t("bubble.connectionFailed", "模型服务连接失败：{error}").replace("{error}", () => String(error)));
     });
   }
 
@@ -567,7 +573,7 @@ export function BubbleWindow() {
       setShowReplySkeleton(false);
       setIsReplyEntering(false);
       setIsThinking(false);
-      setMessage("已停止生成。");
+      setMessage(t("bubble.stopped", "已停止生成。"));
       return;
     }
     runCommandQuiet("chat_cancel", { requestId });
@@ -620,7 +626,7 @@ export function BubbleWindow() {
       await runCommand("reject_chat_action", { id: pendingAction.id });
       setPendingAction(undefined);
       setSelectedChoiceIndexes([]);
-      setMessage("已取消该操作。");
+      setMessage(t("bubble.actionCancelled", "已取消该操作。"));
     } catch (error) {
       setSaveError(String(error));
     }
@@ -647,12 +653,12 @@ export function BubbleWindow() {
       return;
     }
     if (!("speechSynthesis" in window)) {
-      setSpeechError("当前环境不支持朗读。");
+      setSpeechError(t("bubble.speech.unsupported", "当前环境不支持朗读。"));
       return;
     }
     const spokenMessage = textForSpeech(message).trim();
     if (!spokenMessage) {
-      setSpeechError("没有可朗读的文字内容。");
+      setSpeechError(t("bubble.speech.empty", "没有可朗读的文字内容。"));
       return;
     }
     const utterance = new SpeechSynthesisUtterance(spokenMessage);
@@ -674,7 +680,7 @@ export function BubbleWindow() {
     if (!isTauriRuntime) return;
     const path = await open({
       multiple: false,
-      filters: [{ name: "文本文件", extensions: ["txt", "md", "json", "csv", "log"] }],
+      filters: [{ name: t("bubble.filter.textFiles", "文本文件"), extensions: ["txt", "md", "json", "csv", "log"] }],
     });
     if (!path) return;
     setAttachmentError("");
@@ -698,7 +704,7 @@ export function BubbleWindow() {
       setMessage("");
       setPendingAction(undefined);
       setShowReplySkeleton(false);
-      setContextNotice("已清空上下文。");
+      setContextNotice(t("bubble.contextCleared", "已清空上下文。"));
       window.setTimeout(() => setContextNotice(""), 3000);
     } catch (error) {
       setContextNotice(String(error));
@@ -717,7 +723,7 @@ export function BubbleWindow() {
   async function saveResult() {
     setSaveError("");
     if (!isTauriRuntime) {
-      setSaveError("桌面版中可保存回复到本地文件。");
+      setSaveError(t("bubble.save.desktopOnly", "桌面版中可保存回复到本地文件。"));
       return;
     }
     try {
@@ -768,7 +774,7 @@ export function BubbleWindow() {
             className="bubble-topbar__btn"
             type="button"
             onClick={() => runCommand("hide_bubble")}
-            aria-label="关闭"
+            aria-label={t("bubble.close", "关闭")}
           >
             ×
           </button>
@@ -791,7 +797,7 @@ export function BubbleWindow() {
             ))}
             {expandedHistoryIds.size > 0 && (
               <button type="button" className="bubble-thread__collapse-all" onClick={collapseAllHistory}>
-                ── 折叠全部 ({expandedHistoryIds.size}) ──
+                {t("bubble.history.collapseAll", "── 折叠全部 ({count}) ──").replace("{count}", String(expandedHistoryIds.size))}
               </button>
             )}
           </div>
@@ -892,7 +898,11 @@ export function BubbleWindow() {
             {screenshot && (
               <div className="bubble-input-zone__chip">
                 <img src={screenshot.dataUrl} alt="" className="bubble-input-zone__chip-thumb" />
-                <span className="bubble-input-zone__chip-text">截图 {screenshot.width}×{screenshot.height}</span>
+                <span className="bubble-input-zone__chip-text">
+                  {t("bubble.screenshotChip", "截图 {width}×{height}")
+                    .replace("{width}", String(screenshot.width))
+                    .replace("{height}", String(screenshot.height))}
+                </span>
                 <button type="button" className="bubble-input-zone__chip-remove" onClick={() => void clearScreenshot()}>
                   ✕
                 </button>
@@ -901,14 +911,14 @@ export function BubbleWindow() {
             {attachmentError && <span className="bubble-input-zone__error">{attachmentError}</span>}
             {attachment && (
               <div className="bubble-input-zone__actions">
-                {attachmentActionOptions.map(({ label, value }) => (
+                {attachmentActionOptions.map(({ label, labelKey, value }) => (
                   <button
                     className={attachmentAction === value ? "is-active" : ""}
                     key={value}
                     type="button"
                     onClick={() => setAttachmentAction(value)}
                   >
-                    {label}
+                    {t(labelKey, label)}
                   </button>
                 ))}
               </div>
@@ -916,11 +926,11 @@ export function BubbleWindow() {
           </div>
         )}
         <form className="prompt-form" onSubmit={submit}>
-          <div className="prompt-tools" aria-label="输入工具">
-            <button type="button" onClick={() => void chooseAttachment()} aria-label="选择文件" title="选择文件">
+          <div className="prompt-tools" aria-label={t("bubble.inputTools", "输入工具")}>
+            <button type="button" onClick={() => void chooseAttachment()} aria-label={t("bubble.chooseFile", "选择文件")} title={t("bubble.chooseFile", "选择文件")}>
               +
             </button>
-            <button type="button" onClick={() => runCommand("begin_screen_capture")} aria-label="截图提问" title="截图提问">
+            <button type="button" onClick={() => runCommand("begin_screen_capture")} aria-label={t("bubble.screenshotAsk", "截图提问")} title={t("bubble.screenshotAsk", "截图提问")}>
               □
             </button>
           </div>
@@ -928,11 +938,11 @@ export function BubbleWindow() {
             autoFocus
             value={prompt}
             onChange={(event) => setPrompt(event.currentTarget.value)}
-            placeholder={attachment || screenshot ? "可补充处理要求" : "输入问题，或描述一个任务"}
-            aria-label="发送给 Piko 的问题"
+            placeholder={attachment || screenshot ? t("bubble.placeholder.withAttachment", "可补充处理要求") : t("bubble.placeholder.default", "输入问题，或描述一个任务")}
+            aria-label={t("bubble.promptAriaLabel", "发送给 Piko 的问题")}
           />
           {isThinking ? (
-            <button type="button" className="prompt-form__stop" onClick={cancel} title="停止生成">
+            <button type="button" className="prompt-form__stop" onClick={cancel} title={t("bubble.stopGenerate", "停止生成")}>
               ■
             </button>
           ) : (
