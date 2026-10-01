@@ -46,7 +46,10 @@ export function ActionConfirmationCard({
   onReject,
 }: ActionConfirmationCardProps) {
   const { t } = useTranslation();
-  const choices = getConfirmationChoices(draft, (index) => t("chat.confirm.item", `项目 ${index + 1}`));
+  const choices = getConfirmationChoices(
+    draft,
+    (index) => t("chat.confirm.item", "项目 {index}").replace("{index}", String(index + 1)),
+  );
   const hasChoices = choices.length > 0;
 
   return (

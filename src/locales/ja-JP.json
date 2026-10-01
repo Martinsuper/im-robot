@@ -37,7 +37,35 @@
   "pet": {
     "idle": "Piko は休憩中",
     "working": "Piko は仕事中",
-    "greeting": "こんにちは！{name} です"
+    "greeting": "こんにちは！{name} です",
+    "clockLabel": "現在時刻 {time}",
+    "drag": "Piko をドラッグ",
+    "menu": {
+      "changeModel": "モデルを変更",
+      "chat": "おしゃべり",
+      "hide": "非表示",
+      "official": "公式",
+      "panel": "パネル",
+      "rest": "休憩",
+      "switchStyle": "スタイルを切り替え",
+      "wake": "起こす"
+    },
+    "model": {
+      "official": "公式モデル"
+    },
+    "notice": {
+      "ambientNudge": "Piko がちらりとあなたを見ました。",
+      "close": "通知を閉じる",
+      "focusCompleted": "できあがり！結果を見に来てね。",
+      "focusStarted": "Piko は足音をひそめています。",
+      "idleStarted": "Piko は静かに寄り添って休みます。",
+      "modelSwitched": "{model} に切り替えました",
+      "welcomeBack": "おかえりなさい。"
+    },
+    "stageLabel": "デスクトップペット {name}",
+    "speech": {
+      "companionHere": "Piko がそばにいます。"
+    }
   },
   "chat": {
     "placeholder": "メッセージを入力...",
@@ -46,7 +74,19 @@
     "screenshot": "スクリーンショットで質問",
     "attachment": "添付ファイル",
     "noApiKey": "まず設定で API キーを設定してください",
-    "connectionFailed": "接続に失敗しました"
+    "connectionFailed": "接続に失敗しました",
+    "confirm": {
+      "ariaLabel": "確認待ちの操作",
+      "execute": "確認して実行",
+      "item": "項目 {index}",
+      "title": "確認待ちの操作"
+    },
+    "preview": {
+      "ariaLabel": "HTML プレビュー",
+      "frameTitle": "Piko HTML プレビュー",
+      "sandboxNote": "サンドボックス iframe",
+      "title": "HTML プレビュー"
+    }
   },
   "settings": {
     "title": "設定",
@@ -111,7 +151,8 @@
     "skip": "スキップ",
     "next": "次へ",
     "complete": "完了",
-    "previous": "前へ"
+    "previous": "前へ",
+    "testing": "テスト中..."
   },
   "focus": {
     "start": "集中開始",
@@ -173,5 +214,356 @@
     "downloadComplete": "ダウンロード完了",
     "downloadFailed": "ダウンロード失敗",
     "restartPrompt": "アップデートをインストールするために再起動しますか？"
+  },
+  "bubble": {
+    "actionCancelled": "操作を取り消しました。",
+    "chooseFile": "ファイルを選択",
+    "clearContext": "コンテキストをクリア",
+    "close": "閉じる",
+    "connectionFailed": "モデルサービスへの接続に失敗しました：{error}",
+    "contextCleared": "コンテキストをクリアしました。",
+    "copy": "コピー",
+    "copyCode": "コードをコピー",
+    "copyResult": "結果をコピー",
+    "error": {
+      "oneFileOnly": "一度に処理できるテキストファイルは 1 つです。"
+    },
+    "filter": {
+      "textFiles": "テキストファイル"
+    },
+    "history": {
+      "collapseAll": "── すべて折りたたむ ({count}) ──"
+    },
+    "htmlPreview": "HTML プレビュー",
+    "inputTools": "入力ツール",
+    "memory": {
+      "confirmed": "💡 {count} 件を記憶しました",
+      "pending": "💡 確認待ちのメモリーが {count} 件あります"
+    },
+    "more": "その他",
+    "openPanel": "パネルを開く",
+    "placeholder": {
+      "default": "質問を入力、またはタスクを説明",
+      "withAttachment": "添付ファイルへの指示を追記できます"
+    },
+    "previewReply": "これはブラウザプレビューの返信です：{prompt}",
+    "promptAriaLabel": "Piko へ送る質問",
+    "save": {
+      "desktopOnly": "デスクトップ版では返信をローカルファイルに保存できます。"
+    },
+    "saveReply": "返信を保存",
+    "screenshotAsk": "スクリーンショットで質問",
+    "screenshotChip": "スクリーンショット {width}×{height}",
+    "skeleton": {
+      "generating": "返信を生成中",
+      "withAttachment": "添付ファイルを分析して返信を生成中",
+      "withScreenshot": "スクリーンショットを分析して返信を生成中"
+    },
+    "speak": "読み上げ",
+    "speakReply": "返信を読み上げる",
+    "speech": {
+      "empty": "読み上げるテキストがありません。",
+      "unsupported": "この環境では読み上げに対応していません。"
+    },
+    "status": {
+      "online": "オンライン",
+      "speaking": "読み上げ中",
+      "thinking": "考え中…"
+    },
+    "stopGenerate": "生成を停止",
+    "stopSpeaking": "読み上げを停止",
+    "stopped": "生成を停止しました。",
+    "welcome": {
+      "greeting": "こんにちは、{name} です。今日は何をしましょう？"
+    }
+  },
+  "capture": {
+    "cancel": "キャンセル",
+    "confirm": "スクリーンショットを確定",
+    "escHint": "Esc でキャンセル",
+    "hint": "ドラッグでスクリーンショット範囲を選択してください。確定後に画面内容を読み取ります。",
+    "selectHint": "マウスをドラッグして範囲を選択",
+    "selected": "スクリーンショット範囲を選択しました",
+    "sizeHint": "{width} × {height} · 右クリックで確定"
+  },
+  "memory": {
+    "actions": {
+      "clearAll": "すべて削除",
+      "clearing": "削除中…",
+      "export": "エクスポート",
+      "exportTitle": "メモリーをエクスポート",
+      "reflect": "振り返り",
+      "reflectTitle": "メモリーの振り返りを実行",
+      "reflecting": "振り返り中…"
+    },
+    "confirm": {
+      "clearAll": "すべてのメモリーを削除しますか？この操作は元に戻せません。",
+      "delete": "このメモリーを削除しますか？"
+    },
+    "detail": {
+      "cancel": "キャンセル",
+      "confidence": "信頼度",
+      "contentLabel": "内容",
+      "createdAt": "作成日時",
+      "daysAgo": "{count}日前",
+      "delete": "削除",
+      "edit": "編集",
+      "expiresAt": "有効期限",
+      "hoursAgo": "{count}時間前",
+      "importance": "重要度",
+      "justNow": "たった今",
+      "minutesAgo": "{count}分前",
+      "pin": "ピン留め",
+      "pinned": "📌 ピン留め済み",
+      "relatedMemories": "関連メモリー",
+      "save": "保存",
+      "source": "ソース",
+      "titleLabel": "タイトル",
+      "unpin": "ピン留め解除",
+      "updatedAt": "更新日時"
+    },
+    "empty": {
+      "noMemories": "まだメモリーがありません。Piko はやり取りの中で大切なことを少しずつ覚えていきます。",
+      "noPending": "確認待ちのメモリー候補はありません。",
+      "noReflections": "まだ振り返りのまとめはありません。「振り返り」ボタンで最初の振り返りを実行しましょう。",
+      "searchNoResult": "「{query}」に関連するメモリーは見つかりませんでした。"
+    },
+    "error": {
+      "clearFailed": "削除に失敗しました",
+      "confirmFailed": "確認に失敗しました",
+      "deleteFailed": "削除に失敗しました",
+      "exportFailed": "エクスポートに失敗しました",
+      "feedbackFailed": "フィードバックの送信に失敗しました",
+      "pinFailed": "ピン留めに失敗しました",
+      "reflectFailed": "振り返りに失敗しました",
+      "rejectFailed": "却下に失敗しました",
+      "unpinFailed": "ピン留め解除に失敗しました"
+    },
+    "export": {
+      "copied": "メモリーのエクスポートをクリップボードにコピーしました"
+    },
+    "filter": {
+      "all": "すべて"
+    },
+    "pending": {
+      "badge": "要確認 · {type}",
+      "confidence": "信頼度 {value}%",
+      "confirm": "✓ 覚えておく",
+      "reject": "✕ 無視"
+    },
+    "reflections": {
+      "daily": "日次の振り返り",
+      "weekly": "週次の振り返り"
+    },
+    "relation": {
+      "conflictsWith": "競合",
+      "derivedFrom": "派生",
+      "duplicatesOf": "重複",
+      "relatedTo": "関連",
+      "supersedes": "置き換え"
+    },
+    "search": {
+      "placeholder": "メモリーを検索…",
+      "results": "{count} 件見つかりました"
+    },
+    "source": {
+      "conversation": "会話からの抽出",
+      "systemReflection": "システムの振り返り",
+      "taskOutcome": "タスク結果",
+      "toolResult": "ツール結果",
+      "userExplicit": "ユーザーの明示的な発言"
+    },
+    "tabs": {
+      "memories": "メモリー一覧",
+      "pending": "要確認 ({count})",
+      "reflections": "振り返りまとめ"
+    },
+    "title": "メモリーセンター",
+    "type": {
+      "event": "イベントメモリー",
+      "operational": "操作記録",
+      "profile": "ユーザープロフィール",
+      "reflection": "システム振り返り",
+      "semantic": "意味知識"
+    },
+    "view": {
+      "all": "すべて",
+      "recent": "最近"
+    }
+  },
+  "panel": {
+    "about": {
+      "checkFailed": "アップデート確認に失敗しました：{error}",
+      "checking": "アップデートを確認中...",
+      "downloadComplete": "ダウンロード完了：{fileName}",
+      "downloadFailed": "アップデートのダウンロードに失敗しました：{error}",
+      "downloadingNow": "ダウンロード中...",
+      "fileAccess": "ファイルアクセス",
+      "fileAccessValue": "ドラッグ入力のみ",
+      "noAsset": "ダウンロード可能なインストーラーが見つかりません。リリースページから手動でダウンロードしてください。",
+      "notificationPermission": "通知権限",
+      "openDownloadedFile": "ダウンロードしたファイルを開く",
+      "openReleasePage": "ダウンロードページを開く",
+      "paused": "一時停止中",
+      "permissionsTitle": "権限センター",
+      "pluginsEmpty": "外部プラグインのマニフェストが見つかりません。",
+      "pluginsTitle": "外部プラグイン",
+      "running": "実行中",
+      "screenCapture": "画面収録",
+      "sensing": "アクティブ感知",
+      "upToDate": "最新バージョンです：{version}",
+      "updateAvailable": "新しいバージョンがあります：{version}",
+      "versionTitle": "バージョン情報"
+    },
+    "calendar": {
+      "add": "追加",
+      "conflictNotice": "ヒント：この時間帯は既存の {count} 件の予定と重複していますが、作成を続行しました。",
+      "delete": "削除",
+      "empty": "予定はありません。",
+      "endLabel": "終了日時",
+      "exportButton": "iCalendar をエクスポート",
+      "exportConfirm": "予定をエクスポートしました。システムカレンダーにインポートしますか？",
+      "startLabel": "開始日時",
+      "syncFromSystemFailed": "システムカレンダーからの同期に失敗しました：{error}",
+      "syncReady": "システム同期の準備完了 · {platform} · {count} 件をマッピング",
+      "syncToSystemFailed": "システムカレンダーへの同期に失敗しました：{error}",
+      "syncUnavailable": "このプラットフォームではシステムカレンダーへの直接接続を利用できません。同期ボタンはエクスポート／インポート方式のままとなります。",
+      "syncedFromSystem": "システムカレンダーから同期：{count} 件",
+      "syncedToSystem": "システムカレンダーへ同期：{count} 件",
+      "title": "ローカル予定",
+      "titleLabel": "予定のタイトル",
+      "titlePlaceholder": "例：プロジェクトレビュー"
+    },
+    "companion": {
+      "aiAssistant": "AI アシスタント",
+      "bondLevel": "絆レベル",
+      "collectionTitle": "仲間コレクション",
+      "description": "癒し系のデスクトップペット。寄り添い、会話、集中タスクが得意です。",
+      "fileCollabs": "ファイル連携",
+      "interactionTitle": "インタラクション記録",
+      "intimacy": "親密さ",
+      "lastInteraction": "最後のインタラクション",
+      "level": "現在のレベル",
+      "none": "なし",
+      "petStrokes": "なでなで回数",
+      "socialLevel": "ソーシャルレベル",
+      "tagline": "デスクトップに静かにいながら、真面目に手伝ってくれる仲間です。",
+      "totalInteractions": "インタラクション合計",
+      "xpProgress": "経験値の進捗",
+      "xpSummary": "累計 {xp} 経験値 · タスク進捗 {tasks} · 実績 {achievements}"
+    },
+    "focus": {
+      "breakShort": "休憩 {minutes}",
+      "breakTitle": "休憩カウントダウン",
+      "durationLabel": "集中時間",
+      "focusTitle": "集中モード",
+      "minutesOption": "{minutes} 分",
+      "stop": "終了"
+    },
+    "history": {
+      "charCount": "{count} 文字",
+      "clearButton": "履歴を削除",
+      "clearSearch": "クリア",
+      "empty": "会話履歴はまだありません。",
+      "emptyFiltered": "現在の検索・フィルター条件に一致する会話はありません。",
+      "filterAll": "すべて",
+      "filterAttachment": "添付ファイル",
+      "filterCode": "コード",
+      "filterLabel": "履歴フィルター",
+      "filterLink": "リンク",
+      "filterLong": "長文返信",
+      "filterScreenshot": "スクリーンショット",
+      "listLabel": "最近の会話リスト",
+      "minutes": "{minutes} 分",
+      "noResponse": "返信テキストなし",
+      "searchPlaceholder": "会話履歴を検索",
+      "title": "最近の会話",
+      "todayFocus": "今日の集中",
+      "untitled": "無題の会話"
+    },
+    "nav": {
+      "ariaLabel": "パネルナビゲーション"
+    },
+    "reminders": {
+      "add": "追加",
+      "contentLabel": "リマインダー内容",
+      "delete": "削除",
+      "empty": "リマインダーはありません。",
+      "permissionNotice": "通知権限が付与されていません。リマインダーは保存されますが、システム通知が表示されない場合があります。",
+      "repeatLabel": "繰り返しルール",
+      "timeLabel": "リマインダー時刻",
+      "titlePlaceholder": "例：少し動こう",
+      "triggered": "通知済み",
+      "waiting": "待機中"
+    },
+    "settings": {
+      "apiKeyPlaceholder": "ローカル Ollama なら空欄で OK",
+      "autostartFailed": "起動時自動スタートの設定に失敗しました：{error}",
+      "autostartLabel": "起動時に自動起動",
+      "breakCooldown": "リマインダークールダウン（分）",
+      "breakEnable": "休憩リマインダーを有効化",
+      "breakHint": "リマインダーは今日の入力・アイドル状態・フォアグラウンドアプリから判断し、適切な時だけ通知します。",
+      "breakInterval": "リマインダー間隔（分）",
+      "breakSaveButton": "休憩リマインダー設定を保存",
+      "breakSaved": "休憩リマインダー設定を保存しました",
+      "breakTitle": "休憩リマインダー",
+      "captureOnDemand": "キャプチャ時に都度要求",
+      "chooseImage": "画像を選択",
+      "clearImage": "クリア",
+      "companionNameLabel": "ペットの名前",
+      "connectFailed": "接続に失敗しました：{error}",
+      "connectSuccess": "接続成功",
+      "connecting": "接続中...",
+      "granted": "許可済み",
+      "htmlPreviewHint": "有効にすると、バブルウィンドウは HTML 断片を検知した際にサンドボックス iframe でプレビューします。",
+      "htmlPreviewTitle": "HTML プレビュー",
+      "htmlPreviewToggle": "HTML プレビュープラグイン",
+      "htmlPreviewUpdateFailed": "HTML プレビュープラグインの更新に失敗しました：{error}",
+      "htmlPreviewUpdated": "HTML プレビュープラグインを更新しました",
+      "imageFiles": "画像ファイル",
+      "keyConfigured": "キー設定済み",
+      "live2dModelLabel": "Live2D モデル",
+      "modelPlaceholderLmStudio": "空欄可。LM Studio は読み込み済みのモデルを自動的に使用します",
+      "noCustomImage": "カスタム画像が未選択",
+      "notTested": "接続は未テスト",
+      "onDemand": "都度要求",
+      "personalizationTitle": "パーソナライズとシステム",
+      "petStyleLabel": "ペットの外見",
+      "providerTitle": "モデルサービス",
+      "providerTypeLabel": "サービスタイプ",
+      "quietHoursEnable": "サイレント時間を有効化",
+      "quietHoursEnd": "サイレント終了",
+      "quietHoursStart": "サイレント開始",
+      "quietModeTitle": "インタラクションの活発さ",
+      "saveAndTest": "保存して接続テスト",
+      "saveButton": "パーソナライズ設定を保存",
+      "saved": "保存しました",
+      "sensingLabel": "アクティブ感知",
+      "testing": "テスト中...",
+      "themeLabel": "テーマカラー",
+      "themeOcean": "湖水ブルー",
+      "themePeach": "ウォームピーチ",
+      "themeSage": "セージグリーン",
+      "timeoutLabel": "タイムアウト（秒）",
+      "waitingTest": "テスト待ち"
+    },
+    "status": {
+      "aiChat": "AI チャット",
+      "available": "利用可能",
+      "currentTitle": "現在の状態",
+      "file": "ファイル処理",
+      "foregroundApp": "フォアグラウンドアプリ",
+      "hidePet": "ペットを非表示",
+      "idleDuration": "アイドル時間",
+      "keepWorking": "作業を続ける",
+      "online": "オンライン",
+      "pet": "デスクトップペット",
+      "reminders": "リマインダー",
+      "restSuggested": "休憩推奨",
+      "rhythmTitle": "今日のアクティビティ",
+      "showPet": "ペットを表示",
+      "todayTyping": "今日の入力",
+      "typingDuration": "入力時間"
+    }
   }
 }

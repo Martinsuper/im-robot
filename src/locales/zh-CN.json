@@ -37,7 +37,35 @@
   "pet": {
     "idle": "Piko 在休息",
     "working": "Piko 在工作",
-    "greeting": "你好！我是 {name}"
+    "greeting": "你好！我是 {name}",
+    "clockLabel": "当前时间 {time}",
+    "drag": "拖动 Piko",
+    "menu": {
+      "changeModel": "换模型",
+      "chat": "对话",
+      "hide": "隐藏",
+      "official": "官方",
+      "panel": "面板",
+      "rest": "休息",
+      "switchStyle": "切换形象",
+      "wake": "唤醒"
+    },
+    "model": {
+      "official": "官方模型"
+    },
+    "notice": {
+      "ambientNudge": "Piko 轻轻看了你一眼。",
+      "close": "关闭提醒",
+      "focusCompleted": "做完啦，来看看结果。",
+      "focusStarted": "Piko 正在放轻脚步。",
+      "idleStarted": "Piko 安静下来陪你休息。",
+      "modelSwitched": "已切换到 {model}",
+      "welcomeBack": "欢迎回来。"
+    },
+    "stageLabel": "桌面精灵 {name}",
+    "speech": {
+      "companionHere": "Piko 在这里陪着你。"
+    }
   },
   "chat": {
     "placeholder": "输入消息...",
@@ -46,7 +74,19 @@
     "screenshot": "截图提问",
     "attachment": "附件",
     "noApiKey": "请先在设置中配置 API Key",
-    "connectionFailed": "连接失败"
+    "connectionFailed": "连接失败",
+    "confirm": {
+      "ariaLabel": "待确认操作",
+      "execute": "确认执行",
+      "item": "项目 {index}",
+      "title": "待确认操作"
+    },
+    "preview": {
+      "ariaLabel": "HTML 预览",
+      "frameTitle": "Piko HTML 预览",
+      "sandboxNote": "沙箱 iframe",
+      "title": "HTML 预览"
+    }
   },
   "settings": {
     "title": "设置",
@@ -111,7 +151,8 @@
     "skip": "跳过",
     "next": "下一步",
     "complete": "完成",
-    "previous": "上一步"
+    "previous": "上一步",
+    "testing": "测试中..."
   },
   "focus": {
     "start": "开始专注",
@@ -173,5 +214,356 @@
     "downloadComplete": "下载完成",
     "downloadFailed": "下载失败",
     "restartPrompt": "重启以安装更新？"
+  },
+  "bubble": {
+    "actionCancelled": "已取消该操作。",
+    "chooseFile": "选择文件",
+    "clearContext": "清空上下文",
+    "close": "关闭",
+    "connectionFailed": "模型服务连接失败：{error}",
+    "contextCleared": "已清空上下文。",
+    "copy": "复制",
+    "copyCode": "复制代码",
+    "copyResult": "复制结果",
+    "error": {
+      "oneFileOnly": "一次只能处理一个文本文件。"
+    },
+    "filter": {
+      "textFiles": "文本文件"
+    },
+    "history": {
+      "collapseAll": "── 折叠全部 ({count}) ──"
+    },
+    "htmlPreview": "HTML 预览",
+    "inputTools": "输入工具",
+    "memory": {
+      "confirmed": "💡 已记住 {count} 条",
+      "pending": "💡 有 {count} 条记忆待确认"
+    },
+    "more": "更多",
+    "openPanel": "打开面板",
+    "placeholder": {
+      "default": "输入问题，或描述一个任务",
+      "withAttachment": "可补充处理要求"
+    },
+    "previewReply": "这是浏览器预览回复：{prompt}",
+    "promptAriaLabel": "发送给 Piko 的问题",
+    "save": {
+      "desktopOnly": "桌面版中可保存回复到本地文件。"
+    },
+    "saveReply": "保存回复",
+    "screenshotAsk": "截图提问",
+    "screenshotChip": "截图 {width}×{height}",
+    "skeleton": {
+      "generating": "正在生成回复",
+      "withAttachment": "正在分析附件并生成回复",
+      "withScreenshot": "正在分析截图并生成回复"
+    },
+    "speak": "朗读",
+    "speakReply": "朗读回复",
+    "speech": {
+      "empty": "没有可朗读的文字内容。",
+      "unsupported": "当前环境不支持朗读。"
+    },
+    "status": {
+      "online": "在线",
+      "speaking": "朗读中",
+      "thinking": "思考中…"
+    },
+    "stopGenerate": "停止生成",
+    "stopSpeaking": "停止朗读",
+    "stopped": "已停止生成。",
+    "welcome": {
+      "greeting": "你好，我是 {name}。今天想一起完成什么？"
+    }
+  },
+  "capture": {
+    "cancel": "取消",
+    "confirm": "确认截图",
+    "escHint": "按 Esc 取消",
+    "hint": "拖动框选截图区域，确认后才会读取屏幕内容",
+    "selectHint": "请拖动鼠标框选区域",
+    "selected": "截图区域已选择",
+    "sizeHint": "{width} × {height} · 点击右键确认"
+  },
+  "memory": {
+    "actions": {
+      "clearAll": "清除全部",
+      "clearing": "清除中…",
+      "export": "导出",
+      "exportTitle": "导出记忆",
+      "reflect": "反思",
+      "reflectTitle": "运行记忆反思",
+      "reflecting": "反思中…"
+    },
+    "confirm": {
+      "clearAll": "确定要清除全部记忆吗？此操作不可撤销。",
+      "delete": "确定要删除这条记忆吗？"
+    },
+    "detail": {
+      "cancel": "取消",
+      "confidence": "置信度",
+      "contentLabel": "内容",
+      "createdAt": "创建时间",
+      "daysAgo": "{count} 天前",
+      "delete": "删除",
+      "edit": "编辑",
+      "expiresAt": "过期时间",
+      "hoursAgo": "{count} 小时前",
+      "importance": "重要度",
+      "justNow": "刚刚",
+      "minutesAgo": "{count} 分钟前",
+      "pin": "置顶",
+      "pinned": "📌 已置顶",
+      "relatedMemories": "相关记忆",
+      "save": "保存",
+      "source": "来源",
+      "titleLabel": "标题",
+      "unpin": "取消置顶",
+      "updatedAt": "更新时间"
+    },
+    "empty": {
+      "noMemories": "还没有记忆。Piko 会在和你互动时逐渐记住重要的事。",
+      "noPending": "没有待确认的记忆推断。",
+      "noReflections": "还没有反思总结。点击“反思”按钮运行第一次反思。",
+      "searchNoResult": "没有找到与\"{query}\"相关的记忆。"
+    },
+    "error": {
+      "clearFailed": "清除失败",
+      "confirmFailed": "确认失败",
+      "deleteFailed": "删除失败",
+      "exportFailed": "导出失败",
+      "feedbackFailed": "反馈提交失败",
+      "pinFailed": "置顶失败",
+      "reflectFailed": "反思失败",
+      "rejectFailed": "拒绝失败",
+      "unpinFailed": "取消置顶失败"
+    },
+    "export": {
+      "copied": "已复制记忆导出到剪贴板"
+    },
+    "filter": {
+      "all": "全部"
+    },
+    "pending": {
+      "badge": "待确认 · {type}",
+      "confidence": "置信度 {value}%",
+      "confirm": "✓ 确认记住",
+      "reject": "✕ 忽略"
+    },
+    "reflections": {
+      "daily": "日反思",
+      "weekly": "周反思"
+    },
+    "relation": {
+      "conflictsWith": "冲突",
+      "derivedFrom": "派生自",
+      "duplicatesOf": "重复",
+      "relatedTo": "相关",
+      "supersedes": "取代"
+    },
+    "search": {
+      "placeholder": "搜索记忆…",
+      "results": "找到 {count} 条结果"
+    },
+    "source": {
+      "conversation": "对话提取",
+      "systemReflection": "系统反思",
+      "taskOutcome": "任务结果",
+      "toolResult": "工具结果",
+      "userExplicit": "用户明确表达"
+    },
+    "tabs": {
+      "memories": "记忆列表",
+      "pending": "待确认 ({count})",
+      "reflections": "反思总结"
+    },
+    "title": "记忆中心",
+    "type": {
+      "event": "事件记忆",
+      "operational": "操作记录",
+      "profile": "用户档案",
+      "reflection": "系统反思",
+      "semantic": "语义知识"
+    },
+    "view": {
+      "all": "全部",
+      "recent": "最近"
+    }
+  },
+  "panel": {
+    "about": {
+      "checkFailed": "检查更新失败：{error}",
+      "checking": "正在检查更新...",
+      "downloadComplete": "下载完成：{fileName}",
+      "downloadFailed": "更新下载失败：{error}",
+      "downloadingNow": "正在下载...",
+      "fileAccess": "文件访问",
+      "fileAccessValue": "仅主动拖入",
+      "noAsset": "未找到可下载的安装包，请打开发布页手动下载。",
+      "notificationPermission": "通知权限",
+      "openDownloadedFile": "打开已下载文件",
+      "openReleasePage": "打开下载页",
+      "paused": "已暂停",
+      "permissionsTitle": "权限中心",
+      "pluginsEmpty": "未发现外部插件清单。",
+      "pluginsTitle": "外部插件",
+      "running": "运行中",
+      "screenCapture": "屏幕录制",
+      "sensing": "主动感知",
+      "upToDate": "已是最新版本：{version}",
+      "updateAvailable": "发现新版本：{version}",
+      "versionTitle": "版本信息"
+    },
+    "calendar": {
+      "add": "添加",
+      "conflictNotice": "提示：该时间段与已有 {count} 条日程重叠，但已继续创建。",
+      "delete": "删除",
+      "empty": "暂无日程。",
+      "endLabel": "日程结束时间",
+      "exportButton": "导出 iCalendar",
+      "exportConfirm": "日程已导出。是否交给系统日历导入？",
+      "startLabel": "日程开始时间",
+      "syncFromSystemFailed": "从系统日历同步失败：{error}",
+      "syncReady": "系统同步已就绪 · {platform} · 映射 {count} 条",
+      "syncToSystemFailed": "同步到系统日历失败：{error}",
+      "syncUnavailable": "当前平台未开放系统日历直连，同步按钮将保持为导出/导入式兼容路径。",
+      "syncedFromSystem": "已从系统日历同步：{count} 条",
+      "syncedToSystem": "已同步到系统日历：{count} 条",
+      "title": "本地日程",
+      "titleLabel": "日程标题",
+      "titlePlaceholder": "例如：项目评审"
+    },
+    "companion": {
+      "aiAssistant": "AI 助手",
+      "bondLevel": "羁绊等级",
+      "collectionTitle": "伙伴图鉴",
+      "description": "治愈型桌面精灵。擅长陪伴、对话和处理专注任务。",
+      "fileCollabs": "文件协作",
+      "interactionTitle": "互动档案",
+      "intimacy": "亲密",
+      "lastInteraction": "最近互动",
+      "level": "当前等级",
+      "none": "暂无",
+      "petStrokes": "摸摸次数",
+      "socialLevel": "社交等级",
+      "tagline": "一个安静待在桌面上，也会认真帮忙的小伙伴。",
+      "totalInteractions": "互动总数",
+      "xpProgress": "经验进度",
+      "xpSummary": "累计 {xp} 经验 · {tasks} 个任务进度 · {achievements} 项成就"
+    },
+    "focus": {
+      "breakShort": "休息 {minutes}",
+      "breakTitle": "休息倒计时",
+      "durationLabel": "专注时长",
+      "focusTitle": "专注模式",
+      "minutesOption": "{minutes} 分钟",
+      "stop": "结束"
+    },
+    "history": {
+      "charCount": "{count} 字",
+      "clearButton": "清除历史",
+      "clearSearch": "清空",
+      "empty": "暂无对话历史。",
+      "emptyFiltered": "当前搜索或筛选下没有对话。",
+      "filterAll": "全部",
+      "filterAttachment": "附件",
+      "filterCode": "代码",
+      "filterLabel": "历史筛选",
+      "filterLink": "链接",
+      "filterLong": "长回复",
+      "filterScreenshot": "截图",
+      "listLabel": "最近对话列表",
+      "minutes": "{minutes} 分钟",
+      "noResponse": "没有返回文本",
+      "searchPlaceholder": "搜索历史对话",
+      "title": "最近对话",
+      "todayFocus": "今日专注",
+      "untitled": "未命名对话"
+    },
+    "nav": {
+      "ariaLabel": "面板导航"
+    },
+    "reminders": {
+      "add": "添加",
+      "contentLabel": "提醒内容",
+      "delete": "删除",
+      "empty": "暂无提醒。",
+      "permissionNotice": "未授予通知权限，提醒会保存，但系统可能无法弹出通知。",
+      "repeatLabel": "重复规则",
+      "timeLabel": "提醒时间",
+      "titlePlaceholder": "例如：起来活动一下",
+      "triggered": "已提醒",
+      "waiting": "等待中"
+    },
+    "settings": {
+      "apiKeyPlaceholder": "本地 Ollama 可留空",
+      "autostartFailed": "开机启动设置失败：{error}",
+      "autostartLabel": "开机自动启动",
+      "breakCooldown": "提醒冷却（分钟）",
+      "breakEnable": "开启休息提醒",
+      "breakHint": "提醒会根据今日输入、空闲状态和前台场景自动判断，只在适合的时候发声。",
+      "breakInterval": "提醒间隔（分钟）",
+      "breakSaveButton": "保存休息提醒设置",
+      "breakSaved": "休息提醒设置已保存",
+      "breakTitle": "休息提醒",
+      "captureOnDemand": "截图时按需申请",
+      "chooseImage": "选择图片",
+      "clearImage": "清除",
+      "companionNameLabel": "精灵名称",
+      "connectFailed": "连接失败：{error}",
+      "connectSuccess": "连接成功",
+      "connecting": "正在连接...",
+      "granted": "已授权",
+      "htmlPreviewHint": "开启后，气泡窗口会在检测到 HTML 片段时优先使用沙箱 iframe 预览。",
+      "htmlPreviewTitle": "HTML 预览",
+      "htmlPreviewToggle": "HTML 预览插件",
+      "htmlPreviewUpdateFailed": "HTML 预览插件更新失败：{error}",
+      "htmlPreviewUpdated": "HTML 预览插件已更新",
+      "imageFiles": "图片文件",
+      "keyConfigured": "已配置密钥",
+      "live2dModelLabel": "Live2D 模型",
+      "modelPlaceholderLmStudio": "可留空，LM Studio 自动使用当前加载模型",
+      "noCustomImage": "未选择自定义图片",
+      "notTested": "尚未测试连接",
+      "onDemand": "按需申请",
+      "personalizationTitle": "个性化与系统",
+      "petStyleLabel": "精灵形象",
+      "providerTitle": "模型服务",
+      "providerTypeLabel": "服务类型",
+      "quietHoursEnable": "启用静默时段",
+      "quietHoursEnd": "静默结束",
+      "quietHoursStart": "静默开始",
+      "quietModeTitle": "互动活泼度",
+      "saveAndTest": "保存并测试连接",
+      "saveButton": "保存个性化设置",
+      "saved": "已保存",
+      "sensingLabel": "主动感知",
+      "testing": "正在测试...",
+      "themeLabel": "主题色",
+      "themeOcean": "湖水蓝",
+      "themePeach": "暖桃色",
+      "themeSage": "鼠尾草绿",
+      "timeoutLabel": "超时秒数",
+      "waitingTest": "等待测试"
+    },
+    "status": {
+      "aiChat": "AI 对话",
+      "available": "可用",
+      "currentTitle": "当前状态",
+      "file": "文件处理",
+      "foregroundApp": "前台应用",
+      "hidePet": "隐藏精灵",
+      "idleDuration": "空闲时长",
+      "keepWorking": "继续工作",
+      "online": "在线",
+      "pet": "桌面精灵",
+      "reminders": "提醒",
+      "restSuggested": "建议休息",
+      "rhythmTitle": "今日活跃度",
+      "showPet": "显示精灵",
+      "todayTyping": "今日输入",
+      "typingDuration": "输入时长"
+    }
   }
 }

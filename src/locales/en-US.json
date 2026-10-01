@@ -37,7 +37,35 @@
   "pet": {
     "idle": "Piko is resting",
     "working": "Piko is working",
-    "greeting": "Hi! I'm {name}"
+    "greeting": "Hi! I'm {name}",
+    "clockLabel": "Current time {time}",
+    "drag": "Drag Piko",
+    "menu": {
+      "changeModel": "Change Model",
+      "chat": "Chat",
+      "hide": "Hide",
+      "official": "Official",
+      "panel": "Panel",
+      "rest": "Rest",
+      "switchStyle": "Switch Style",
+      "wake": "Wake"
+    },
+    "model": {
+      "official": "Official Model"
+    },
+    "notice": {
+      "ambientNudge": "Piko glances over at you.",
+      "close": "Dismiss Notice",
+      "focusCompleted": "All done! Come see the results.",
+      "focusStarted": "Piko is tiptoeing quietly.",
+      "idleStarted": "Piko quiets down to rest with you.",
+      "modelSwitched": "Switched to {model}",
+      "welcomeBack": "Welcome back."
+    },
+    "stageLabel": "Desktop pet {name}",
+    "speech": {
+      "companionHere": "Piko is here with you."
+    }
   },
   "chat": {
     "placeholder": "Type a message...",
@@ -46,7 +74,19 @@
     "screenshot": "Screenshot question",
     "attachment": "Attachment",
     "noApiKey": "Please configure an API Key in settings first",
-    "connectionFailed": "Connection failed"
+    "connectionFailed": "Connection failed",
+    "confirm": {
+      "ariaLabel": "Actions awaiting confirmation",
+      "execute": "Confirm & Execute",
+      "item": "Item {index}",
+      "title": "Actions Awaiting Confirmation"
+    },
+    "preview": {
+      "ariaLabel": "HTML Preview",
+      "frameTitle": "Piko HTML Preview",
+      "sandboxNote": "Sandboxed iframe",
+      "title": "HTML Preview"
+    }
   },
   "settings": {
     "title": "Settings",
@@ -111,7 +151,8 @@
     "skip": "Skip",
     "next": "Next",
     "complete": "Complete",
-    "previous": "Previous"
+    "previous": "Previous",
+    "testing": "Testing..."
   },
   "focus": {
     "start": "Start Focus",
@@ -173,5 +214,356 @@
     "downloadComplete": "Download complete",
     "downloadFailed": "Download failed",
     "restartPrompt": "Restart to install update?"
+  },
+  "bubble": {
+    "actionCancelled": "Action cancelled.",
+    "chooseFile": "Choose File",
+    "clearContext": "Clear Context",
+    "close": "Close",
+    "connectionFailed": "Model service connection failed: {error}",
+    "contextCleared": "Context cleared.",
+    "copy": "Copy",
+    "copyCode": "Copy Code",
+    "copyResult": "Copy Result",
+    "error": {
+      "oneFileOnly": "Only one text file can be processed at a time."
+    },
+    "filter": {
+      "textFiles": "Text Files"
+    },
+    "history": {
+      "collapseAll": "── Collapse all ({count}) ──"
+    },
+    "htmlPreview": "HTML Preview",
+    "inputTools": "Input Tools",
+    "memory": {
+      "confirmed": "💡 Remembered {count}",
+      "pending": "💡 {count} memories awaiting confirmation"
+    },
+    "more": "More",
+    "openPanel": "Open Panel",
+    "placeholder": {
+      "default": "Type a question, or describe a task",
+      "withAttachment": "Add instructions for the attachment"
+    },
+    "previewReply": "This is a browser preview reply: {prompt}",
+    "promptAriaLabel": "Question to send to Piko",
+    "save": {
+      "desktopOnly": "Replies can be saved to a local file in the desktop app."
+    },
+    "saveReply": "Save Reply",
+    "screenshotAsk": "Ask with Screenshot",
+    "screenshotChip": "Screenshot {width}×{height}",
+    "skeleton": {
+      "generating": "Generating reply",
+      "withAttachment": "Analyzing attachment and generating reply",
+      "withScreenshot": "Analyzing screenshot and generating reply"
+    },
+    "speak": "Read Aloud",
+    "speakReply": "Read Reply Aloud",
+    "speech": {
+      "empty": "No text to read aloud.",
+      "unsupported": "Read-aloud is not supported in this environment."
+    },
+    "status": {
+      "online": "Online",
+      "speaking": "Reading aloud",
+      "thinking": "Thinking…"
+    },
+    "stopGenerate": "Stop Generating",
+    "stopSpeaking": "Stop Reading",
+    "stopped": "Generation stopped.",
+    "welcome": {
+      "greeting": "Hi, I'm {name}. What shall we work on today?"
+    }
+  },
+  "capture": {
+    "cancel": "Cancel",
+    "confirm": "Confirm Screenshot",
+    "escHint": "Press Esc to cancel",
+    "hint": "Drag to select the screenshot area. Screen content is only read after you confirm.",
+    "selectHint": "Drag to select an area",
+    "selected": "Screenshot area selected",
+    "sizeHint": "{width} × {height} · Right-click to confirm"
+  },
+  "memory": {
+    "actions": {
+      "clearAll": "Clear All",
+      "clearing": "Clearing…",
+      "export": "Export",
+      "exportTitle": "Export Memories",
+      "reflect": "Reflect",
+      "reflectTitle": "Run Memory Reflection",
+      "reflecting": "Reflecting…"
+    },
+    "confirm": {
+      "clearAll": "Clear all memories? This cannot be undone.",
+      "delete": "Delete this memory?"
+    },
+    "detail": {
+      "cancel": "Cancel",
+      "confidence": "Confidence",
+      "contentLabel": "Content",
+      "createdAt": "Created",
+      "daysAgo": "{count} days ago",
+      "delete": "Delete",
+      "edit": "Edit",
+      "expiresAt": "Expires",
+      "hoursAgo": "{count} hours ago",
+      "importance": "Importance",
+      "justNow": "Just now",
+      "minutesAgo": "{count} minutes ago",
+      "pin": "Pin",
+      "pinned": "📌 Pinned",
+      "relatedMemories": "Related Memories",
+      "save": "Save",
+      "source": "Source",
+      "titleLabel": "Title",
+      "unpin": "Unpin",
+      "updatedAt": "Updated"
+    },
+    "empty": {
+      "noMemories": "No memories yet. Piko gradually remembers important things as you interact.",
+      "noPending": "No memory suggestions awaiting confirmation.",
+      "noReflections": "No reflections yet. Click “Reflect” to run the first reflection.",
+      "searchNoResult": "No memories found matching \"{query}\"."
+    },
+    "error": {
+      "clearFailed": "Failed to clear",
+      "confirmFailed": "Failed to confirm",
+      "deleteFailed": "Failed to delete",
+      "exportFailed": "Export failed",
+      "feedbackFailed": "Failed to submit feedback",
+      "pinFailed": "Failed to pin",
+      "reflectFailed": "Reflection failed",
+      "rejectFailed": "Failed to reject",
+      "unpinFailed": "Failed to unpin"
+    },
+    "export": {
+      "copied": "Memory export copied to clipboard"
+    },
+    "filter": {
+      "all": "All"
+    },
+    "pending": {
+      "badge": "Pending · {type}",
+      "confidence": "Confidence {value}%",
+      "confirm": "✓ Remember",
+      "reject": "✕ Dismiss"
+    },
+    "reflections": {
+      "daily": "Daily Reflection",
+      "weekly": "Weekly Reflection"
+    },
+    "relation": {
+      "conflictsWith": "Conflicts With",
+      "derivedFrom": "Derived From",
+      "duplicatesOf": "Duplicate Of",
+      "relatedTo": "Related To",
+      "supersedes": "Supersedes"
+    },
+    "search": {
+      "placeholder": "Search memories…",
+      "results": "{count} results found"
+    },
+    "source": {
+      "conversation": "From Conversation",
+      "systemReflection": "System Reflection",
+      "taskOutcome": "From Task Outcome",
+      "toolResult": "From Tool Result",
+      "userExplicit": "Explicitly Stated"
+    },
+    "tabs": {
+      "memories": "Memory List",
+      "pending": "Pending ({count})",
+      "reflections": "Reflections"
+    },
+    "title": "Memory Center",
+    "type": {
+      "event": "Event Memory",
+      "operational": "Operational Record",
+      "profile": "User Profile",
+      "reflection": "System Reflection",
+      "semantic": "Semantic Knowledge"
+    },
+    "view": {
+      "all": "All",
+      "recent": "Recent"
+    }
+  },
+  "panel": {
+    "about": {
+      "checkFailed": "Update check failed: {error}",
+      "checking": "Checking for updates...",
+      "downloadComplete": "Download complete: {fileName}",
+      "downloadFailed": "Update download failed: {error}",
+      "downloadingNow": "Downloading...",
+      "fileAccess": "File Access",
+      "fileAccessValue": "Drag-in only",
+      "noAsset": "No installer package found. Please open the release page to download manually.",
+      "notificationPermission": "Notification Permission",
+      "openDownloadedFile": "Open Downloaded File",
+      "openReleasePage": "Open Download Page",
+      "paused": "Paused",
+      "permissionsTitle": "Permissions",
+      "pluginsEmpty": "No external plugin manifest found.",
+      "pluginsTitle": "External Plugins",
+      "running": "Running",
+      "screenCapture": "Screen Recording",
+      "sensing": "Active Sensing",
+      "upToDate": "Up to date: {version}",
+      "updateAvailable": "New version found: {version}",
+      "versionTitle": "Version Info"
+    },
+    "calendar": {
+      "add": "Add",
+      "conflictNotice": "Note: this time slot overlaps {count} existing event(s), but it was created anyway.",
+      "delete": "Delete",
+      "empty": "No events yet.",
+      "endLabel": "End Time",
+      "exportButton": "Export iCalendar",
+      "exportConfirm": "Events exported. Hand off to the system calendar for import?",
+      "startLabel": "Start Time",
+      "syncFromSystemFailed": "Failed to sync from system calendar: {error}",
+      "syncReady": "System sync ready · {platform} · {count} mapped",
+      "syncToSystemFailed": "Failed to sync to system calendar: {error}",
+      "syncUnavailable": "Direct system calendar access isn't available on this platform; the sync buttons will keep using the export/import fallback.",
+      "syncedFromSystem": "Synced from system calendar: {count}",
+      "syncedToSystem": "Synced to system calendar: {count}",
+      "title": "Local Events",
+      "titleLabel": "Event Title",
+      "titlePlaceholder": "e.g., Project review"
+    },
+    "companion": {
+      "aiAssistant": "AI Assistant",
+      "bondLevel": "Bond Level",
+      "collectionTitle": "Companion Collection",
+      "description": "A soothing desktop pet. Great at company, conversation, and focus tasks.",
+      "fileCollabs": "File Collaboration",
+      "interactionTitle": "Interaction Profile",
+      "intimacy": "Intimacy",
+      "lastInteraction": "Last Interaction",
+      "level": "Current Level",
+      "none": "None",
+      "petStrokes": "Pet Strokes",
+      "socialLevel": "Social Level",
+      "tagline": "A quiet little companion that stays on your desktop and earnestly helps out.",
+      "totalInteractions": "Total Interactions",
+      "xpProgress": "XP Progress",
+      "xpSummary": "{xp} XP earned · {tasks} task progress · {achievements} achievements"
+    },
+    "focus": {
+      "breakShort": "Break {minutes}",
+      "breakTitle": "Break Countdown",
+      "durationLabel": "Focus Duration",
+      "focusTitle": "Focus Mode",
+      "minutesOption": "{minutes} min",
+      "stop": "End"
+    },
+    "history": {
+      "charCount": "{count} chars",
+      "clearButton": "Clear History",
+      "clearSearch": "Clear",
+      "empty": "No conversation history yet.",
+      "emptyFiltered": "No conversations match the current search or filter.",
+      "filterAll": "All",
+      "filterAttachment": "Attachments",
+      "filterCode": "Code",
+      "filterLabel": "History Filter",
+      "filterLink": "Links",
+      "filterLong": "Long Replies",
+      "filterScreenshot": "Screenshots",
+      "listLabel": "Recent conversations list",
+      "minutes": "{minutes} min",
+      "noResponse": "No response text",
+      "searchPlaceholder": "Search conversations",
+      "title": "Recent Conversations",
+      "todayFocus": "Focus Today",
+      "untitled": "Untitled conversation"
+    },
+    "nav": {
+      "ariaLabel": "Panel navigation"
+    },
+    "reminders": {
+      "add": "Add",
+      "contentLabel": "Reminder Text",
+      "delete": "Delete",
+      "empty": "No reminders yet.",
+      "permissionNotice": "Notification permission not granted. Reminders will be saved, but the system may not show notifications.",
+      "repeatLabel": "Repeat Rule",
+      "timeLabel": "Reminder Time",
+      "titlePlaceholder": "e.g., Time to stretch",
+      "triggered": "Reminded",
+      "waiting": "Waiting"
+    },
+    "settings": {
+      "apiKeyPlaceholder": "Leave empty for local Ollama",
+      "autostartFailed": "Failed to update launch-at-login setting: {error}",
+      "autostartLabel": "Launch at Login",
+      "breakCooldown": "Reminder Cooldown (minutes)",
+      "breakEnable": "Enable Break Reminders",
+      "breakHint": "Reminders adapt to today's typing, idle state, and foreground app, speaking up only when it fits.",
+      "breakInterval": "Reminder Interval (minutes)",
+      "breakSaveButton": "Save Break Reminder Settings",
+      "breakSaved": "Break reminder settings saved",
+      "breakTitle": "Break Reminders",
+      "captureOnDemand": "Request on demand when capturing",
+      "chooseImage": "Choose Image",
+      "clearImage": "Clear",
+      "companionNameLabel": "Pet Name",
+      "connectFailed": "Connection failed: {error}",
+      "connectSuccess": "Connected",
+      "connecting": "Connecting...",
+      "granted": "Granted",
+      "htmlPreviewHint": "When enabled, the bubble window renders detected HTML fragments in a sandboxed iframe preview.",
+      "htmlPreviewTitle": "HTML Preview",
+      "htmlPreviewToggle": "HTML Preview Plugin",
+      "htmlPreviewUpdateFailed": "Failed to update HTML preview plugin: {error}",
+      "htmlPreviewUpdated": "HTML preview plugin updated",
+      "imageFiles": "Image Files",
+      "keyConfigured": "Key configured",
+      "live2dModelLabel": "Live2D Model",
+      "modelPlaceholderLmStudio": "Optional; LM Studio uses the currently loaded model automatically",
+      "noCustomImage": "No custom image selected",
+      "notTested": "Connection not tested yet",
+      "onDemand": "On demand",
+      "personalizationTitle": "Personalization & System",
+      "petStyleLabel": "Pet Style",
+      "providerTitle": "Model Service",
+      "providerTypeLabel": "Service Type",
+      "quietHoursEnable": "Enable Quiet Hours",
+      "quietHoursEnd": "Quiet Hours End",
+      "quietHoursStart": "Quiet Hours Start",
+      "quietModeTitle": "Interaction Liveliness",
+      "saveAndTest": "Save & Test Connection",
+      "saveButton": "Save Personalization Settings",
+      "saved": "Saved",
+      "sensingLabel": "Active Sensing",
+      "testing": "Testing...",
+      "themeLabel": "Theme Color",
+      "themeOcean": "Lake Blue",
+      "themePeach": "Warm Peach",
+      "themeSage": "Sage Green",
+      "timeoutLabel": "Timeout (seconds)",
+      "waitingTest": "Awaiting Test"
+    },
+    "status": {
+      "aiChat": "AI Chat",
+      "available": "Available",
+      "currentTitle": "Current Status",
+      "file": "File Handling",
+      "foregroundApp": "Foreground App",
+      "hidePet": "Hide Pet",
+      "idleDuration": "Idle Duration",
+      "keepWorking": "Keep Working",
+      "online": "Online",
+      "pet": "Desktop Pet",
+      "reminders": "Reminders",
+      "restSuggested": "Break Suggested",
+      "rhythmTitle": "Today's Activity",
+      "showPet": "Show Pet",
+      "todayTyping": "Typing Today",
+      "typingDuration": "Typing Duration"
+    }
   }
 }
