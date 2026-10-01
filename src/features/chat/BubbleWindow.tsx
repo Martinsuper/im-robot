@@ -559,6 +559,9 @@ export function BubbleWindow() {
       },
     }).catch((error) => {
       setIsThinking(false);
+      clearSkeletonHideTimer();
+      setShowReplySkeleton(false);
+      setIsReplyEntering(false);
       setMessage(t("bubble.connectionFailed", "模型服务连接失败：{error}").replace("{error}", () => String(error)));
     });
   }
