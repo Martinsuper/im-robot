@@ -1,6 +1,6 @@
 # 测试覆盖审查
 
-> **修复记录（2026-09-29）**：新增 `useTauriEventSubscription.test.tsx`（4 用例：handler 变化不重订阅、ref 透传、resolve 后卸载注销一次、resolve 前卸载注销一次——F1 的验收测试）与 `previewFrameUrl` 2 用例；vitest include 扩展到 `.test.tsx`；引入 `@testing-library/react` + `jsdom`（per-file `@vitest-environment jsdom`）。当前 11 个测试文件 108 用例全过。其余盲区待补。
+> **修复记录（2026-09-29）**：新增 `useTauriEventSubscription.test.tsx`（4 用例：handler 变化不重订阅、ref 透传、resolve 后卸载注销一次、resolve 前卸载注销一次——F1 的验收测试）与 `previewFrameUrl` 2 用例；vitest include 扩展到 `.test.tsx`；引入 `@testing-library/react` + `jsdom`（per-file `@vitest-environment jsdom`）。当前 12 个测试文件 101 用例全过（聊天事件流竞态 8 用例 + petAi 18 用例已补，含用例发现并推动修复的 chat_start 骨架 bug）。e2e 5/5。
 
 ## 1. 现状盘点
 

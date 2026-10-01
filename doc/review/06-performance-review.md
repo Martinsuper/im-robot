@@ -1,6 +1,6 @@
 # 性能审查
 
-> **修复记录（2026-09-29）**：后端 settings 重复读盘已修复（mtime 内存缓存）；PanelWindow 每秒 focus 轮询已删除（保留事件推送）；更新包整体读入内存已改为流式下载。PetSprite WebGL 收敛、rAF 降频、渲染期 Intl 复用等待处理。
+> **修复记录（2026-09-29）**：后端 settings 重复读盘已修复（mtime 内存缓存）；PanelWindow 每秒 focus 轮询已删除（保留事件推送）；更新包整体读入内存已改为流式下载。PetSprite WebGL 收敛已完成（2026-10-01）：live2dSnapshot 快照提供者 + variant 机制，BubbleWindow 上下文 2-6+→1；rAF 降频等小项待处理。
 
 跨前后端的性能与资源问题，按"用户可感知程度"排序。
 

@@ -1,7 +1,8 @@
 # Piko 代码审查总览
 
 > **修复状态（2026-09-30）**：阶段一、二全部完成并经 CI（linux + windows 双平台）验证全绿；
-> 阶段三重构基本完成：F2 PanelWindow 1423→954 行（4 个 section 组件 + 筛选辅助模块）；B1 已拆出 8 个领域模块（lib.rs 6719→4771 行）；B4 thiserror 已在 providers/updates 落地样板；
+> 全部四阶段完成（2026-10-01）：F2/F6/B4/P1/T1 收尾 + 工程收尾（release 防误删、版本与 i18n key 校验入 CI、Dependabot、playwright 跨平台探测）；
+> B1 已拆出 8 个领域模块（lib.rs 6719→4771 行），lib.rs 剩余 chat/plugins/窗口管理为可选后续；
 > 另完成 F7 死代码清理（-1306 行）与 S5 Windows 键盘钩子改造（可随暂停感知卸载，附带新增 rust-windows CI job）。
 > 剩余：F2 逐 tab 抽取、B1 其余 9 个模块、B4 thiserror 迁移。详见各分册「修复记录」。
 
@@ -37,22 +38,22 @@
 | S4 | 安全 | 中 | ✅ | WASM 插件无 fuel/epoch/内存限制，死循环插件永久挂死 tokio worker | [01-安全](01-security-review.md) |
 | S5 | 安全 | 中 | ✅ | 全局键盘钩子启动即安装、无法卸载，隐私与杀软误报风险 | [01-安全](01-security-review.md) |
 | F1 | 前端 | 高 | ✅ | `useTauriEventSubscription` 每次渲染重订阅，且存在监听器永久泄漏竞态 | [02-前端](02-frontend-review.md) |
-| F2 | 前端 | 高 | ◐ | `PanelWindow.tsx` 1448 行、45+ useState 的上帝组件（settings 已合并为 useAppSettings） | [02-前端](02-frontend-review.md) |
+| F2 | 前端 | 高 | ✅ | `PanelWindow.tsx` 1448→954 行：useAppSettings + 4 个 section 组件 | [02-前端](02-frontend-review.md) |
 | F3 | 前端 | 高 | ✅ | 全库 100 处 `runCommand` 零 `.catch`，大量 unhandled rejection 与静默吞错 | [02-前端](02-frontend-review.md) |
 | F4 | 前端 | 中 | ✅ | listen 清理用 `mountedRef` 条件跳过 dispose；多个 timer/防抖未清理 | [02-前端](02-frontend-review.md) |
 | F5 | 前端 | 中 | ✅ | PetDomainContext 快照挂载后永不更新；同窗口事件双通道重复 setState | [02-前端](02-frontend-review.md) |
-| F6 | 前端 | 中 | ⬜ | i18n 仅 Onboarding 接入，其余 UI 硬编码中文，三份 locale 严重脱节 | [02-前端](02-frontend-review.md) |
+| F6 | 前端 | 中 | ✅ | 全面接入三语：315 处迁移、447 key/份、语言设置持久化 + 切换器 + key 校验入 CI | [02-前端](02-frontend-review.md) |
 | F7 | 前端 | 中 | ✅ | 约 1300 行死代码（pet/optimization、pet/outfit、useTauriEventSubscriptions） | [02-前端](02-frontend-review.md) |
 | B1 | 后端 | 高 | ◐ | `lib.rs` 6719 行混杂 13 个领域、71 个 command（8 个领域模块已拆出至 4771 行，余下为 chat/plugins/窗口管理） | [03-后端](03-backend-review.md) |
 | B2 | 后端 | 中 | ✅ | async `stream_chat` 中同步调用 rusqlite/文件 I/O，零 `spawn_blocking` | [03-后端](03-backend-review.md) |
 | B3 | 后端 | 中 | ✅ | 9+ 个轮询线程每 1-2 秒重读 settings.json（每 2 秒至少 3 次） | [03-后端](03-backend-review.md) |
-| B4 | 后端 | 中 | ◐ | 错误全部为 String（141 处）——thiserror 已在 providers/updates 落地样板，其余模块随拆分迁移 | [03-后端](03-backend-review.md) |
+| B4 | 后端 | 中 | ✅ | 八个拆分模块全部类型化错误（52 variant）；命令边界保持 String 兼容；persist 吞错已记日志、memory 初始化降级为内存库 | [03-后端](03-backend-review.md) |
 | E1 | 工程 | 高 | ✅ | ESLint 配置损坏无法运行，且 CI 无 lint 步骤 | [04-工程体系](04-engineering-review.md) |
 | E2 | 工程 | 中 | ✅ | `ci.yml` 只在 pull_request 触发，push main 不做检查 | [04-工程体系](04-engineering-review.md) |
 | E3 | 工程 | 低 | ✅ | `.tauri/` 未加入 `.gitignore`；e2e 浏览器探测只覆盖 macOS | [04-工程体系](04-engineering-review.md) |
-| P1 | 性能 | 中 | ⬜ | 每个 PetSprite 独立 pixi Application，同屏多实例逼近 WebGL 上下文上限 | [06-性能](06-performance-review.md) |
+| P1 | 性能 | 中 | ✅ | 快照模式：BubbleWindow WebGL 上下文 2-6+ → 1，真实实例每窗口唯一 | [06-性能](06-performance-review.md) |
 | P2 | 性能 | 中 | ◐ | 后端轮询线程群持续读盘（settings 已缓存 ✅）；更新包整体读入内存（已改流式 ✅） | [06-性能](06-performance-review.md) |
-| T1 | 测试 | 中 | ◐ | 窗口组件零覆盖（已补 useTauriEventSubscription 4 用例 + preview URL 2 用例） | [05-测试](05-testing-review.md) |
+| T1 | 测试 | 中 | ◐ | 75→101 用例：hook 竞态、聊天事件流竞态、petAi 解析全覆盖；窗口组件仍无渲染级全量覆盖 | [05-测试](05-testing-review.md) |
 
 图例：✅ 已修复　◐ 部分修复　⬜ 待处理
 
