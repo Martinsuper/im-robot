@@ -34,6 +34,7 @@ import { usePetDrag } from "./hooks/usePetDrag";
 import { usePetNotice } from "./hooks/usePetNotice";
 import { useTauriEventSubscription } from "./hooks/useTauriEventSubscription";
 import { PetDomainProvider, usePetDomain } from "./context/PetDomainContext";
+import { useTranslation } from "../i18n/I18nProvider";
 
 interface IdleRhythmProfile {
   fidgetDelayMin: number;
@@ -79,6 +80,7 @@ function eventTimestamp() {
 }
 
 function PetWindowContent() {
+  const { t } = useTranslation();
   const [petState, dispatch] = useReducer(reducePetState, initialPetState);
   const [companionName, setCompanionName] = useState("Piko");
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
@@ -195,8 +197,8 @@ function PetWindowContent() {
     }
 
     if (result.openBubble) {
-      setBubbleCompanionMessage(getPetSpeechFallbackForInteraction(event.type, bondTier));
-      void getPetSpeechForInteraction(event.type, bondTier, livePersonality, describePersonality(livePersonality)).then((message) => {
+      setBubbleCompanionMessage(getPetSpeechFallbackForInteraction(event.type, bondTier, undefined, t));
+      void getPetSpeechForInteraction(event.type, bondTier, livePersonality, describePersonality(livePersonality), t).then((message) => {
         setBubbleCompanionMessage(message);
       });
       runCommandQuiet("show_bubble");
@@ -216,7 +218,7 @@ function PetWindowContent() {
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
     showPetNotice(fallbackMessage, durationMs);
 
-    void getPetSpeechForInteraction(eventType, bondTier, livePersonality, describePersonality(livePersonality)).then((message) => {
+    void getPetSpeechForInteraction(eventType, bondTier, livePersonality, describePersonality(livePersonality), t).then((message) => {
       showPetNotice(message, durationMs);
     });
   }
@@ -336,7 +338,7 @@ function PetWindowContent() {
           ?? { type: "idle", timestamp: Date.now(), intensity: 0.5 }
       );
       dispatch({ type: "AMBIENT_NUDGE" });
-      showCompanionNotice("ambient_nudge", "Piko 轻轻看了你一眼。", 2400);
+      showCompanionNotice("ambient_nudge", t("pet.notice.ambientNudge", "Piko 轻轻看了你一眼。"), 2400);
     }
     if (event.type === "break-reminder") {
       personalityManager.recordInteraction(
@@ -352,7 +354,7 @@ function PetWindowContent() {
           ?? { type: "idle", timestamp: Date.now(), intensity: 1 }
       );
       dispatch({ type: "REST" });
-      showCompanionNotice("user_idle_started", "Piko 安静下来陪你休息。", 2800);
+      showCompanionNotice("user_idle_started", t("pet.notice.idleStarted", "Piko 安静下来陪你休息。"), 2800);
     }
     if (event.type === "idle-ended") {
       personalityManager.recordInteraction(
@@ -360,7 +362,7 @@ function PetWindowContent() {
           ?? { type: "idle", timestamp: Date.now(), intensity: 0.2 }
       );
       dispatch({ type: "WAKE" });
-      showCompanionNotice("user_idle_ended", "欢迎回来。", 2800);
+      showCompanionNotice("user_idle_ended", t("pet.notice.welcomeBack", "欢迎回来。"), 2800);
     }
     if (event.type === "focus-started") {
       personalityManager.recordInteraction(
@@ -368,7 +370,7 @@ function PetWindowContent() {
           ?? { type: "work", timestamp: Date.now(), intensity: 0.7 }
       );
       dispatch({ type: "WORK_STARTED" });
-      showCompanionNotice("focus_started", "Piko 正在放轻脚步。", 2200);
+      showCompanionNotice("focus_started", t("pet.notice.focusStarted", "Piko 正在放轻脚步。"), 2200);
     }
     if (event.type === "focus-completed") {
       personalityManager.recordInteraction(
@@ -376,7 +378,7 @@ function PetWindowContent() {
           ?? { type: "celebrate", timestamp: Date.now(), intensity: 0.8 }
       );
       dispatch({ type: "CHAT_COMPLETED" });
-      showCompanionNotice("focus_completed", "做完啦，来看看结果。", 3200);
+      showCompanionNotice("focus_completed", t("pet.notice.focusCompleted", "做完啦，来看看结果。"), 3200);
     }
   }, [quietMode, bondTier]);
 
@@ -465,7 +467,7 @@ function PetWindowContent() {
   return (
     <main
       className={`pet-stage pet-stage--${theme} pet-stage--${quietMode}${sensingPaused ? " is-sensing-paused" : ""}`}
-      aria-label={`桌面精灵 ${companionName}`}
+      aria-label={t("pet.stageLabel", "桌面精灵 {name}").replace("{name}", companionName)}
       {...dragHandlers}
     >
       {petNotice && (
@@ -477,7 +479,7 @@ function PetWindowContent() {
             event.stopPropagation();
             clearPetNotice();
           }}
-          aria-label="关闭提醒"
+          aria-label={t("pet.notice.close", "关闭提醒")}
         >
           {petNotice}
         </button>
@@ -485,7 +487,7 @@ function PetWindowContent() {
       <div
         ref={petRef}
         className={`pet pet--${petVisualStyle} pet--${petState.mode} pet--bond-${bondTier} pet-reaction--${petState.reaction}${isDragOver ? " is-drag-over" : ""}${isDragging ? " is-dragging" : ""}${attentionPulse ? " is-attention-pulse" : ""}`}
-        aria-label="拖动 Piko"
+        aria-label={t("pet.drag", "拖动 Piko")}
         onMouseEnter={() => {
           handleHumanInteraction({
             type: "hover",
@@ -563,7 +565,7 @@ function PetWindowContent() {
           reaction={petState.reaction}
           mouseDelta={mouseDelta}
         />
-        <time className="pet-clock" aria-label={`当前时间 ${currentTime}`}>
+        <time className="pet-clock" aria-label={t("pet.clockLabel", "当前时间 {time}").replace("{time}", currentTime)}>
           {currentTime}
         </time>
         <span className={`pet-emotion pet-emotion--${petState.emotion}`} aria-hidden="true" />
@@ -579,10 +581,10 @@ function PetWindowContent() {
             });
           }}
         >
-          对话
+          {t("pet.menu.chat", "对话")}
         </button>
         <button className="icon-button" type="button" onClick={() => runCommand("open_panel")}>
-          面板
+          {t("pet.menu.panel", "面板")}
         </button>
         <button
           className="icon-button"
@@ -592,7 +594,7 @@ function PetWindowContent() {
             timestamp: Date.now(),
           })}
         >
-          {isResting ? "唤醒" : "休息"}
+          {isResting ? t("pet.menu.wake", "唤醒") : t("pet.menu.rest", "休息")}
         </button>
         <button
           className="icon-button"
@@ -600,18 +602,18 @@ function PetWindowContent() {
           onClick={() => {
             if (petVisualStyle === "character") {
               const nextModelId = getNextLive2DModelId(live2dModelId);
-              const nextModelLabel = live2dModelOptions.find((option) => option.value === nextModelId)?.label ?? "官方模型";
+              const nextModelLabel = live2dModelOptions.find((option) => option.value === nextModelId)?.label ?? t("pet.model.official", "官方模型");
               setLive2DModelId(nextModelId);
-              showPetNotice(`已切换到 ${nextModelLabel}`);
+              showPetNotice(t("pet.notice.modelSwitched", "已切换到 {model}").replace("{model}", nextModelLabel));
             } else {
               setLive2DModelId(defaultLive2DModelId);
               setPetVisualStyle("character");
-              const modelLabel = live2dModelOptions.find((option) => option.value === defaultLive2DModelId)?.label ?? "官方模型";
-              showPetNotice(`已切换到 ${modelLabel}`);
+              const modelLabel = live2dModelOptions.find((option) => option.value === defaultLive2DModelId)?.label ?? t("pet.model.official", "官方模型");
+              showPetNotice(t("pet.notice.modelSwitched", "已切换到 {model}").replace("{model}", modelLabel));
             }
           }}
         >
-          {petVisualStyle === "character" ? "换模型" : "官方"}
+          {petVisualStyle === "character" ? t("pet.menu.changeModel", "换模型") : t("pet.menu.official", "官方")}
         </button>
       </div>
       {contextMenu && (
@@ -627,7 +629,7 @@ function PetWindowContent() {
               setContextMenu(null);
             }}
           >
-            对话
+            {t("pet.menu.chat", "对话")}
           </button>
           <button
             type="button"
@@ -636,7 +638,7 @@ function PetWindowContent() {
               setContextMenu(null);
             }}
           >
-            面板
+            {t("pet.menu.panel", "面板")}
           </button>
           <button
             type="button"
@@ -645,7 +647,7 @@ function PetWindowContent() {
               setContextMenu(null);
             }}
           >
-            {isResting ? "唤醒" : "休息"}
+            {isResting ? t("pet.menu.wake", "唤醒") : t("pet.menu.rest", "休息")}
           </button>
           <button
             type="button"
@@ -654,7 +656,7 @@ function PetWindowContent() {
               setContextMenu(null);
             }}
           >
-            切换形象
+            {t("pet.menu.switchStyle", "切换形象")}
           </button>
           <button
             type="button"
@@ -663,7 +665,7 @@ function PetWindowContent() {
               setContextMenu(null);
             }}
           >
-            隐藏
+            {t("pet.menu.hide", "隐藏")}
           </button>
         </div>
       )}
