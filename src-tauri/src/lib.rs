@@ -3411,8 +3411,17 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            // Initialize memory database
-            let memory_db = memory::init_memory_db(app.handle()).expect("无法初始化内存数据库");
+            // Initialize memory database. 失败时降级为进程内临时数据库而不是
+            // 让应用启动失败：chat_start 与记忆命令都依赖这两个 State，跳过
+            // manage 会让聊天功能整体不可用，因此这里始终保持 manage。
+            let memory_db = match memory::init_memory_db(app.handle()) {
+                Ok(db) => db,
+                Err(error) => {
+                    eprintln!("无法初始化内存数据库：{error}");
+                    eprintln!("已降级为进程内临时数据库，本次会话的记忆不会持久化");
+                    memory::open_in_memory_db().expect("无法初始化进程内临时数据库")
+                }
+            };
             // Arc 包装让异步命令可以把阻塞的 SQLite 调用移入 spawn_blocking
             app.manage(Arc::new(memory_db));
             app.manage(Arc::new(memory::CandidateCache::default()));

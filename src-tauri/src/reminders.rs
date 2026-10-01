@@ -10,8 +10,50 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
+use thiserror::Error;
 
 use crate::{tool_timestamp, tool_timestamp_str, unix_timestamp, PetVisualEvent};
+
+/// 模块内函数的类型化错误。Display 保留原有中文文案，经
+/// `From<ReminderError> for String` 兼容命令边界既有的 `Result<_, String>` 签名。
+#[derive(Debug, Error)]
+pub enum ReminderError {
+    #[error("无法获取提醒记录路径")]
+    StoragePath,
+    #[error("无法获取提醒记录目录")]
+    StorageDir,
+    #[error("{0}")]
+    StorageIo(String),
+    #[error("提醒标题不能为空")]
+    EmptyTitle,
+    #[error("提醒 ID 不能为空")]
+    EmptyId,
+    #[error("提醒内容不能为空")]
+    EmptyContent,
+    #[error("提醒内容不能超过 120 个字符")]
+    ContentTooLong,
+    #[error("提醒时间必须晚于当前时间")]
+    DueInPast,
+    #[error("不支持的重复提醒规则")]
+    UnsupportedRepeatRule,
+    #[error("未找到该提醒")]
+    NotFound,
+    /// 透传 tool_timestamp 等外部模块的 String 错误，文案原样保留。
+    #[error("{0}")]
+    Message(String),
+}
+
+impl From<ReminderError> for String {
+    fn from(error: ReminderError) -> Self {
+        error.to_string()
+    }
+}
+
+impl From<String> for ReminderError {
+    fn from(message: String) -> Self {
+        ReminderError::Message(message)
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,15 +93,13 @@ pub fn read_reminders(app: &AppHandle) -> Vec<Reminder> {
         .unwrap_or_default()
 }
 
-pub fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), String> {
-    let path = reminders_path(app).ok_or_else(|| "无法获取提醒记录路径".to_string())?;
-    let directory = path
-        .parent()
-        .ok_or_else(|| "无法获取提醒记录目录".to_string())?;
+pub fn persist_reminders(app: &AppHandle, reminders: &[Reminder]) -> Result<(), ReminderError> {
+    let path = reminders_path(app).ok_or(ReminderError::StoragePath)?;
+    let directory = path.parent().ok_or(ReminderError::StorageDir)?;
     let json = serde_json::to_string(reminders).map_err(|error| error.to_string())?;
 
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    fs::write(path, json).map_err(|error| error.to_string())
+    fs::create_dir_all(directory).map_err(|error| ReminderError::StorageIo(error.to_string()))?;
+    fs::write(path, json).map_err(|error| ReminderError::StorageIo(error.to_string()))
 }
 
 fn reminder_id() -> String {
@@ -81,10 +121,10 @@ pub fn repeat_rule_label(repeat: &str) -> &str {
     }
 }
 
-pub fn reminder_input_from_value(value: &Value) -> Result<ReminderInput, String> {
+pub fn reminder_input_from_value(value: &Value) -> Result<ReminderInput, ReminderError> {
     let title = value["title"]
         .as_str()
-        .ok_or_else(|| "提醒标题不能为空".to_string())?
+        .ok_or(ReminderError::EmptyTitle)?
         .to_string();
     let due_at = tool_timestamp(&value["dueAt"])?;
     let repeat = value["repeat"].as_str().unwrap_or("none").to_string();
@@ -103,10 +143,12 @@ pub struct ReminderDeleteInput {
     pub repeat: Option<String>,
 }
 
-pub fn reminder_delete_input_from_value(value: &Value) -> Result<ReminderDeleteInput, String> {
+pub fn reminder_delete_input_from_value(
+    value: &Value,
+) -> Result<ReminderDeleteInput, ReminderError> {
     let id = value["id"]
         .as_str()
-        .ok_or_else(|| "提醒 ID 不能为空".to_string())?
+        .ok_or(ReminderError::EmptyId)?
         .to_string();
     Ok(ReminderDeleteInput {
         id,
@@ -123,22 +165,25 @@ pub fn list_reminders(app: AppHandle) -> Vec<Reminder> {
     reminders
 }
 
-pub fn create_reminder_record(app: &AppHandle, input: ReminderInput) -> Result<Reminder, String> {
+pub fn create_reminder_record(
+    app: &AppHandle,
+    input: ReminderInput,
+) -> Result<Reminder, ReminderError> {
     let title = input.title.trim();
     if title.is_empty() {
-        return Err("提醒内容不能为空".to_string());
+        return Err(ReminderError::EmptyContent);
     }
     if title.chars().count() > 120 {
-        return Err("提醒内容不能超过 120 个字符".to_string());
+        return Err(ReminderError::ContentTooLong);
     }
     if input.due_at <= unix_timestamp() {
-        return Err("提醒时间必须晚于当前时间".to_string());
+        return Err(ReminderError::DueInPast);
     }
     if !matches!(
         input.repeat.as_str(),
         "none" | "daily" | "weekly" | "weekdays"
     ) {
-        return Err("不支持的重复提醒规则".to_string());
+        return Err(ReminderError::UnsupportedRepeatRule);
     }
 
     let reminder = Reminder {
@@ -158,12 +203,12 @@ pub fn create_reminder_record(app: &AppHandle, input: ReminderInput) -> Result<R
 pub fn delete_reminder_record(
     app: &AppHandle,
     input: ReminderDeleteInput,
-) -> Result<Reminder, String> {
+) -> Result<Reminder, ReminderError> {
     let mut reminders = read_reminders(app);
     let index = reminders
         .iter()
         .position(|reminder| reminder.id == input.id)
-        .ok_or_else(|| "未找到该提醒".to_string())?;
+        .ok_or(ReminderError::NotFound)?;
     let deleted = reminders.remove(index);
     persist_reminders(app, &reminders)?;
     let _ = app.emit_to("panel", "reminders-updated", ());
@@ -172,7 +217,7 @@ pub fn delete_reminder_record(
 
 #[tauri::command]
 pub fn create_reminder(app: AppHandle, input: ReminderInput) -> Result<Reminder, String> {
-    create_reminder_record(&app, input)
+    Ok(create_reminder_record(&app, input)?)
 }
 
 #[tauri::command]
@@ -220,7 +265,7 @@ pub fn next_repeat_due(mut due_at: u64, repeat: &str, now: u64) -> u64 {
     }
 }
 
-pub fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String> {
+pub fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, ReminderError> {
     let now = unix_timestamp();
     let mut reminders = read_reminders(app);
     let due = collect_due_reminders(&mut reminders, now);

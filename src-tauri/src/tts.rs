@@ -3,12 +3,33 @@
 use std::process::{Child, Command};
 use std::sync::Mutex;
 use tauri::State;
+use thiserror::Error;
 
-pub fn stop_local_tts(tts: &LocalTts) -> Result<(), String> {
-    let mut active = tts
-        .0
-        .lock()
-        .map_err(|_| "无法读取本地朗读状态".to_string())?;
+/// 模块内函数的类型化错误。Display 保留原有中文文案，经
+/// `From<TtsError> for String` 兼容命令边界既有的 `Result<_, String>` 签名。
+#[derive(Debug, Error)]
+pub enum TtsError {
+    #[error("无法读取本地朗读状态")]
+    StateLock,
+    #[cfg(target_os = "macos")]
+    #[error("无法启动 macOS 本地朗读：{0}")]
+    SpawnMacOS(String),
+    #[cfg(target_os = "windows")]
+    #[error("无法启动 Windows 本地朗读：{0}")]
+    SpawnWindows(String),
+    #[cfg(target_os = "linux")]
+    #[error("无法启动 Linux 本地朗读，请安装 speech-dispatcher：{0}")]
+    SpawnLinux(String),
+}
+
+impl From<TtsError> for String {
+    fn from(error: TtsError) -> Self {
+        error.to_string()
+    }
+}
+
+pub fn stop_local_tts(tts: &LocalTts) -> Result<(), TtsError> {
+    let mut active = tts.0.lock().map_err(|_| TtsError::StateLock)?;
     if let Some(mut child) = active.take() {
         let _ = child.kill();
         let _ = child.wait();
@@ -36,14 +57,14 @@ pub fn text_for_speech(text: &str) -> String {
         .collect::<String>()
 }
 
-fn spawn_local_tts(text: &str) -> Result<Child, String> {
+fn spawn_local_tts(text: &str) -> Result<Child, TtsError> {
     #[cfg(target_os = "macos")]
     {
         Command::new("say")
             .arg("--")
             .arg(text)
             .spawn()
-            .map_err(|error| format!("无法启动 macOS 本地朗读：{error}"))
+            .map_err(|error| TtsError::SpawnMacOS(error.to_string()))
     }
     #[cfg(target_os = "windows")]
     {
@@ -56,7 +77,7 @@ fn spawn_local_tts(text: &str) -> Result<Child, String> {
             ])
             .env("PIKO_TTS_TEXT", text)
             .spawn()
-            .map_err(|error| format!("无法启动 Windows 本地朗读：{error}"))
+            .map_err(|error| TtsError::SpawnWindows(error.to_string()))
     }
     #[cfg(target_os = "linux")]
     {
@@ -64,7 +85,7 @@ fn spawn_local_tts(text: &str) -> Result<Child, String> {
             .arg("--")
             .arg(text)
             .spawn()
-            .map_err(|error| format!("无法启动 Linux 本地朗读，请安装 speech-dispatcher：{error}"))
+            .map_err(|error| TtsError::SpawnLinux(error.to_string()))
     }
 }
 

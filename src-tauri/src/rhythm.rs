@@ -5,11 +5,51 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, sync::Mutex, thread, time::Duration};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
+use thiserror::Error;
 
 use crate::{
     app_awareness, idle_threshold_seconds, persist_settings, read_settings, system_idle_seconds,
     typing_activity, unix_timestamp, AppSettings, ChatRequests, PetVisualEvent,
 };
+
+/// 模块内函数的类型化错误。Display 保留原有中文文案，经
+/// `From<RhythmError> for String` 兼容命令边界既有的 `Result<_, String>` 签名。
+#[derive(Debug, Error)]
+pub enum RhythmError {
+    #[error("无法获取专注记录路径")]
+    FocusRecordsPath,
+    #[error("无法获取专注记录目录")]
+    FocusRecordsDir,
+    #[error("{0}")]
+    FocusRecordsIo(String),
+    #[error("无法读取专注状态")]
+    FocusStateReadLock,
+    #[error("无法更新专注状态")]
+    FocusStateWriteLock,
+    #[error("无法读取前台应用状态")]
+    ForegroundStateReadLock,
+    #[error("静默时段时间格式应为 HH:MM")]
+    InvalidClockFormat,
+    #[error("休息提醒间隔应在 15 到 240 分钟之间")]
+    InvalidInterval,
+    #[error("休息提醒冷却应在 5 到 240 分钟之间")]
+    InvalidCooldown,
+    /// 透传 typing_activity 等外部模块的 String 错误，文案原样保留。
+    #[error("{0}")]
+    Message(String),
+}
+
+impl From<RhythmError> for String {
+    fn from(error: RhythmError) -> Self {
+        error.to_string()
+    }
+}
+
+impl From<String> for RhythmError {
+    fn from(message: String) -> Self {
+        RhythmError::Message(message)
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,15 +131,14 @@ fn read_focus_records(app: &AppHandle) -> Vec<FocusRecord> {
         .unwrap_or_default()
 }
 
-fn persist_focus_records(app: &AppHandle, records: &[FocusRecord]) -> Result<(), String> {
-    let path = focus_records_path(app).ok_or_else(|| "无法获取专注记录路径".to_string())?;
-    let directory = path
-        .parent()
-        .ok_or_else(|| "无法获取专注记录目录".to_string())?;
+fn persist_focus_records(app: &AppHandle, records: &[FocusRecord]) -> Result<(), RhythmError> {
+    let path = focus_records_path(app).ok_or(RhythmError::FocusRecordsPath)?;
+    let directory = path.parent().ok_or(RhythmError::FocusRecordsDir)?;
     let json = serde_json::to_string(records).map_err(|error| error.to_string())?;
 
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    fs::write(path, json).map_err(|error| error.to_string())
+    fs::create_dir_all(directory)
+        .map_err(|error| RhythmError::FocusRecordsIo(error.to_string()))?;
+    fs::write(path, json).map_err(|error| RhythmError::FocusRecordsIo(error.to_string()))
 }
 
 pub fn today_focus_minutes(records: &[FocusRecord], now: u64) -> u64 {
@@ -111,9 +150,12 @@ pub fn today_focus_minutes(records: &[FocusRecord], now: u64) -> u64 {
         .sum()
 }
 
-fn focus_snapshot(app: &AppHandle, focus: &FocusTimer) -> Result<FocusSnapshot, String> {
+fn focus_snapshot(app: &AppHandle, focus: &FocusTimer) -> Result<FocusSnapshot, RhythmError> {
     let now = unix_timestamp();
-    let active = focus.0.lock().map_err(|_| "无法读取专注状态".to_string())?;
+    let active = focus
+        .0
+        .lock()
+        .map_err(|_| RhythmError::FocusStateReadLock)?;
     let (status, kind, remaining_seconds) = active
         .as_ref()
         .map(|active| {
@@ -143,7 +185,7 @@ fn work_rhythm_snapshot(
     app: &AppHandle,
     typing: &typing_activity::TypingActivityState,
     focus: &FocusTimer,
-) -> Result<WorkRhythmState, String> {
+) -> Result<WorkRhythmState, RhythmError> {
     let settings = read_settings(app);
     let now = unix_timestamp();
     let focus_snapshot = focus_snapshot(app, focus)?;
@@ -152,7 +194,7 @@ fn work_rhythm_snapshot(
     let active_app_category = active_app_state
         .current_category
         .lock()
-        .map_err(|_| "无法读取前台应用状态".to_string())?;
+        .map_err(|_| RhythmError::ForegroundStateReadLock)?;
     let chat_active = app
         .state::<ChatRequests>()
         .0
@@ -314,21 +356,21 @@ pub fn is_within_quiet_hours(start: &str, end: &str, enabled: bool, now: u64) ->
     }
 }
 
-fn normalize_clock_label(value: &str) -> Result<String, String> {
+fn normalize_clock_label(value: &str) -> Result<String, RhythmError> {
     let Some(minutes) = parse_clock_minutes(value) else {
-        return Err("静默时段时间格式应为 HH:MM".to_string());
+        return Err(RhythmError::InvalidClockFormat);
     };
     let hour = minutes / 60;
     let minute = minutes % 60;
     Ok(format!("{hour:02}:{minute:02}"))
 }
 
-fn validate_work_rhythm_preferences(input: &WorkRhythmPreferencesInput) -> Result<(), String> {
+fn validate_work_rhythm_preferences(input: &WorkRhythmPreferencesInput) -> Result<(), RhythmError> {
     if !(15..=240).contains(&input.break_reminder_interval_minutes) {
-        return Err("休息提醒间隔应在 15 到 240 分钟之间".to_string());
+        return Err(RhythmError::InvalidInterval);
     }
     if !(5..=240).contains(&input.break_reminder_cooldown_minutes) {
-        return Err("休息提醒冷却应在 5 到 240 分钟之间".to_string());
+        return Err(RhythmError::InvalidCooldown);
     }
     let _ = normalize_clock_label(&input.break_reminder_quiet_hours_start)?;
     let _ = normalize_clock_label(&input.break_reminder_quiet_hours_end)?;
@@ -340,7 +382,7 @@ pub fn get_focus_state(
     app: AppHandle,
     focus: State<'_, FocusTimer>,
 ) -> Result<FocusSnapshot, String> {
-    focus_snapshot(&app, &focus)
+    Ok(focus_snapshot(&app, &focus)?)
 }
 
 #[tauri::command]
@@ -349,7 +391,7 @@ pub fn get_work_rhythm_state(
     typing: State<'_, typing_activity::TypingActivityState>,
     focus: State<'_, FocusTimer>,
 ) -> Result<WorkRhythmState, String> {
-    work_rhythm_snapshot(&app, &typing, &focus)
+    Ok(work_rhythm_snapshot(&app, &typing, &focus)?)
 }
 
 #[tauri::command]
@@ -364,11 +406,14 @@ pub fn start_focus(
     start_timer(&focus, "focus", minutes)?;
     let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::FocusStarted);
     emit_focus_updated(&app, &focus);
-    focus_snapshot(&app, &focus)
+    Ok(focus_snapshot(&app, &focus)?)
 }
 
-fn start_timer(focus: &FocusTimer, kind: &str, minutes: u64) -> Result<(), String> {
-    *focus.0.lock().map_err(|_| "无法更新专注状态".to_string())? = Some(ActiveFocus {
+fn start_timer(focus: &FocusTimer, kind: &str, minutes: u64) -> Result<(), RhythmError> {
+    *focus
+        .0
+        .lock()
+        .map_err(|_| RhythmError::FocusStateWriteLock)? = Some(ActiveFocus {
         status: "running".to_string(),
         kind: kind.to_string(),
         end_at: unix_timestamp() + minutes * 60,
@@ -389,7 +434,7 @@ pub fn start_break(
     }
     start_timer(&focus, "break", minutes)?;
     emit_focus_updated(&app, &focus);
-    focus_snapshot(&app, &focus)
+    Ok(focus_snapshot(&app, &focus)?)
 }
 
 #[tauri::command]
@@ -406,7 +451,7 @@ pub fn pause_focus(app: AppHandle, focus: State<'_, FocusTimer>) -> Result<Focus
         }
     }
     emit_focus_updated(&app, &focus);
-    focus_snapshot(&app, &focus)
+    Ok(focus_snapshot(&app, &focus)?)
 }
 
 #[tauri::command]
@@ -422,14 +467,14 @@ pub fn resume_focus(app: AppHandle, focus: State<'_, FocusTimer>) -> Result<Focu
         }
     }
     emit_focus_updated(&app, &focus);
-    focus_snapshot(&app, &focus)
+    Ok(focus_snapshot(&app, &focus)?)
 }
 
 #[tauri::command]
 pub fn stop_focus(app: AppHandle, focus: State<'_, FocusTimer>) -> Result<FocusSnapshot, String> {
     *focus.0.lock().map_err(|_| "无法更新专注状态".to_string())? = None;
     emit_focus_updated(&app, &focus);
-    focus_snapshot(&app, &focus)
+    Ok(focus_snapshot(&app, &focus)?)
 }
 
 #[tauri::command]
@@ -456,10 +501,13 @@ pub fn update_work_rhythm_preferences(
     Ok(settings)
 }
 
-fn process_focus_timer(app: &AppHandle, focus: &FocusTimer) -> Result<bool, String> {
+fn process_focus_timer(app: &AppHandle, focus: &FocusTimer) -> Result<bool, RhythmError> {
     let now = unix_timestamp();
     let completed = {
-        let mut active = focus.0.lock().map_err(|_| "无法读取专注状态".to_string())?;
+        let mut active = focus
+            .0
+            .lock()
+            .map_err(|_| RhythmError::FocusStateReadLock)?;
         if active
             .as_ref()
             .is_some_and(|active| active.status == "running" && active.end_at <= now)

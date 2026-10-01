@@ -3,6 +3,23 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf, sync::Mutex, time::SystemTime};
 use tauri::{AppHandle, Manager};
+use thiserror::Error;
+
+/// keyring 凭据存取的类型化错误。Display 保留原有中文文案，经
+/// `From<SettingsError> for String` 兼容命令边界既有的 `Result<_, String>` 签名。
+#[derive(Debug, Error)]
+pub enum SettingsError {
+    #[error("无法访问系统凭据存储：{0}")]
+    Entry(String),
+    #[error("凭据存取失败：{0}")]
+    Keyring(String),
+}
+
+impl From<SettingsError> for String {
+    fn from(error: SettingsError) -> Self {
+        error.to_string()
+    }
+}
 
 const KEYRING_SERVICE: &str = "com.duanluyao.imrobot";
 const KEYRING_ACCOUNT: &str = "provider-api-key";
@@ -196,11 +213,13 @@ pub fn persist_settings(app: &AppHandle, settings: &AppSettings) {
         return;
     };
     let Ok(json) = serde_json::to_string(settings) else {
+        eprintln!("设置序列化失败，本次更改未写入 {}", path.display());
         return;
     };
 
     let _ = fs::create_dir_all(directory);
-    if fs::write(&path, json).is_err() {
+    if let Err(error) = fs::write(&path, json) {
+        eprintln!("设置写盘失败（{}）：{error}", path.display());
         // 写盘失败时使缓存失效，下次读取重新从磁盘加载
         let mut cache = SETTINGS_CACHE
             .lock()
@@ -220,15 +239,16 @@ pub fn persist_settings(app: &AppHandle, settings: &AppSettings) {
     }
 }
 
-fn keyring_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(|error| error.to_string())
+fn keyring_entry() -> Result<keyring::Entry, SettingsError> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+        .map_err(|error| SettingsError::Entry(error.to_string()))
 }
 
 pub fn read_api_key() -> Option<String> {
     keyring_entry().ok()?.get_password().ok()
 }
 
-pub fn update_api_key(api_key: Option<String>) -> Result<(), String> {
+pub fn update_api_key(api_key: Option<String>) -> Result<(), SettingsError> {
     let Some(api_key) = api_key else {
         return Ok(());
     };
@@ -239,7 +259,7 @@ pub fn update_api_key(api_key: Option<String>) -> Result<(), String> {
     } else {
         entry
             .set_password(api_key.trim())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| SettingsError::Keyring(error.to_string()))?;
     }
     Ok(())
 }

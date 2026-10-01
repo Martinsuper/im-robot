@@ -5,8 +5,32 @@ use screenshots::{image::DynamicImage, Screen};
 use serde::{Deserialize, Serialize};
 use std::{io::Cursor, sync::Mutex, thread, time::Duration};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State};
+use thiserror::Error;
 
 use crate::show_and_focus;
+
+/// 模块内函数的类型化错误。Display 保留原有中文文案，经
+/// `From<CaptureError> for String` 兼容命令边界既有的 `Result<_, String>` 签名。
+#[derive(Debug, Error)]
+pub enum CaptureError {
+    #[error("截图数据格式无效")]
+    InvalidDataUrl,
+    #[cfg(target_os = "macos")]
+    #[error("Piko 没有屏幕录制权限。请在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Piko，然后重新启动应用。")]
+    ScreenRecordingPermission,
+    #[error("无法读取屏幕：{0}")]
+    Screen(String),
+    #[error("截图失败，请检查屏幕录制权限：{0}")]
+    CaptureArea(String),
+    #[error("无法生成截图预览：{0}")]
+    PngEncode(String),
+}
+
+impl From<CaptureError> for String {
+    fn from(error: CaptureError) -> Self {
+        error.to_string()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ScreenCapture {
@@ -35,29 +59,26 @@ pub struct ScreenshotPreview {
 #[derive(Default)]
 pub struct ScreenCaptureStore(pub Mutex<Option<ScreenCapture>>);
 
-pub fn parse_data_url(data_url: &str) -> Result<(&str, &str), String> {
+pub fn parse_data_url(data_url: &str) -> Result<(&str, &str), CaptureError> {
     let encoded = data_url
         .strip_prefix("data:")
         .and_then(|value| value.split_once(";base64,"))
-        .ok_or_else(|| "截图数据格式无效".to_string())?;
+        .ok_or(CaptureError::InvalidDataUrl)?;
     Ok(encoded)
 }
 
 #[cfg(target_os = "macos")]
-fn ensure_screen_capture_permission() -> Result<(), String> {
+fn ensure_screen_capture_permission() -> Result<(), CaptureError> {
     let access = core_graphics::access::ScreenCaptureAccess;
     if access.preflight() || access.request() {
         Ok(())
     } else {
-        Err(
-            "Piko 没有屏幕录制权限。请在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Piko，然后重新启动应用。"
-                .to_string(),
-        )
+        Err(CaptureError::ScreenRecordingPermission)
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn ensure_screen_capture_permission() -> Result<(), String> {
+fn ensure_screen_capture_permission() -> Result<(), CaptureError> {
     Ok(())
 }
 
@@ -139,7 +160,8 @@ pub fn confirm_screen_capture(
     thread::sleep(Duration::from_millis(140));
 
     let png = (|| {
-        let screen = Screen::from_point(x, y).map_err(|error| format!("无法读取屏幕：{error}"))?;
+        let screen =
+            Screen::from_point(x, y).map_err(|error| CaptureError::Screen(error.to_string()))?;
         let image = screen
             .capture_area(
                 x - screen.display_info.x,
@@ -147,19 +169,19 @@ pub fn confirm_screen_capture(
                 width,
                 height,
             )
-            .map_err(|error| format!("截图失败，请检查屏幕录制权限：{error}"))?;
+            .map_err(|error| CaptureError::CaptureArea(error.to_string()))?;
         let mut png = Cursor::new(Vec::new());
         DynamicImage::ImageRgba8(image)
             .write_to(&mut png, screenshots::image::ImageOutputFormat::Png)
-            .map_err(|error| format!("无法生成截图预览：{error}"))?;
-        Ok::<_, String>(png.into_inner())
+            .map_err(|error| CaptureError::PngEncode(error.to_string()))?;
+        Ok::<_, CaptureError>(png.into_inner())
     })();
     let png = match png {
         Ok(png) => png,
         Err(error) => {
             let _ = capture.show();
             let _ = capture.set_focus();
-            return Err(error);
+            return Err(error.into());
         }
     };
     let data_url = format!("data:image/png;base64,{}", BASE64_STANDARD.encode(png));

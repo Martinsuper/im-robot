@@ -15,8 +15,68 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
+use thiserror::Error;
 
 use crate::{tool_timestamp, tool_timestamp_str, unix_timestamp, PetVisualEvent, ToolCall};
+
+/// 模块内函数的类型化错误。Display 保留原有中文文案，经
+/// `From<CalendarError> for String` 兼容命令边界既有的 `Result<_, String>` 签名。
+#[derive(Debug, Error)]
+pub enum CalendarError {
+    #[error("无法获取日程记录路径")]
+    StoragePath,
+    #[error("无法获取日程记录目录")]
+    StorageDir,
+    #[error("{0}")]
+    StorageIo(String),
+    #[error("日程标题不能为空")]
+    EmptyTitle,
+    #[error("日程标题不能超过 120 个字符")]
+    TitleTooLong,
+    #[error("日程开始时间必须晚于当前时间")]
+    StartInPast,
+    #[error("日程结束时间必须晚于开始时间")]
+    EndBeforeStart,
+    #[error("日程 ID 不能为空")]
+    EmptyId,
+    #[error("批量日程必须包含 events 数组")]
+    BatchMissingEvents,
+    #[error("批量日程数量必须在 1 到 20 之间")]
+    InvalidBatchSize,
+    #[error("批量删除日程必须包含 events 数组")]
+    DeleteBatchMissingEvents,
+    #[error("批量删除日程数量必须在 1 到 100 之间")]
+    InvalidDeleteBatchSize,
+    #[error("批量删除日程中包含重复 ID：{0}")]
+    DuplicateDeleteId(String),
+    #[error("部分待删除日程已不存在，请重新查询日程后再试")]
+    DeleteTargetMissing,
+    #[error("未找到该日程")]
+    NotFound,
+    #[error("日程开始时间无效")]
+    InvalidStartTime,
+    #[error("日程结束时间无效")]
+    InvalidEndTime,
+    #[error("日程导出文件必须使用 .ics 扩展名")]
+    InvalidIcsExtension,
+    #[error("无法读取日程提醒状态")]
+    NotificationStateReadLock,
+    /// 透传 tool_timestamp、calendar_sync 等外部模块的 String 错误，文案原样保留。
+    #[error("{0}")]
+    Message(String),
+}
+
+impl From<CalendarError> for String {
+    fn from(error: CalendarError) -> Self {
+        error.to_string()
+    }
+}
+
+impl From<String> for CalendarError {
+    fn from(message: String) -> Self {
+        CalendarError::Message(message)
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,22 +127,23 @@ pub fn read_calendar_events_from_path(path: &Path) -> Vec<CalendarEvent> {
         .unwrap_or_default()
 }
 
-pub fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<(), String> {
-    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
+pub fn persist_calendar_events(
+    app: &AppHandle,
+    events: &[CalendarEvent],
+) -> Result<(), CalendarError> {
+    let path = calendar_events_path(app).ok_or(CalendarError::StoragePath)?;
     persist_calendar_events_to_path(&path, events)
 }
 
 pub fn persist_calendar_events_to_path(
     path: &Path,
     events: &[CalendarEvent],
-) -> Result<(), String> {
-    let directory = path
-        .parent()
-        .ok_or_else(|| "无法获取日程记录目录".to_string())?;
+) -> Result<(), CalendarError> {
+    let directory = path.parent().ok_or(CalendarError::StorageDir)?;
     let json = serde_json::to_string(events).map_err(|error| error.to_string())?;
 
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    fs::write(path, json).map_err(|error| error.to_string())
+    fs::create_dir_all(directory).map_err(|error| CalendarError::StorageIo(error.to_string()))?;
+    fs::write(path, json).map_err(|error| CalendarError::StorageIo(error.to_string()))
 }
 
 fn calendar_event_id() -> String {
@@ -136,10 +197,10 @@ pub fn coalesce_calendar_delete_calls(calls: Vec<(String, ToolCall)>) -> Vec<(St
         .collect()
 }
 
-pub fn calendar_event_input_from_value(value: &Value) -> Result<CalendarEventInput, String> {
+pub fn calendar_event_input_from_value(value: &Value) -> Result<CalendarEventInput, CalendarError> {
     let title = value["title"]
         .as_str()
-        .ok_or_else(|| "日程标题不能为空".to_string())?
+        .ok_or(CalendarError::EmptyTitle)?
         .to_string();
     let start_at = tool_timestamp(&value["startAt"])?;
     let end_at = tool_timestamp(&value["endAt"])?;
@@ -156,12 +217,12 @@ pub fn calendar_event_input_from_value(value: &Value) -> Result<CalendarEventInp
 
 pub fn calendar_event_batch_input_from_value(
     value: &Value,
-) -> Result<CalendarEventBatchInput, String> {
+) -> Result<CalendarEventBatchInput, CalendarError> {
     let events = value["events"]
         .as_array()
-        .ok_or_else(|| "批量日程必须包含 events 数组".to_string())?;
+        .ok_or(CalendarError::BatchMissingEvents)?;
     if events.is_empty() || events.len() > 20 {
-        return Err("批量日程数量必须在 1 到 20 之间".to_string());
+        return Err(CalendarError::InvalidBatchSize);
     }
     Ok(CalendarEventBatchInput {
         events: events
@@ -184,10 +245,12 @@ pub struct CalendarDeleteBatchInput {
     pub events: Vec<CalendarDeleteInput>,
 }
 
-pub fn calendar_delete_input_from_value(value: &Value) -> Result<CalendarDeleteInput, String> {
+pub fn calendar_delete_input_from_value(
+    value: &Value,
+) -> Result<CalendarDeleteInput, CalendarError> {
     let id = value["id"]
         .as_str()
-        .ok_or_else(|| "日程 ID 不能为空".to_string())?
+        .ok_or(CalendarError::EmptyId)?
         .to_string();
     Ok(CalendarDeleteInput {
         id,
@@ -199,12 +262,12 @@ pub fn calendar_delete_input_from_value(value: &Value) -> Result<CalendarDeleteI
 
 pub fn calendar_delete_batch_input_from_value(
     value: &Value,
-) -> Result<CalendarDeleteBatchInput, String> {
+) -> Result<CalendarDeleteBatchInput, CalendarError> {
     let events = value["events"]
         .as_array()
-        .ok_or_else(|| "批量删除日程必须包含 events 数组".to_string())?;
+        .ok_or(CalendarError::DeleteBatchMissingEvents)?;
     if events.is_empty() || events.len() > 100 {
-        return Err("批量删除日程数量必须在 1 到 100 之间".to_string());
+        return Err(CalendarError::InvalidDeleteBatchSize);
     }
     Ok(CalendarDeleteBatchInput {
         events: events
@@ -224,8 +287,8 @@ pub fn list_calendar_events(app: AppHandle) -> Vec<CalendarEvent> {
 pub fn create_calendar_event_record(
     app: &AppHandle,
     input: CalendarEventInput,
-) -> Result<CalendarEvent, String> {
-    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
+) -> Result<CalendarEvent, CalendarError> {
+    let path = calendar_events_path(app).ok_or(CalendarError::StoragePath)?;
     let event = create_calendar_event_record_at_path(&path, input)?;
     let _ = app.emit("calendar-events-updated", ());
     Ok(event)
@@ -234,7 +297,7 @@ pub fn create_calendar_event_record(
 pub fn create_calendar_event_record_at_path(
     path: &Path,
     input: CalendarEventInput,
-) -> Result<CalendarEvent, String> {
+) -> Result<CalendarEvent, CalendarError> {
     let mut events = read_calendar_events_from_path(path);
     let event = calendar_event_from_input(input)?;
     events.push(event.clone());
@@ -245,12 +308,12 @@ pub fn create_calendar_event_record_at_path(
 pub fn delete_calendar_event_record(
     app: &AppHandle,
     input: CalendarDeleteInput,
-) -> Result<CalendarEvent, String> {
+) -> Result<CalendarEvent, CalendarError> {
     let mut events = read_calendar_events(app);
     let index = events
         .iter()
         .position(|event| event.id == input.id)
-        .ok_or_else(|| "未找到该日程".to_string())?;
+        .ok_or(CalendarError::NotFound)?;
     let deleted = events.remove(index);
     persist_calendar_events(app, &events)?;
     crate::sync::calendar_sync::mark_local_events_deleted(app, std::slice::from_ref(&deleted.id))?;
@@ -261,8 +324,8 @@ pub fn delete_calendar_event_record(
 pub fn delete_calendar_event_batch_record(
     app: &AppHandle,
     input: CalendarDeleteBatchInput,
-) -> Result<Vec<CalendarEvent>, String> {
-    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
+) -> Result<Vec<CalendarEvent>, CalendarError> {
+    let path = calendar_events_path(app).ok_or(CalendarError::StoragePath)?;
     let deleted = delete_calendar_event_batch_record_at_path(&path, input)?;
     let deleted_ids = deleted
         .iter()
@@ -276,11 +339,11 @@ pub fn delete_calendar_event_batch_record(
 pub fn delete_calendar_event_batch_record_at_path(
     path: &Path,
     input: CalendarDeleteBatchInput,
-) -> Result<Vec<CalendarEvent>, String> {
+) -> Result<Vec<CalendarEvent>, CalendarError> {
     let mut ids = HashSet::new();
     for event in &input.events {
         if !ids.insert(event.id.as_str()) {
-            return Err(format!("批量删除日程中包含重复 ID：{}", event.id));
+            return Err(CalendarError::DuplicateDeleteId(event.id.clone()));
         }
     }
 
@@ -291,7 +354,7 @@ pub fn delete_calendar_event_batch_record_at_path(
         .cloned()
         .collect::<Vec<_>>();
     if deleted.len() != ids.len() {
-        return Err("部分待删除日程已不存在，请重新查询日程后再试".to_string());
+        return Err(CalendarError::DeleteTargetMissing);
     }
     events.retain(|event| !ids.contains(event.id.as_str()));
     persist_calendar_events_to_path(path, &events)?;
@@ -314,19 +377,21 @@ pub fn calendar_conflict_note(
     }
 }
 
-pub fn calendar_event_from_input(input: CalendarEventInput) -> Result<CalendarEvent, String> {
+pub fn calendar_event_from_input(
+    input: CalendarEventInput,
+) -> Result<CalendarEvent, CalendarError> {
     let title = input.title.trim();
     if title.is_empty() {
-        return Err("日程标题不能为空".to_string());
+        return Err(CalendarError::EmptyTitle);
     }
     if title.chars().count() > 120 {
-        return Err("日程标题不能超过 120 个字符".to_string());
+        return Err(CalendarError::TitleTooLong);
     }
     if input.start_at <= unix_timestamp() {
-        return Err("日程开始时间必须晚于当前时间".to_string());
+        return Err(CalendarError::StartInPast);
     }
     if input.end_at <= input.start_at {
-        return Err("日程结束时间必须晚于开始时间".to_string());
+        return Err(CalendarError::EndBeforeStart);
     }
     Ok(CalendarEvent {
         id: calendar_event_id(),
@@ -341,7 +406,7 @@ pub fn calendar_event_from_input(input: CalendarEventInput) -> Result<CalendarEv
 pub fn create_calendar_event_batch_record(
     app: &AppHandle,
     batch: CalendarEventBatchInput,
-) -> Result<Vec<CalendarEvent>, String> {
+) -> Result<Vec<CalendarEvent>, CalendarError> {
     let mut events = read_calendar_events(app);
     let mut created = Vec::with_capacity(batch.events.len());
     for input in batch.events {
@@ -359,7 +424,7 @@ pub fn create_calendar_event(
     app: AppHandle,
     input: CalendarEventInput,
 ) -> Result<CalendarEvent, String> {
-    create_calendar_event_record(&app, input)
+    Ok(create_calendar_event_record(&app, input)?)
 }
 
 #[tauri::command]
@@ -384,7 +449,7 @@ pub fn escape_icalendar_text(value: &str) -> String {
         .replace('\n', "\\n")
 }
 
-pub fn render_icalendar(events: &[CalendarEvent]) -> Result<String, String> {
+pub fn render_icalendar(events: &[CalendarEvent]) -> Result<String, CalendarError> {
     let mut lines = vec![
         "BEGIN:VCALENDAR".to_string(),
         "VERSION:2.0".to_string(),
@@ -395,14 +460,14 @@ pub fn render_icalendar(events: &[CalendarEvent]) -> Result<String, String> {
         let start = Local
             .timestamp_opt(event.start_at as i64, 0)
             .single()
-            .ok_or_else(|| "日程开始时间无效".to_string())?
+            .ok_or(CalendarError::InvalidStartTime)?
             .with_timezone(&chrono::Utc)
             .format("%Y%m%dT%H%M%SZ")
             .to_string();
         let end = Local
             .timestamp_opt(event.end_at as i64, 0)
             .single()
-            .ok_or_else(|| "日程结束时间无效".to_string())?
+            .ok_or(CalendarError::InvalidEndTime)?
             .with_timezone(&chrono::Utc)
             .format("%Y%m%dT%H%M%SZ")
             .to_string();
@@ -426,11 +491,11 @@ pub fn render_icalendar(events: &[CalendarEvent]) -> Result<String, String> {
     Ok(format!("{}\r\n", lines.join("\r\n")))
 }
 
-pub fn validate_icalendar_path(path: &Path) -> Result<(), String> {
+pub fn validate_icalendar_path(path: &Path) -> Result<(), CalendarError> {
     if path.extension().and_then(|extension| extension.to_str()) == Some("ics") {
         Ok(())
     } else {
-        Err("日程导出文件必须使用 .ics 扩展名".to_string())
+        Err(CalendarError::InvalidIcsExtension)
     }
 }
 
@@ -496,14 +561,14 @@ pub fn format_calendar_notice(event: &CalendarEvent) -> String {
     }
 }
 
-pub fn process_due_calendar_events(app: &AppHandle) -> Result<Vec<CalendarEvent>, String> {
+pub fn process_due_calendar_events(app: &AppHandle) -> Result<Vec<CalendarEvent>, CalendarError> {
     let now = unix_timestamp();
     let events = read_calendar_events(app);
     let calendar_notifications = app.state::<CalendarNotificationCache>();
     let mut already_notified = calendar_notifications
         .0
         .lock()
-        .map_err(|_| "无法读取日程提醒状态".to_string())?;
+        .map_err(|_| CalendarError::NotificationStateReadLock)?;
     let due = collect_due_calendar_events(&events, now, &mut already_notified);
     drop(already_notified);
 
