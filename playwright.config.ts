@@ -31,6 +31,8 @@ export default defineConfig({
   testDir: "./tests/e2e",
   use: {
     baseURL: "http://127.0.0.1:4173",
+    // i18n 接入后 UI 文案跟随浏览器语言；固定 zh-CN 保证中文选择器稳定
+    locale: "zh-CN",
     launchOptions: chromeExecutablePath ? { executablePath: chromeExecutablePath } : undefined,
   },
   webServer: {
