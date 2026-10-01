@@ -2,13 +2,13 @@ import type { ChatHistoryEntry } from "../../../types/appTypes";
 
 export type ChatHistoryFilter = "all" | "attachment" | "screenshot" | "code" | "link" | "long";
 
-export const chatHistoryFilterOptions: Array<{ label: string; value: ChatHistoryFilter }> = [
-  { label: "全部", value: "all" },
-  { label: "附件", value: "attachment" },
-  { label: "截图", value: "screenshot" },
-  { label: "代码", value: "code" },
-  { label: "链接", value: "link" },
-  { label: "长回复", value: "long" },
+export const chatHistoryFilterOptions: Array<{ label: string; labelKey: string; value: ChatHistoryFilter }> = [
+  { label: "全部", labelKey: "panel.history.filterAll", value: "all" },
+  { label: "附件", labelKey: "panel.history.filterAttachment", value: "attachment" },
+  { label: "截图", labelKey: "panel.history.filterScreenshot", value: "screenshot" },
+  { label: "代码", labelKey: "panel.history.filterCode", value: "code" },
+  { label: "链接", labelKey: "panel.history.filterLink", value: "link" },
+  { label: "长回复", labelKey: "panel.history.filterLong", value: "long" },
 ];
 
 export function getChatHistoryTags(entry: ChatHistoryEntry): ChatHistoryFilter[] {
@@ -24,8 +24,10 @@ export function getChatHistoryTags(entry: ChatHistoryEntry): ChatHistoryFilter[]
   return tags;
 }
 
-export function chatHistoryFilterLabel(filter: ChatHistoryFilter) {
-  return chatHistoryFilterOptions.find((option) => option.value === filter)?.label ?? filter;
+export function chatHistoryFilterLabel(filter: ChatHistoryFilter, translate?: (key: string, fallback?: string) => string) {
+  const option = chatHistoryFilterOptions.find((option) => option.value === filter);
+  if (!option) return filter;
+  return translate ? translate(option.labelKey, option.label) : option.label;
 }
 
 export function formatChatHistoryTime(timestamp: number) {

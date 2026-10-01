@@ -181,7 +181,7 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
               onClick={handleTestConnection}
               disabled={testing}
             >
-              {testing ? '测试中...' : t('onboarding.step2Test', '测试连接')}
+              {testing ? t('onboarding.testing', '测试中...') : t('onboarding.step2Test', '测试连接')}
             </button>
 
             {testResult === 'success' && (

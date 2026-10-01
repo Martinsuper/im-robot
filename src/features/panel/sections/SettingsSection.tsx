@@ -60,10 +60,10 @@ export function PreferencesSection({
   return (
     <section className={className}>
       <p className="eyebrow">PREFERENCES</p>
-      <h2>个性化与系统</h2>
+      <h2>{t("panel.settings.personalizationTitle", "个性化与系统")}</h2>
       <div className="settings-form">
         <label>
-          <span>精灵名称</span>
+          <span>{t("panel.settings.companionNameLabel", "精灵名称")}</span>
           <input
             value={companionName}
             maxLength={24}
@@ -71,27 +71,27 @@ export function PreferencesSection({
           />
         </label>
         <label>
-          <span>主题色</span>
+          <span>{t("panel.settings.themeLabel", "主题色")}</span>
           <select value={theme} onChange={(event) => setAppSettings((current) => ({ ...current, theme: event.currentTarget.value as Theme }))}>
-            <option value="sage">鼠尾草绿</option>
-            <option value="blue">湖水蓝</option>
-            <option value="peach">暖桃色</option>
+            <option value="sage">{t("panel.settings.themeSage", "鼠尾草绿")}</option>
+            <option value="blue">{t("panel.settings.themeOcean", "湖水蓝")}</option>
+            <option value="peach">{t("panel.settings.themePeach", "暖桃色")}</option>
           </select>
         </label>
         <label>
-          <span>精灵形象</span>
+          <span>{t("panel.settings.petStyleLabel", "精灵形象")}</span>
           <select
             value={petVisualStyle}
             onChange={(event) => setPetVisualStyle(event.currentTarget.value as PetVisualStyle)}
           >
-            {availablePetVisualStyleOptions.map(({ label, value }) => (
-              <option key={value} value={value}>{label}</option>
+            {availablePetVisualStyleOptions.map(({ label, labelKey, value }) => (
+              <option key={value} value={value}>{t(labelKey, label)}</option>
             ))}
           </select>
         </label>
         {petVisualStyle === "character" ? (
           <label>
-            <span>Live2D 模型</span>
+            <span>{t("panel.settings.live2dModelLabel", "Live2D 模型")}</span>
             <select
               value={live2dModelId}
               onChange={(event) => setLive2DModelId(event.currentTarget.value as Live2DModelId)}
@@ -108,13 +108,13 @@ export function PreferencesSection({
           </p>
         ) : null}
         <div className="custom-pet-picker">
-          <span>{customPetImagePath ? customPetImagePath.split(/[\\/]/).pop() : "未选择自定义图片"}</span>
+          <span>{customPetImagePath ? customPetImagePath.split(/[\\/]/).pop() : t("panel.settings.noCustomImage", "未选择自定义图片")}</span>
           <div>
             <button type="button" onClick={() => void chooseCustomPetImage()}>
-              选择图片
+              {t("panel.settings.chooseImage", "选择图片")}
             </button>
             <button type="button" className="is-secondary" onClick={clearCustomPetImage} disabled={!customPetImagePath}>
-              清除
+              {t("panel.settings.clearImage", "清除")}
             </button>
           </div>
         </div>
@@ -124,7 +124,7 @@ export function PreferencesSection({
             checked={!sensingPaused}
             onChange={(event) => setAppSettings((current) => ({ ...current, sensingPaused: !event.currentTarget.checked }))}
           />
-          <span>主动感知</span>
+          <span>{t("panel.settings.sensingLabel", "主动感知")}</span>
         </label>
         <label className="setting-toggle">
           <input
@@ -132,7 +132,7 @@ export function PreferencesSection({
             checked={autostartEnabled}
             onChange={() => void toggleAutostart()}
           />
-          <span>开机自动启动</span>
+          <span>{t("panel.settings.autostartLabel", "开机自动启动")}</span>
         </label>
         <label>
           <span>{t("settings.languageLabel", "界面语言")}</span>
@@ -145,7 +145,7 @@ export function PreferencesSection({
           </select>
         </label>
         <button type="button" onClick={() => void savePreferences()}>
-          保存个性化设置
+          {t("panel.settings.saveButton", "保存个性化设置")}
         </button>
         <button
           type="button"
@@ -156,7 +156,7 @@ export function PreferencesSection({
             }).then(() => refreshOnboardingStatus()).catch(reportCommandError("reset_onboarding"));
           }}
         >
-          重新运行引导
+          {t("settings.runOnboarding", "重新运行引导")}
         </button>
         {preferencesStatus && <p className="connection-status">{preferencesStatus}</p>}
       </div>
@@ -171,19 +171,20 @@ interface QuietModeSectionProps {
 }
 
 export function QuietModeSection({ className, quietMode, updateQuietMode }: QuietModeSectionProps) {
+  const { t } = useTranslation();
   return (
     <section className={className}>
       <p className="eyebrow">PERSONALITY</p>
-      <h2>互动活泼度</h2>
-      <div className="segmented-control" aria-label="互动活泼度">
-        {quietModeOptions.map(({ label, value }) => (
+      <h2>{t("panel.settings.quietModeTitle", "互动活泼度")}</h2>
+      <div className="segmented-control" aria-label={t("panel.settings.quietModeTitle", "互动活泼度")}>
+        {quietModeOptions.map(({ label, labelKey, value }) => (
           <button
             className={value === quietMode ? "is-active" : ""}
             key={value}
             type="button"
             onClick={() => updateQuietMode(value)}
           >
-            {label}
+            {t(labelKey, label)}
           </button>
         ))}
       </div>
@@ -214,10 +215,11 @@ export function BreakReminderSection({
   setAppSettings,
   saveWorkRhythmPreferences,
 }: BreakReminderSectionProps) {
+  const { t } = useTranslation();
   return (
     <section className={className}>
       <p className="eyebrow">WORK RHYTHM</p>
-      <h2>休息提醒</h2>
+      <h2>{t("panel.settings.breakTitle", "休息提醒")}</h2>
       <div className="settings-form">
         <label className="setting-toggle">
           <input
@@ -225,11 +227,11 @@ export function BreakReminderSection({
             checked={breakRemindersEnabled}
             onChange={(event) => setAppSettings((current) => ({ ...current, breakRemindersEnabled: event.currentTarget.checked }))}
           />
-          <span>开启休息提醒</span>
+          <span>{t("panel.settings.breakEnable", "开启休息提醒")}</span>
         </label>
         <div className="settings-form__row">
           <label>
-            <span>提醒间隔（分钟）</span>
+            <span>{t("panel.settings.breakInterval", "提醒间隔（分钟）")}</span>
             <input
               type="number"
               min="15"
@@ -240,7 +242,7 @@ export function BreakReminderSection({
             />
           </label>
           <label>
-            <span>提醒冷却（分钟）</span>
+            <span>{t("panel.settings.breakCooldown", "提醒冷却（分钟）")}</span>
             <input
               type="number"
               min="5"
@@ -257,11 +259,11 @@ export function BreakReminderSection({
             checked={breakReminderQuietHoursEnabled}
             onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderQuietHoursEnabled: event.currentTarget.checked }))}
           />
-          <span>启用静默时段</span>
+          <span>{t("panel.settings.quietHoursEnable", "启用静默时段")}</span>
         </label>
         <div className="settings-form__row">
           <label>
-            <span>静默开始</span>
+            <span>{t("panel.settings.quietHoursStart", "静默开始")}</span>
             <input
               type="time"
               value={breakReminderQuietHoursStart}
@@ -269,7 +271,7 @@ export function BreakReminderSection({
             />
           </label>
           <label>
-            <span>静默结束</span>
+            <span>{t("panel.settings.quietHoursEnd", "静默结束")}</span>
             <input
               type="time"
               value={breakReminderQuietHoursEnd}
@@ -278,9 +280,9 @@ export function BreakReminderSection({
           </label>
         </div>
         <button type="button" onClick={() => void saveWorkRhythmPreferences()}>
-          保存休息提醒设置
+          {t("panel.settings.breakSaveButton", "保存休息提醒设置")}
         </button>
-        <p className="empty-state">提醒会根据今日输入、空闲状态和前台场景自动判断，只在适合的时候发声。</p>
+        <p className="empty-state">{t("panel.settings.breakHint", "提醒会根据今日输入、空闲状态和前台场景自动判断，只在适合的时候发声。")}</p>
       </div>
     </section>
   );
@@ -309,13 +311,14 @@ export function ModelProviderSection({
   testConnection,
   connectionStatus,
 }: ModelProviderSectionProps) {
+  const { t } = useTranslation();
   return (
     <section className={className}>
       <p className="eyebrow">MODEL PROVIDER</p>
-      <h2>模型服务</h2>
+      <h2>{t("panel.settings.providerTitle", "模型服务")}</h2>
       <div className="settings-form">
         <label>
-          <span>服务类型</span>
+          <span>{t("panel.settings.providerTypeLabel", "服务类型")}</span>
           <select
             value={aiSettings.provider}
             onChange={(event) => updateProvider(event.currentTarget.value)}
@@ -338,7 +341,7 @@ export function ModelProviderSection({
           <input
             value={aiSettings.model}
             onChange={(event) => updateAiField("model", event.currentTarget.value)}
-            placeholder={aiSettings.provider === "lmstudio" ? "可留空，LM Studio 自动使用当前加载模型" : "gemma4:e4b"}
+            placeholder={aiSettings.provider === "lmstudio" ? t("panel.settings.modelPlaceholderLmStudio", "可留空，LM Studio 自动使用当前加载模型") : "gemma4:e4b"}
           />
         </label>
         <label>
@@ -347,7 +350,7 @@ export function ModelProviderSection({
             type="password"
             value={apiKey}
             onChange={(event) => setApiKey(event.currentTarget.value)}
-            placeholder="本地 Ollama 可留空"
+            placeholder={t("panel.settings.apiKeyPlaceholder", "本地 Ollama 可留空")}
           />
         </label>
         <div className="settings-form__row">
@@ -363,7 +366,7 @@ export function ModelProviderSection({
             />
           </label>
           <label>
-            <span>超时秒数</span>
+            <span>{t("panel.settings.timeoutLabel", "超时秒数")}</span>
             <input
               type="number"
               min="5"
@@ -376,7 +379,7 @@ export function ModelProviderSection({
           </label>
         </div>
         <button type="button" disabled={isTesting} onClick={testConnection}>
-          {isTesting ? "正在测试..." : "保存并测试连接"}
+          {isTesting ? t("panel.settings.testing", "正在测试...") : t("panel.settings.saveAndTest", "保存并测试连接")}
         </button>
         <p className="connection-status">{connectionStatus}</p>
       </div>
@@ -391,10 +394,11 @@ interface HtmlPreviewSectionProps {
 }
 
 export function HtmlPreviewSection({ className, htmlPreviewEnabled, updateHtmlPreviewEnabled }: HtmlPreviewSectionProps) {
+  const { t } = useTranslation();
   return (
     <section className={className}>
       <p className="eyebrow">OUTPUT PREVIEW</p>
-      <h2>HTML 预览</h2>
+      <h2>{t("panel.settings.htmlPreviewTitle", "HTML 预览")}</h2>
       <div className="feature-toggle-card">
         <label className="setting-toggle">
           <input
@@ -402,9 +406,9 @@ export function HtmlPreviewSection({ className, htmlPreviewEnabled, updateHtmlPr
             checked={htmlPreviewEnabled}
             onChange={(event) => void updateHtmlPreviewEnabled(event.currentTarget.checked)}
           />
-          <span>HTML 预览插件</span>
+          <span>{t("panel.settings.htmlPreviewToggle", "HTML 预览插件")}</span>
         </label>
-        <p className="empty-state">开启后，气泡窗口会在检测到 HTML 片段时优先使用沙箱 iframe 预览。</p>
+        <p className="empty-state">{t("panel.settings.htmlPreviewHint", "开启后，气泡窗口会在检测到 HTML 片段时优先使用沙箱 iframe 预览。")}</p>
       </div>
     </section>
   );

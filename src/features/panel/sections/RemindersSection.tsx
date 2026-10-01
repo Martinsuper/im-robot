@@ -1,5 +1,6 @@
 import type { Dispatch, FormEvent, SetStateAction } from "react";
 import type { FocusSnapshot, Reminder, ReminderRepeat } from "../../../types/appTypes";
+import { useTranslation } from "../../i18n/I18nProvider";
 import {
   formatFocusRemaining,
   formatReminderTime,
@@ -42,65 +43,70 @@ export function RemindersSection({
   createReminder,
   deleteReminder,
 }: RemindersSectionProps) {
+  const { t } = useTranslation();
   return (
     <section className={className}>
       <div className="focus-card">
         <div className="section-heading">
           <div>
             <p className="eyebrow">FOCUS TIMER</p>
-            <h2>{focusState.kind === "break" ? "休息倒计时" : "专注模式"}</h2>
+            <h2>{focusState.kind === "break" ? t("panel.focus.breakTitle", "休息倒计时") : t("panel.focus.focusTitle", "专注模式")}</h2>
           </div>
           <strong>{formatFocusRemaining(focusState.remainingSeconds)}</strong>
         </div>
         {focusState.status === "idle" ? (
           <div className="focus-controls">
-            <select value={focusMinutes} onChange={(event) => setFocusMinutes(Number(event.currentTarget.value))} aria-label="专注时长">
-              {[15, 25, 45, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
+            <select value={focusMinutes} onChange={(event) => setFocusMinutes(Number(event.currentTarget.value))} aria-label={t("panel.focus.durationLabel", "专注时长")}>
+              {[15, 25, 45, 60].map((minutes) => (
+                <option key={minutes} value={minutes}>
+                  {t("panel.focus.minutesOption", "{minutes} 分钟").replace("{minutes}", String(minutes))}
+                </option>
+              ))}
             </select>
-            <button type="button" onClick={() => void updateFocus("start_focus", { minutes: focusMinutes })}>开始专注</button>
+            <button type="button" onClick={() => void updateFocus("start_focus", { minutes: focusMinutes })}>{t("focus.start", "开始专注")}</button>
             {[5, 10, 15].map((minutes) => (
               <button key={minutes} type="button" onClick={() => void updateFocus("start_break", { minutes })}>
-                休息 {minutes}
+                {t("panel.focus.breakShort", "休息 {minutes}").replace("{minutes}", String(minutes))}
               </button>
             ))}
           </div>
         ) : (
           <div className="focus-controls">
             <button type="button" onClick={() => void updateFocus(focusState.status === "paused" ? "resume_focus" : "pause_focus")}>
-              {focusState.status === "paused" ? "继续" : "暂停"}
+              {focusState.status === "paused" ? t("focus.resume", "继续") : t("focus.pause", "暂停")}
             </button>
-            <button type="button" onClick={() => void updateFocus("stop_focus")}>结束</button>
+            <button type="button" onClick={() => void updateFocus("stop_focus")}>{t("panel.focus.stop", "结束")}</button>
           </div>
         )}
       </div>
       <p className="eyebrow">REMINDERS</p>
-      <h2>提醒事项</h2>
+      <h2>{t("reminders.title", "提醒事项")}</h2>
       <form className="reminder-form" onSubmit={createReminder}>
         <input
           value={reminderTitle}
           onChange={(event) => setReminderTitle(event.currentTarget.value)}
           maxLength={120}
-          placeholder="例如：起来活动一下"
-          aria-label="提醒内容"
+          placeholder={t("panel.reminders.titlePlaceholder", "例如：起来活动一下")}
+          aria-label={t("panel.reminders.contentLabel", "提醒内容")}
         />
         <div>
           <input
             type="datetime-local"
             value={reminderDueAt}
             onChange={(event) => setReminderDueAt(event.currentTarget.value)}
-            aria-label="提醒时间"
+            aria-label={t("panel.reminders.timeLabel", "提醒时间")}
           />
           <button type="submit" disabled={!reminderTitle.trim() || !reminderDueAt}>
-            添加
+            {t("panel.reminders.add", "添加")}
           </button>
         </div>
         <select
           value={reminderRepeat}
           onChange={(event) => setReminderRepeat(event.currentTarget.value as ReminderRepeat)}
-          aria-label="重复规则"
+          aria-label={t("panel.reminders.repeatLabel", "重复规则")}
         >
-          {reminderRepeatOptions.map(({ label, value }) => (
-            <option key={value} value={value}>{label}</option>
+          {reminderRepeatOptions.map(({ label, labelKey, value }) => (
+            <option key={value} value={value}>{t(labelKey, label)}</option>
           ))}
         </select>
       </form>
@@ -113,18 +119,18 @@ export function RemindersSection({
                 <strong>{reminder.title}</strong>
                 <span>
                   {formatReminderTime(reminder.dueAt)} ·{" "}
-                  {reminder.status === "triggered" ? "已提醒" : "等待中"} ·{" "}
-                  {reminderRepeatLabel(reminder.repeat)}
+                  {reminder.status === "triggered" ? t("panel.reminders.triggered", "已提醒") : t("panel.reminders.waiting", "等待中")} ·{" "}
+                  {reminderRepeatLabel(reminder.repeat, t)}
                 </span>
               </div>
               <button type="button" onClick={() => void deleteReminder(reminder.id)}>
-                删除
+                {t("panel.reminders.delete", "删除")}
               </button>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="empty-state">暂无提醒。</p>
+        <p className="empty-state">{t("panel.reminders.empty", "暂无提醒。")}</p>
       )}
     </section>
   );

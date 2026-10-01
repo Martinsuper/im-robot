@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+// 面板/气泡的选项标签已接入 i18n（app.tab.* 等在 en-US.json 有现成翻译），
+// 浏览器默认 locale 是 en-US 会把 tab 渲染成英文，固定 zh-CN 保证中文选择器稳定。
+test.use({ locale: "zh-CN" });
+
 test("pet preview exposes companion actions", async ({ page }) => {
   await page.goto("/?view=pet");
   await expect(page.locator(".pet-clock")).toHaveText(/^\d{2}:\d{2}:\d{2}$/);
