@@ -144,7 +144,13 @@ function InlineToolbar({
         💾
       </button>
       <details className="inline-more-menu" data-no-drag>
-        <summary className="inline-toolbar__btn" title={t("bubble.more", "更多")}>⋯</summary>
+        <summary
+          className="inline-toolbar__btn"
+          aria-label={t("bubble.more", "更多")}
+          title={t("bubble.more", "更多")}
+        >
+          ⋯
+        </summary>
         <div>
           <button
             type="button"
