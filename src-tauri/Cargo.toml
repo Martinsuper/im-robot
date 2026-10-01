@@ -34,7 +34,7 @@ tauri-plugin-dialog = "^2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = "0.4"
 wasmtime = "45"
-wasmtime-wasi = "45"
+wasmtime-wasi = "46"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 # Linux 键盘监控走 rdev；Windows 用自带的 WH_KEYBOARD_LL 钩子（可随暂停感知卸载，
