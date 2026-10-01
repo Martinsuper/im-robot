@@ -1,7 +1,38 @@
 {
   "app": {
     "name": "Piko",
-    "greeting": "Piko is keeping you company on your desktop."
+    "greeting": "Piko is keeping you company on your desktop.",
+    "petStyle": {
+      "lumi": "Mecha Cat",
+      "character": "Live2D Official Model",
+      "custom": "Custom Image",
+      "classic": "Piko Classic Fallback"
+    },
+    "quietMode": {
+      "active": "Lively",
+      "balanced": "Balanced",
+      "minimal": "Minimal"
+    },
+    "tab": {
+      "companion": "Pet",
+      "settings": "Settings",
+      "reminders": "Reminders",
+      "calendar": "Calendar",
+      "history": "History",
+      "memory": "Memory",
+      "about": "About"
+    },
+    "repeat": {
+      "none": "Once",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "weekdays": "Weekdays"
+    },
+    "attachment": {
+      "summarize": "Summarize",
+      "translate": "Translate",
+      "explain": "Explain"
+    }
   },
   "pet": {
     "idle": "Piko is resting",
@@ -63,7 +94,8 @@
     "runOnboarding": "Re-run Setup",
     "foregroundApp": "Foreground App Awareness",
     "foregroundAppEnabled": "Enabled",
-    "foregroundAppPaused": "Paused"
+    "foregroundAppPaused": "Paused",
+    "languageLabel": "Language"
   },
   "onboarding": {
     "title": "Welcome to Piko",

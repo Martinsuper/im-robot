@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { AiSettings, AppSettings, OnboardingStatus, QuietMode, Theme } from "../../../types/appTypes";
+import { useTranslation, type Locale } from "../../i18n/I18nProvider";
 import {
   defaultAppSettings,
   getAvailablePetVisualStyleOptions,
@@ -50,6 +51,12 @@ export function PreferencesSection({
   const availablePetVisualStyleOptions = getAvailablePetVisualStyleOptions(Boolean(customPetImagePath));
   const enabledLive2DModelOptions = live2dModelOptions.filter((option) => option.enabled);
   const disabledLive2DModelOptions = live2dModelOptions.filter((option) => !option.enabled);
+  const { locale, setLocale, t } = useTranslation();
+  const languageOptions: Array<{ value: Locale; label: string }> = [
+    { value: "zh-CN", label: "简体中文" },
+    { value: "en-US", label: "English" },
+    { value: "ja-JP", label: "日本語" },
+  ];
   return (
     <section className={className}>
       <p className="eyebrow">PREFERENCES</p>
@@ -126,6 +133,16 @@ export function PreferencesSection({
             onChange={() => void toggleAutostart()}
           />
           <span>开机自动启动</span>
+        </label>
+        <label>
+          <span>{t("settings.languageLabel", "界面语言")}</span>
+          <select value={locale} onChange={(event) => setLocale(event.currentTarget.value as Locale)}>
+            {languageOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </label>
         <button type="button" onClick={() => void savePreferences()}>
           保存个性化设置

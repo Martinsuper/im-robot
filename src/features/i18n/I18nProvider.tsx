@@ -1,7 +1,11 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import zhCN from '../../locales/zh-CN.json';
 import enUS from '../../locales/en-US.json';
 import jaJP from '../../locales/ja-JP.json';
+import type { AppSettings } from '../../types/appTypes';
+import { defaultAppSettings } from '../app/appShared';
+import { isTauriRuntime, runCommand, runCommandQuiet } from '../app/appRuntime';
 
 type Locale = 'zh-CN' | 'en-US' | 'ja-JP';
 
@@ -13,6 +17,10 @@ const localeMap: Record<Locale, Record<string, unknown>> = {
 
 const DEFAULT_LOCALE: Locale = 'zh-CN';
 
+function isLocale(value: string): value is Locale {
+  return value in localeMap;
+}
+
 function getSystemLocale(): Locale {
   const nav = navigator.language;
   if (nav.startsWith('ja')) return 'ja-JP';
@@ -23,7 +31,7 @@ function getSystemLocale(): Locale {
 function getStoredLocale(): Locale {
   try {
     const stored = localStorage.getItem('piko-locale');
-    if (stored && stored in localeMap) return stored as Locale;
+    if (stored && isLocale(stored)) return stored;
   } catch { /* ignore */ }
   return getSystemLocale();
 }
@@ -53,6 +61,29 @@ interface I18nProviderProps {
 export function I18nProvider({ children }: I18nProviderProps) {
   const [locale, setLocaleState] = useState<Locale>(getStoredLocale);
 
+  // 桌面端：初次从设置读取语言，并跟随 settings-updated（其他窗口切换时同步）。
+  // localStorage 仅作 web 预览模式的持久化与桌面端的启动缓存。
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    let disposed = false;
+    void runCommand<AppSettings>('get_settings', undefined, defaultAppSettings)
+      .then((settings) => {
+        if (!disposed && isLocale(settings.language)) {
+          setLocaleState(settings.language);
+        }
+      })
+      .catch(() => undefined);
+    const unlisten = listen<AppSettings>('settings-updated', (event) => {
+      if (isLocale(event.payload.language)) {
+        setLocaleState(event.payload.language);
+      }
+    });
+    return () => {
+      disposed = true;
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
   const t = useCallback(
     (key: string, fallback?: string): string => {
       const messages = localeMap[locale] || localeMap[DEFAULT_LOCALE];
@@ -66,6 +97,9 @@ export function I18nProvider({ children }: I18nProviderProps) {
     try {
       localStorage.setItem('piko-locale', newLocale);
     } catch { /* ignore */ }
+    if (isTauriRuntime) {
+      runCommandQuiet('update_language', { language: newLocale });
+    }
   }, []);
 
   return (

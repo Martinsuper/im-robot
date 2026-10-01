@@ -1,7 +1,38 @@
 {
   "app": {
     "name": "Piko",
-    "greeting": "Piko がデスクトップで陪伴しています。"
+    "greeting": "Piko がデスクトップで陪伴しています。",
+    "petStyle": {
+      "lumi": "メカ猫",
+      "character": "Live2D 公式モデル",
+      "custom": "カスタム画像",
+      "classic": "Piko クラシック"
+    },
+    "quietMode": {
+      "active": "活発",
+      "balanced": "バランス",
+      "minimal": "ミニマル"
+    },
+    "tab": {
+      "companion": "ペット",
+      "settings": "設定",
+      "reminders": "リマインダー",
+      "calendar": "カレンダー",
+      "history": "履歴",
+      "memory": "メモリー",
+      "about": "情報"
+    },
+    "repeat": {
+      "none": "一回のみ",
+      "daily": "毎日",
+      "weekly": "毎週",
+      "weekdays": "平日"
+    },
+    "attachment": {
+      "summarize": "要約",
+      "translate": "翻訳",
+      "explain": "説明"
+    }
   },
   "pet": {
     "idle": "Piko は休憩中",
@@ -63,7 +94,8 @@
     "runOnboarding": "セットアップを再実行",
     "foregroundApp": "フォアグラウンドアプリ感知",
     "foregroundAppEnabled": "有効",
-    "foregroundAppPaused": "一時停止中"
+    "foregroundAppPaused": "一時停止中",
+    "languageLabel": "表示言語"
   },
   "onboarding": {
     "title": "Piko へようこそ",

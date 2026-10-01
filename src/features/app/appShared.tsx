@@ -61,11 +61,11 @@ export const live2dOfficialMigrationStorageKey = "piko-live2d-official-model-mig
 export const defaultPetVisualStyle: PetVisualStyle = "character";
 export const defaultLive2DModelId: Live2DModelId = "official-hiyori";
 
-export const petVisualStyleOptions: Array<{ label: string; value: PetVisualStyle }> = [
-  { label: "机甲猫", value: "lumi" },
-  { label: "Live2D 官方模型", value: "character" },
-  { label: "自定义图片", value: "custom" },
-  { label: "Piko 经典兜底", value: "classic" },
+export const petVisualStyleOptions: Array<{ label: string; labelKey: string; value: PetVisualStyle }> = [
+  { label: "机甲猫", labelKey: "app.petStyle.lumi", value: "lumi" },
+  { label: "Live2D 官方模型", labelKey: "app.petStyle.character", value: "character" },
+  { label: "自定义图片", labelKey: "app.petStyle.custom", value: "custom" },
+  { label: "Piko 经典兜底", labelKey: "app.petStyle.classic", value: "classic" },
 ];
 
 export const live2dModelOptions: Array<{
@@ -490,6 +490,7 @@ export const defaultAppSettings: AppSettings = {
   quietMode: "balanced",
   companionName: "Piko",
   theme: "sage",
+  language: "zh-CN",
   sensingPaused: false,
   breakRemindersEnabled: true,
   breakReminderIntervalMinutes: 45,
@@ -537,37 +538,39 @@ export const providerOptions = [
   { label: "通义千问 DashScope", value: "dashscope", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen3.6-plus" },
 ];
 
-export const quietModeOptions: Array<{ label: string; value: QuietMode }> = [
-  { label: "活泼", value: "active" },
-  { label: "平衡", value: "balanced" },
-  { label: "极简", value: "minimal" },
+export const quietModeOptions: Array<{ label: string; labelKey: string; value: QuietMode }> = [
+  { label: "活泼", labelKey: "app.quietMode.active", value: "active" },
+  { label: "平衡", labelKey: "app.quietMode.balanced", value: "balanced" },
+  { label: "极简", labelKey: "app.quietMode.minimal", value: "minimal" },
 ];
 
-export const panelTabOptions: Array<{ label: string; value: PanelTab }> = [
-  { label: "精灵", value: "companion" },
-  { label: "设置", value: "settings" },
-  { label: "提醒", value: "reminders" },
-  { label: "日程", value: "calendar" },
-  { label: "历史", value: "history" },
-  { label: "记忆", value: "memory" },
-  { label: "关于", value: "about" },
+export const panelTabOptions: Array<{ label: string; labelKey: string; value: PanelTab }> = [
+  { label: "精灵", labelKey: "app.tab.companion", value: "companion" },
+  { label: "设置", labelKey: "app.tab.settings", value: "settings" },
+  { label: "提醒", labelKey: "app.tab.reminders", value: "reminders" },
+  { label: "日程", labelKey: "app.tab.calendar", value: "calendar" },
+  { label: "历史", labelKey: "app.tab.history", value: "history" },
+  { label: "记忆", labelKey: "app.tab.memory", value: "memory" },
+  { label: "关于", labelKey: "app.tab.about", value: "about" },
 ];
 
-export const reminderRepeatOptions: Array<{ label: string; value: ReminderRepeat }> = [
-  { label: "仅一次", value: "none" },
-  { label: "每天", value: "daily" },
-  { label: "每周", value: "weekly" },
-  { label: "工作日", value: "weekdays" },
+export const reminderRepeatOptions: Array<{ label: string; labelKey: string; value: ReminderRepeat }> = [
+  { label: "仅一次", labelKey: "app.repeat.none", value: "none" },
+  { label: "每天", labelKey: "app.repeat.daily", value: "daily" },
+  { label: "每周", labelKey: "app.repeat.weekly", value: "weekly" },
+  { label: "工作日", labelKey: "app.repeat.weekdays", value: "weekdays" },
 ];
 
-export function reminderRepeatLabel(repeat: ReminderRepeat) {
-  return reminderRepeatOptions.find((option) => option.value === repeat)?.label ?? "仅一次";
+export function reminderRepeatLabel(repeat: ReminderRepeat, translate?: (key: string, fallback?: string) => string) {
+  const option = reminderRepeatOptions.find((item) => item.value === repeat);
+  if (!option) return translate ? translate("app.repeat.none", "仅一次") : "仅一次";
+  return translate ? translate(option.labelKey, option.label) : option.label;
 }
 
-export const attachmentActionOptions: Array<{ label: string; value: AttachmentAction }> = [
-  { label: "总结", value: "summarize" },
-  { label: "翻译", value: "translate" },
-  { label: "解释", value: "explain" },
+export const attachmentActionOptions: Array<{ label: string; labelKey: string; value: AttachmentAction }> = [
+  { label: "总结", labelKey: "app.attachment.summarize", value: "summarize" },
+  { label: "翻译", labelKey: "app.attachment.translate", value: "translate" },
+  { label: "解释", labelKey: "app.attachment.explain", value: "explain" },
 ];
 
 export function formatBytes(bytes: number) {

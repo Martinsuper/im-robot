@@ -1,7 +1,38 @@
 {
   "app": {
     "name": "Piko",
-    "greeting": "Piko 正在桌面上陪着你。"
+    "greeting": "Piko 正在桌面上陪着你。",
+    "petStyle": {
+      "lumi": "机甲猫",
+      "character": "Live2D 官方模型",
+      "custom": "自定义图片",
+      "classic": "Piko 经典兜底"
+    },
+    "quietMode": {
+      "active": "活泼",
+      "balanced": "平衡",
+      "minimal": "极简"
+    },
+    "tab": {
+      "companion": "精灵",
+      "settings": "设置",
+      "reminders": "提醒",
+      "calendar": "日程",
+      "history": "历史",
+      "memory": "记忆",
+      "about": "关于"
+    },
+    "repeat": {
+      "none": "仅一次",
+      "daily": "每天",
+      "weekly": "每周",
+      "weekdays": "工作日"
+    },
+    "attachment": {
+      "summarize": "总结",
+      "translate": "翻译",
+      "explain": "解释"
+    }
   },
   "pet": {
     "idle": "Piko 在休息",
@@ -63,7 +94,8 @@
     "runOnboarding": "重新运行引导",
     "foregroundApp": "前台应用感知",
     "foregroundAppEnabled": "已启用",
-    "foregroundAppPaused": "已暂停"
+    "foregroundAppPaused": "已暂停",
+    "languageLabel": "界面语言"
   },
   "onboarding": {
     "title": "欢迎使用 Piko",
