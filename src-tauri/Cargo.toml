@@ -29,7 +29,7 @@ reqwest = { version = "0.13", default-features = false, features = ["charset", "
 tauri-plugin-notification = "^2"
 tauri-plugin-autostart = "^2"
 screenshots = "0.8.10"
-base64 = "0.22"
+base64 = "0.23"
 tauri-plugin-dialog = "^2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = "0.4"
