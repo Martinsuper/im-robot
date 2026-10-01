@@ -8,8 +8,10 @@ reminders.rs（257 行）、calendar.rs（579 行，含 iCalendar 与系统日�
 的 .manage() 调用保留在 lib.rs，类型随模块迁移后经重导出解析。
 lib.rs 剩余主体：聊天流程（stream_chat/SSE 循环）、插件系统（含 WASM）、窗口管理、onboarding、
 数据导入导出、空闲/前台感知——如继续拆分，chat.rs 与 plugins.rs 是下一批目标。
-B4 已启动（2026-10-01）：thiserror 引入，providers/updates 两模块先行落地 typed error +
-`impl From<XxxError> for String` 兼容层（lib.rs 调用点零改动），作为其余模块迁移的样板。
+B4 样板已完成（2026-10-01，CI 双平台验证）：providers.rs 定义 `ProviderError`（8 variant）、
+updates.rs 定义 `UpdateError`（11 variant），经 `impl From<XxxError> for String` 兼容层保持
+lib.rs 调用点与 tauri 命令边界（`Result<_, String>`）零改动。其余模块的错误迁移照此模式进行；
+`persist_settings` 静默吞错与 `init_memory_db` expect 崩溃两个遗留点仍待处理。
 
 技术栈：Tauri 2 + Rust。全后端共 11307 行，以下问题均给出 `file:line` 证据。安全问题见 [01-安全](01-security-review.md)，本篇聚焦结构与工程质量。
 
