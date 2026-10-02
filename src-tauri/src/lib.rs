@@ -1,11 +1,12 @@
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
