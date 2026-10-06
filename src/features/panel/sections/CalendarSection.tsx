@@ -4,7 +4,8 @@ import { useTranslation } from "../../i18n/I18nProvider";
 import { formatCalendarRange } from "../../app/appShared";
 
 interface CalendarSectionProps {
-  className: string;
+  active: boolean;
+  tabProps: Record<string, unknown>;
   calendarEvents: CalendarEvent[];
   calendarSyncStatus: CalendarSyncStatus;
   calendarSyncNotice: string;
@@ -24,7 +25,8 @@ interface CalendarSectionProps {
 }
 
 export function CalendarSection({
-  className,
+  active,
+  tabProps,
   calendarEvents,
   calendarSyncStatus,
   calendarSyncNotice,
@@ -43,8 +45,9 @@ export function CalendarSection({
   syncCalendarFromSystem,
 }: CalendarSectionProps) {
   const { t } = useTranslation();
+  if (!active) return null;
   return (
-    <section className={className}>
+    <section className="panel-card" {...tabProps}>
       <div className="section-heading">
         <div>
           <p className="eyebrow">CALENDAR</p>

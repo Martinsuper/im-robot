@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- confirmation helpers are part of this component's public API */
 import type { ReactNode } from "react";
 import type { ActionDraft } from "./chatTypes";
 import { useTranslation } from "../i18n/I18nProvider";

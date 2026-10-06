@@ -1,4 +1,4 @@
-import { FormEvent, isValidElement, type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, isValidElement, type PointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -317,21 +317,21 @@ export function BubbleWindow() {
     void getCurrentWindow().startDragging();
   }
 
-  function clearSkeletonHideTimer() {
+  const clearSkeletonHideTimer = useCallback(() => {
     if (skeletonHideTimer.current) {
       window.clearTimeout(skeletonHideTimer.current);
       skeletonHideTimer.current = undefined;
     }
-  }
+  }, []);
 
-  function hideSkeletonSoon() {
+  const hideSkeletonSoon = useCallback(() => {
     clearSkeletonHideTimer();
     skeletonHideTimer.current = window.setTimeout(() => {
       setShowReplySkeleton(false);
       setIsReplyEntering(false);
       skeletonHideTimer.current = undefined;
     }, 220);
-  }
+  }, [clearSkeletonHideTimer]);
 
   function refreshChatHistory() {
     if (!isTauriRuntime) return;
@@ -355,7 +355,7 @@ export function BubbleWindow() {
       if (isTauriRuntime) runCommandQuiet("stop_local_speech");
       clearSkeletonHideTimer();
     };
-  }, []);
+  }, [clearSkeletonHideTimer]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -455,7 +455,7 @@ export function BubbleWindow() {
         dispose();
       });
     };
-  }, [t]);
+  }, [clearSkeletonHideTimer, hideSkeletonSoon, t]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;

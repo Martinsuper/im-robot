@@ -9,7 +9,8 @@ import {
 } from "../../app/appShared";
 
 interface RemindersSectionProps {
-  className: string;
+  active: boolean;
+  tabProps: Record<string, unknown>;
   focusState: FocusSnapshot;
   focusMinutes: number;
   setFocusMinutes: Dispatch<SetStateAction<number>>;
@@ -27,7 +28,8 @@ interface RemindersSectionProps {
 }
 
 export function RemindersSection({
-  className,
+  active,
+  tabProps,
   focusState,
   focusMinutes,
   setFocusMinutes,
@@ -44,8 +46,9 @@ export function RemindersSection({
   deleteReminder,
 }: RemindersSectionProps) {
   const { t } = useTranslation();
+  if (!active) return null;
   return (
-    <section className={className}>
+    <section className="panel-card" {...tabProps}>
       <div className="focus-card">
         <div className="section-heading">
           <div>

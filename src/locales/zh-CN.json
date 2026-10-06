@@ -22,6 +22,19 @@
       "memory": "记忆",
       "about": "关于"
     },
+    "group": {
+      "companion": "伙伴",
+      "productivity": "效率",
+      "memory": "记忆",
+      "settings": "设置"
+    },
+    "settingsSection": {
+      "preferences": "个性化",
+      "personality": "互动",
+      "rhythm": "休息",
+      "provider": "模型",
+      "preview": "预览"
+    },
     "repeat": {
       "none": "仅一次",
       "daily": "每天",
@@ -135,7 +148,8 @@
     "foregroundApp": "前台应用感知",
     "foregroundAppEnabled": "已启用",
     "foregroundAppPaused": "已暂停",
-    "languageLabel": "界面语言"
+    "languageLabel": "界面语言",
+    "sectionsAriaLabel": "设置分区"
   },
   "onboarding": {
     "title": "欢迎使用 Piko",
@@ -482,7 +496,8 @@
       "untitled": "未命名对话"
     },
     "nav": {
-      "ariaLabel": "面板导航"
+      "ariaLabel": "面板导航",
+      "groupAriaLabel": "分组内导航"
     },
     "reminders": {
       "add": "添加",

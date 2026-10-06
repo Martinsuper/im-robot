@@ -7,6 +7,7 @@ import type {
   LevelUpEvent,
   Achievement,
   DailyTask,
+  DailyTaskType,
 } from "./growthTypes";
 import { ExperienceSystem } from "./ExperienceSystem";
 import { AttributeSystem } from "./AttributeSystem";
@@ -178,10 +179,10 @@ export class GrowthManager {
   /**
    * 更新任务进度
    */
-  updateTaskProgress(taskType: string, amount: number = 1): void {
+  updateTaskProgress(taskType: DailyTaskType, amount: number = 1): void {
     this.growth = this.dailyTaskSystem.updateProgress(
       this.growth,
-      taskType as any,
+      taskType,
       amount
     );
 

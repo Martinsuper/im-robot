@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- provider module also exposes translation hooks and locale helpers */
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import zhCN from '../../locales/zh-CN.json';

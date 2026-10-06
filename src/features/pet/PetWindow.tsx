@@ -404,7 +404,7 @@ function PetWindowContent() {
       window.removeEventListener("piko-interaction-stats-changed", refreshProfile);
       window.removeEventListener("piko-growth-state-changed", refreshProfile);
     };
-  }, []);
+  }, [personalityManager]);
 
   useEffect(() => () => {
     if (resetTimer.current) window.clearTimeout(resetTimer.current);

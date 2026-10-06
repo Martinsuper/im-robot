@@ -15,28 +15,28 @@ describe('ExperienceSystem', () => {
   });
 
   it('should add experience', () => {
-    const growth = { level: 1, currentXp: 0, requiredXp: ExperienceSystem.getRequiredXp(1), attributes: {} as any, achievements: [], dailyTasks: [], lastDailyReset: Date.now() };
+    const growth = { level: 1, currentXp: 0, requiredXp: ExperienceSystem.getRequiredXp(1), attributes: AttributeSystem.initializeAttributes(), achievements: [], dailyTasks: [], lastDailyReset: Date.now() };
     const result = ExperienceSystem.addExperience(growth, 50);
     expect(result.growth.currentXp).toBe(50);
     expect(result.levelUps.length).toBe(0);
   });
 
   it('should level up when enough experience', () => {
-    const growth = { level: 1, currentXp: 0, requiredXp: ExperienceSystem.getRequiredXp(1), attributes: {} as any, achievements: [], dailyTasks: [], lastDailyReset: Date.now() };
+    const growth = { level: 1, currentXp: 0, requiredXp: ExperienceSystem.getRequiredXp(1), attributes: AttributeSystem.initializeAttributes(), achievements: [], dailyTasks: [], lastDailyReset: Date.now() };
     const result = ExperienceSystem.addExperience(growth, ExperienceSystem.getRequiredXp(1));
     expect(result.levelUps.length).toBe(1);
     expect(result.levelUps[0].newLevel).toBe(2);
   });
 
   it('should handle multiple level ups', () => {
-    const growth = { level: 1, currentXp: 0, requiredXp: ExperienceSystem.getRequiredXp(1), attributes: {} as any, achievements: [], dailyTasks: [], lastDailyReset: Date.now() };
+    const growth = { level: 1, currentXp: 0, requiredXp: ExperienceSystem.getRequiredXp(1), attributes: AttributeSystem.initializeAttributes(), achievements: [], dailyTasks: [], lastDailyReset: Date.now() };
     const xpNeeded = ExperienceSystem.getRequiredXp(1) + ExperienceSystem.getRequiredXp(2);
     const result = ExperienceSystem.addExperience(growth, xpNeeded);
     expect(result.levelUps.length).toBeGreaterThanOrEqual(2);
   });
 
   it('should get experience info', () => {
-    const growth = { level: 1, currentXp: 50, requiredXp: ExperienceSystem.getRequiredXp(1), attributes: {} as any, achievements: [], dailyTasks: [], lastDailyReset: Date.now() };
+    const growth = { level: 1, currentXp: 50, requiredXp: ExperienceSystem.getRequiredXp(1), attributes: AttributeSystem.initializeAttributes(), achievements: [], dailyTasks: [], lastDailyReset: Date.now() };
     const info = ExperienceSystem.getExperienceInfo(growth);
     expect(info.level).toBe(1);
     expect(info.currentXp).toBe(50);

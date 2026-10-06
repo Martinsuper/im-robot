@@ -1,8 +1,8 @@
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
-#[cfg(target_os = "linux")]
-use std::process::Command;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::{
     collections::HashMap,
     fs,

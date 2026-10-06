@@ -14,7 +14,8 @@ import type { Live2DModelId, PetVisualStyle } from "../../app/appShared";
 import { reportCommandError, runCommand } from "../../app/appRuntime";
 
 interface PreferencesSectionProps {
-  className: string;
+  active: boolean;
+  tabProps: Record<string, unknown>;
   companionName: string;
   theme: Theme;
   sensingPaused: boolean;
@@ -32,7 +33,8 @@ interface PreferencesSectionProps {
 }
 
 export function PreferencesSection({
-  className,
+  active,
+  tabProps,
   companionName,
   theme,
   sensingPaused,
@@ -57,8 +59,9 @@ export function PreferencesSection({
     { value: "en-US", label: "English" },
     { value: "ja-JP", label: "日本語" },
   ];
+  if (!active) return null;
   return (
-    <section className={className}>
+    <section className="panel-card" {...tabProps}>
       <p className="eyebrow">PREFERENCES</p>
       <h2>{t("panel.settings.personalizationTitle", "个性化与系统")}</h2>
       <div className="settings-form">
@@ -165,15 +168,17 @@ export function PreferencesSection({
 }
 
 interface QuietModeSectionProps {
-  className: string;
+  active: boolean;
+  tabProps: Record<string, unknown>;
   quietMode: QuietMode;
   updateQuietMode: (mode: QuietMode) => void;
 }
 
-export function QuietModeSection({ className, quietMode, updateQuietMode }: QuietModeSectionProps) {
+export function QuietModeSection({ active, tabProps, quietMode, updateQuietMode }: QuietModeSectionProps) {
   const { t } = useTranslation();
+  if (!active) return null;
   return (
-    <section className={className}>
+    <section className="panel-card" {...tabProps}>
       <p className="eyebrow">PERSONALITY</p>
       <h2>{t("panel.settings.quietModeTitle", "互动活泼度")}</h2>
       <div className="segmented-control" aria-label={t("panel.settings.quietModeTitle", "互动活泼度")}>
@@ -193,7 +198,8 @@ export function QuietModeSection({ className, quietMode, updateQuietMode }: Quie
 }
 
 interface BreakReminderSectionProps {
-  className: string;
+  active: boolean;
+  tabProps: Record<string, unknown>;
   breakRemindersEnabled: boolean;
   breakReminderIntervalMinutes: number;
   breakReminderCooldownMinutes: number;
@@ -205,7 +211,8 @@ interface BreakReminderSectionProps {
 }
 
 export function BreakReminderSection({
-  className,
+  active,
+  tabProps,
   breakRemindersEnabled,
   breakReminderIntervalMinutes,
   breakReminderCooldownMinutes,
@@ -216,8 +223,9 @@ export function BreakReminderSection({
   saveWorkRhythmPreferences,
 }: BreakReminderSectionProps) {
   const { t } = useTranslation();
+  if (!active) return null;
   return (
-    <section className={className}>
+    <section className="panel-card" {...tabProps}>
       <p className="eyebrow">WORK RHYTHM</p>
       <h2>{t("panel.settings.breakTitle", "休息提醒")}</h2>
       <div className="settings-form">
@@ -289,7 +297,8 @@ export function BreakReminderSection({
 }
 
 interface ModelProviderSectionProps {
-  className: string;
+  active: boolean;
+  tabProps: Record<string, unknown>;
   aiSettings: AiSettings;
   updateProvider: (provider: string) => void;
   updateAiField: <Key extends keyof AiSettings>(key: Key, value: AiSettings[Key]) => void;
@@ -301,7 +310,8 @@ interface ModelProviderSectionProps {
 }
 
 export function ModelProviderSection({
-  className,
+  active,
+  tabProps,
   aiSettings,
   updateProvider,
   updateAiField,
@@ -312,8 +322,9 @@ export function ModelProviderSection({
   connectionStatus,
 }: ModelProviderSectionProps) {
   const { t } = useTranslation();
+  if (!active) return null;
   return (
-    <section className={className}>
+    <section className="panel-card" {...tabProps}>
       <p className="eyebrow">MODEL PROVIDER</p>
       <h2>{t("panel.settings.providerTitle", "模型服务")}</h2>
       <div className="settings-form">
@@ -388,15 +399,17 @@ export function ModelProviderSection({
 }
 
 interface HtmlPreviewSectionProps {
-  className: string;
+  active: boolean;
+  tabProps: Record<string, unknown>;
   htmlPreviewEnabled: boolean;
   updateHtmlPreviewEnabled: (enabled: boolean) => Promise<void>;
 }
 
-export function HtmlPreviewSection({ className, htmlPreviewEnabled, updateHtmlPreviewEnabled }: HtmlPreviewSectionProps) {
+export function HtmlPreviewSection({ active, tabProps, htmlPreviewEnabled, updateHtmlPreviewEnabled }: HtmlPreviewSectionProps) {
   const { t } = useTranslation();
+  if (!active) return null;
   return (
-    <section className={className}>
+    <section className="panel-card" {...tabProps}>
       <p className="eyebrow">OUTPUT PREVIEW</p>
       <h2>{t("panel.settings.htmlPreviewTitle", "HTML 预览")}</h2>
       <div className="feature-toggle-card">

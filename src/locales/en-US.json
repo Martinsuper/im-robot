@@ -22,6 +22,19 @@
       "memory": "Memory",
       "about": "About"
     },
+    "group": {
+      "companion": "Pet",
+      "productivity": "Productivity",
+      "memory": "Memory",
+      "settings": "Settings"
+    },
+    "settingsSection": {
+      "preferences": "Personalize",
+      "personality": "Activity",
+      "rhythm": "Breaks",
+      "provider": "Model",
+      "preview": "Preview"
+    },
     "repeat": {
       "none": "Once",
       "daily": "Daily",
@@ -135,7 +148,8 @@
     "foregroundApp": "Foreground App Awareness",
     "foregroundAppEnabled": "Enabled",
     "foregroundAppPaused": "Paused",
-    "languageLabel": "Language"
+    "languageLabel": "Language",
+    "sectionsAriaLabel": "Settings sections"
   },
   "onboarding": {
     "title": "Welcome to Piko",
@@ -482,7 +496,8 @@
       "untitled": "Untitled conversation"
     },
     "nav": {
-      "ariaLabel": "Panel navigation"
+      "ariaLabel": "Panel navigation",
+      "groupAriaLabel": "In-group navigation"
     },
     "reminders": {
       "add": "Add",

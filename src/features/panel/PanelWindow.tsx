@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -43,12 +43,17 @@ import {
   panelTabOptions,
   petVisualStyleOptions,
   providerOptions,
+  panelGroupOptions,
+  panelGroupTabs,
+  panelTabGroup,
+  settingsSectionOptions,
   setCustomPetImagePath,
   setPetVisualStyle,
   useCustomPetImagePath,
   useLive2DModelId,
   usePetVisualStyle,
 } from "../app/appShared";
+import type { PanelGroup, SettingsSectionId } from "../app/appShared";
 import { isTauriRuntime, runCommand, runCommandAndRefresh, runCommandQuiet, reportCommandError } from "../app/appRuntime";
 import { useTranslation } from "../i18n/I18nProvider";
 import { useAppSettings } from "./useAppSettings";
@@ -67,6 +72,16 @@ import { chatHistoryMatchesSearch, getChatHistoryTags, type ChatHistoryFilter } 
 export function PanelWindow() {
   const { t } = useTranslation();
   const [panelTab, setPanelTab] = useState<PanelTab>("companion");
+  const [lastTabByGroup, setLastTabByGroup] = useState<Record<PanelGroup, PanelTab>>({
+    companion: "companion",
+    productivity: "reminders",
+    memory: "memory",
+    settings: "settings",
+  });
+  const [memoryMounted, setMemoryMounted] = useState(false);
+  // The settings leaf owns five subsections; they were all stacked on one long
+  // scroll, which is why that tab felt so much heavier than the others.
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("preferences");
   const [connectionStatus, setConnectionStatus] = useState(() => t("panel.settings.notTested", "尚未测试连接"));
   const [appSettings, setAppSettings] = useAppSettings(
     useCallback((loaded: AppSettings) => {
@@ -147,8 +162,76 @@ export function PanelWindow() {
     ],
     [connectionStatus, t],
   );
-  const panelSectionClass = (tab: PanelTab, base = "panel-card") =>
-    `${base}${panelTab === tab ? "" : " is-hidden"}`;
+  // Inactive tabs render nothing. They used to be hidden with display:none,
+  // which kept all seven tabs' DOM (incl. MemoryCenter's ~550-line subtree)
+  // in the document at all times.
+  const showTab = (tab: PanelTab) => panelTab === tab;
+  const tabLabelId = (tab: PanelTab) => {
+    const group = panelTabGroup[tab];
+    return panelGroupTabs[group].length === 1 ? `panel-group-${group}` : `panel-tab-${tab}`;
+  };
+  // A tab may own several sections, so only the first one carries the
+  // tabpanel role/id; the rest are plain sections inside that panel.
+  const panelProps = (tab: PanelTab, first = false) =>
+    first
+      ? { id: `panel-panel-${tab}`, role: "tabpanel" as const, "aria-labelledby": tabLabelId(tab) }
+      : { "aria-labelledby": tabLabelId(tab) };
+  const settingsPanelProps = (section: SettingsSectionId) => ({
+    id: `settings-panel-${section}`,
+    role: "tabpanel" as const,
+    "aria-labelledby": `settings-section-${section}`,
+  });
+
+  const activeGroup = panelTabGroup[panelTab];
+  const groupTabOptions = panelGroupTabs[activeGroup].map((value) => {
+    const option = panelTabOptions.find((item) => item.value === value);
+    return { value, label: option?.label ?? value, labelKey: option?.labelKey ?? value };
+  });
+  const showGroupTabs = groupTabOptions.length > 1;
+
+  function selectTab(next: PanelTab) {
+    const group = panelTabGroup[next];
+    setLastTabByGroup((current) => ({ ...current, [group]: next }));
+    if (next === "memory") setMemoryMounted(true);
+    setPanelTab(next);
+  }
+
+  function selectGroup(group: PanelGroup) {
+    if (group === activeGroup) return;
+    const fallback = panelGroupOptions.find((option) => option.value === group)?.defaultTab ?? "companion";
+    selectTab(lastTabByGroup[group] ?? fallback);
+  }
+
+  function handleGroupKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    const order = panelGroupOptions.map((option) => option.value);
+    const current = order.indexOf(activeGroup);
+    if (current < 0) return;
+    let delta = 0;
+    if (event.key === "ArrowRight") delta = 1;
+    else if (event.key === "ArrowLeft") delta = -1;
+    else if (event.key === "Home") delta = -current;
+    else if (event.key === "End") delta = order.length - 1 - current;
+    else return;
+    event.preventDefault();
+    const next = order[(current + delta + order.length) % order.length];
+    selectGroup(next);
+    document.getElementById(`panel-group-${next}`)?.focus();
+  }
+
+  function handleGroupTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    const current = groupTabOptions.findIndex((option) => option.value === panelTab);
+    if (current < 0) return;
+    let delta = 0;
+    if (event.key === "ArrowRight") delta = 1;
+    else if (event.key === "ArrowLeft") delta = -1;
+    else if (event.key === "Home") delta = -current;
+    else if (event.key === "End") delta = groupTabOptions.length - 1 - current;
+    else return;
+    event.preventDefault();
+    const next = groupTabOptions[(current + delta + groupTabOptions.length) % groupTabOptions.length];
+    selectTab(next.value);
+    document.getElementById(`panel-tab-${next.value}`)?.focus();
+  }
   const filteredChatHistory = useMemo(
     () => {
       return chatHistory.filter((entry) => {
@@ -666,19 +749,50 @@ export function PanelWindow() {
       </header>
 
       <nav className="panel-tabs" aria-label={t("panel.nav.ariaLabel", "面板导航")}>
-        {panelTabOptions.map(({ label, labelKey, value }) => (
-          <button
-            className={panelTab === value ? "is-active" : ""}
-            key={value}
-            type="button"
-            onClick={() => setPanelTab(value)}
-          >
-            {t(labelKey, label)}
-          </button>
-        ))}
+        {panelGroupOptions.map(({ label, labelKey, value }) => {
+          const active = activeGroup === value;
+          return (
+            <button
+              className={active ? "is-active" : ""}
+              id={`panel-group-${value}`}
+              key={value}
+              type="button"
+              aria-current={active ? "page" : undefined}
+              onClick={() => selectGroup(value)}
+              onKeyDown={handleGroupKeyDown}
+            >
+              {t(labelKey, label)}
+            </button>
+          );
+        })}
       </nav>
 
-      <section className={panelSectionClass("companion", "companion-card")}>
+      {showGroupTabs && (
+        <nav className="panel-subtabs" role="tablist" aria-label={t("panel.nav.groupAriaLabel", "分组内导航")}>
+          {groupTabOptions.map(({ label, labelKey, value }) => {
+            const active = panelTab === value;
+            return (
+              <button
+                className={active ? "is-active" : ""}
+                id={`panel-tab-${value}`}
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-controls={`panel-panel-${value}`}
+                tabIndex={active ? 0 : -1}
+                onClick={() => selectTab(value)}
+                onKeyDown={handleGroupTabKeyDown}
+              >
+                {t(labelKey, label)}
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
+      {showTab("companion") && (
+      <section className="companion-card" {...panelProps("companion", true)}>
         <div className="companion-card__portrait">
           <PetSprite mode="idle" emotion="happy" reaction="none" />
         </div>
@@ -693,8 +807,10 @@ export function PanelWindow() {
           </div>
         </div>
       </section>
+      )}
 
-      <section className={panelSectionClass("companion")}>
+      {showTab("companion") && (
+<section className="panel-card" {...panelProps("companion")}>
         <div className="section-heading">
           <div>
             <p className="eyebrow">INTERACTION</p>
@@ -750,38 +866,44 @@ export function PanelWindow() {
             .replace("{achievements}", String(growthSnapshot.unlockedAchievements))}
         </p>
       </section>
+      )}
 
-      <section className={panelSectionClass("about")}>
-        <p className="eyebrow">PRIVACY & PERMISSIONS</p>
-        <h2>{t("panel.about.permissionsTitle", "权限中心")}</h2>
-        <div className="permission-list">
-          <div><span>{t("panel.about.notificationPermission", "通知权限")}</span><strong>{notificationPermission}</strong></div>
-          <div><span>{t("panel.about.fileAccess", "文件访问")}</span><strong>{t("panel.about.fileAccessValue", "仅主动拖入")}</strong></div>
-          <div><span>{t("panel.about.screenCapture", "屏幕录制")}</span><strong>{screenCapturePermission}</strong></div>
-          <div><span>{t("panel.about.sensing", "主动感知")}</span><strong>{sensingPaused ? t("panel.about.paused", "已暂停") : t("panel.about.running", "运行中")}</strong></div>
-        </div>
-      </section>
+      {showTab("about") && (
+        <section className="panel-card" {...panelProps("about", true)}>
+          <p className="eyebrow">PRIVACY & PERMISSIONS</p>
+          <h2>{t("panel.about.permissionsTitle", "权限中心")}</h2>
+          <div className="permission-list">
+            <div><span>{t("panel.about.notificationPermission", "通知权限")}</span><strong>{notificationPermission}</strong></div>
+            <div><span>{t("panel.about.fileAccess", "文件访问")}</span><strong>{t("panel.about.fileAccessValue", "仅主动拖入")}</strong></div>
+            <div><span>{t("panel.about.screenCapture", "屏幕录制")}</span><strong>{screenCapturePermission}</strong></div>
+            <div><span>{t("panel.about.sensing", "主动感知")}</span><strong>{sensingPaused ? t("panel.about.paused", "已暂停") : t("panel.about.running", "运行中")}</strong></div>
+          </div>
+        </section>
+      )}
 
-      <section className={panelSectionClass("about")}>
-        <p className="eyebrow">BUSINESS PLUGINS</p>
-        <h2>{t("panel.about.pluginsTitle", "外部插件")}</h2>
-        {externalPlugins.length ? (
-          <ul className="history-list">
-            {externalPlugins.map((plugin) => (
-              <li key={plugin.manifest.id}>
-                <strong>{plugin.manifest.name}</strong>
-                <span>{plugin.manifest.id} · {plugin.status}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="empty-state">{t("panel.about.pluginsEmpty", "未发现外部插件清单。")}</p>
-        )}
-      </section>
+      {showTab("about") && (
+        <section className="panel-card" {...panelProps("about")}>
+          <p className="eyebrow">BUSINESS PLUGINS</p>
+          <h2>{t("panel.about.pluginsTitle", "外部插件")}</h2>
+          {externalPlugins.length ? (
+            <ul className="history-list">
+              {externalPlugins.map((plugin) => (
+                <li key={plugin.manifest.id}>
+                  <strong>{plugin.manifest.name}</strong>
+                  <span>{plugin.manifest.id} · {plugin.status}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="empty-state">{t("panel.about.pluginsEmpty", "未发现外部插件清单。")}</p>
+          )}
+        </section>
+      )}
 
-      <section className={panelSectionClass("about")}>
-        <div className="section-heading">
-          <div>
+      {showTab("about") && (
+        <section className="panel-card" {...panelProps("about")}>
+          <div className="section-heading">
+            <div>
             <p className="eyebrow">ABOUT</p>
             <h2>{t("panel.about.versionTitle", "版本信息")}</h2>
           </div>
@@ -807,8 +929,10 @@ export function PanelWindow() {
           </button>
         )}
       </section>
+      )}
 
-      <section className={panelSectionClass("companion")}>
+      {showTab("companion") && (
+        <section className="panel-card" {...panelProps("companion")}>
         <div className="section-heading">
           <div>
             <p className="eyebrow">STATUS</p>
@@ -853,63 +977,96 @@ export function PanelWindow() {
           </div>
         </div>
       </section>
+      )}
 
-      <PreferencesSection
-        className={panelSectionClass("settings")}
-        companionName={companionName}
-        theme={theme}
-        sensingPaused={sensingPaused}
-        setAppSettings={setAppSettings}
-        petVisualStyle={petVisualStyle}
-        live2dModelId={live2dModelId}
-        customPetImagePath={customPetImagePath}
-        chooseCustomPetImage={chooseCustomPetImage}
-        clearCustomPetImage={clearCustomPetImage}
-        autostartEnabled={autostartEnabled}
-        toggleAutostart={toggleAutostart}
-        savePreferences={savePreferences}
-        refreshOnboardingStatus={refreshOnboardingStatus}
-        preferencesStatus={preferencesStatus}
-      />
+      {showTab("settings") && (
+        <section className="settings-view" {...panelProps("settings", true)}>
+          <nav
+            className="settings-sections"
+            role="tablist"
+            aria-label={t("settings.sectionsAriaLabel", "设置分区")}
+          >
+            {settingsSectionOptions.map(({ label, labelKey, value }) => (
+              <button
+                className={settingsSection === value ? "is-active" : ""}
+                id={`settings-section-${value}`}
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={settingsSection === value}
+                aria-controls={`settings-panel-${value}`}
+                tabIndex={settingsSection === value ? 0 : -1}
+                onClick={() => setSettingsSection(value)}
+              >
+                {t(labelKey, label)}
+              </button>
+            ))}
+          </nav>
 
-      <QuietModeSection
-        className={panelSectionClass("settings")}
-        quietMode={appSettings.quietMode}
-        updateQuietMode={updateQuietMode}
-      />
+          <PreferencesSection
+            active={settingsSection === "preferences"}
+            tabProps={settingsPanelProps("preferences")}
+            companionName={companionName}
+            theme={theme}
+            sensingPaused={sensingPaused}
+            setAppSettings={setAppSettings}
+            petVisualStyle={petVisualStyle}
+            live2dModelId={live2dModelId}
+            customPetImagePath={customPetImagePath}
+            chooseCustomPetImage={chooseCustomPetImage}
+            clearCustomPetImage={clearCustomPetImage}
+            autostartEnabled={autostartEnabled}
+            toggleAutostart={toggleAutostart}
+            savePreferences={savePreferences}
+            refreshOnboardingStatus={refreshOnboardingStatus}
+            preferencesStatus={preferencesStatus}
+          />
 
-      <BreakReminderSection
-        className={panelSectionClass("settings")}
-        breakRemindersEnabled={breakRemindersEnabled}
-        breakReminderIntervalMinutes={breakReminderIntervalMinutes}
-        breakReminderCooldownMinutes={breakReminderCooldownMinutes}
-        breakReminderQuietHoursEnabled={breakReminderQuietHoursEnabled}
-        breakReminderQuietHoursStart={breakReminderQuietHoursStart}
-        breakReminderQuietHoursEnd={breakReminderQuietHoursEnd}
-        setAppSettings={setAppSettings}
-        saveWorkRhythmPreferences={saveWorkRhythmPreferences}
-      />
+          <QuietModeSection
+            active={settingsSection === "personality"}
+            tabProps={settingsPanelProps("personality")}
+            quietMode={appSettings.quietMode}
+            updateQuietMode={updateQuietMode}
+          />
 
-      <ModelProviderSection
-        className={panelSectionClass("settings")}
-        aiSettings={aiSettings}
-        updateProvider={updateProvider}
-        updateAiField={updateAiField}
-        apiKey={apiKey}
-        setApiKey={setApiKey}
-        isTesting={isTesting}
-        testConnection={testConnection}
-        connectionStatus={connectionStatus}
-      />
+          <BreakReminderSection
+            active={settingsSection === "rhythm"}
+            tabProps={settingsPanelProps("rhythm")}
+            breakRemindersEnabled={breakRemindersEnabled}
+            breakReminderIntervalMinutes={breakReminderIntervalMinutes}
+            breakReminderCooldownMinutes={breakReminderCooldownMinutes}
+            breakReminderQuietHoursEnabled={breakReminderQuietHoursEnabled}
+            breakReminderQuietHoursStart={breakReminderQuietHoursStart}
+            breakReminderQuietHoursEnd={breakReminderQuietHoursEnd}
+            setAppSettings={setAppSettings}
+            saveWorkRhythmPreferences={saveWorkRhythmPreferences}
+          />
 
-      <HtmlPreviewSection
-        className={panelSectionClass("settings")}
-        htmlPreviewEnabled={appSettings.htmlPreviewEnabled}
-        updateHtmlPreviewEnabled={updateHtmlPreviewEnabled}
-      />
+          <ModelProviderSection
+            active={settingsSection === "provider"}
+            tabProps={settingsPanelProps("provider")}
+            aiSettings={aiSettings}
+            updateProvider={updateProvider}
+            updateAiField={updateAiField}
+            apiKey={apiKey}
+            setApiKey={setApiKey}
+            isTesting={isTesting}
+            testConnection={testConnection}
+            connectionStatus={connectionStatus}
+          />
+
+          <HtmlPreviewSection
+            active={settingsSection === "preview"}
+            tabProps={settingsPanelProps("preview")}
+            htmlPreviewEnabled={appSettings.htmlPreviewEnabled}
+            updateHtmlPreviewEnabled={updateHtmlPreviewEnabled}
+          />
+        </section>
+      )}
 
       <RemindersSection
-        className={panelSectionClass("reminders")}
+        active={showTab("reminders")}
+        tabProps={panelProps("reminders", true)}
         focusState={focusState}
         focusMinutes={focusMinutes}
         setFocusMinutes={setFocusMinutes}
@@ -927,7 +1084,8 @@ export function PanelWindow() {
       />
 
       <CalendarSection
-        className={panelSectionClass("calendar")}
+        active={showTab("calendar")}
+        tabProps={panelProps("calendar", true)}
         calendarEvents={calendarEvents}
         calendarSyncStatus={calendarSyncStatus}
         calendarSyncNotice={calendarSyncNotice}
@@ -947,7 +1105,8 @@ export function PanelWindow() {
       />
 
       <HistorySection
-        className={panelSectionClass("history")}
+        active={showTab("history")}
+        tabProps={panelProps("history", true)}
         focusState={focusState}
         chatHistory={chatHistory}
         filteredChatHistory={filteredChatHistory}
@@ -960,9 +1119,11 @@ export function PanelWindow() {
         clearChatHistory={clearChatHistory}
       />
 
-      <section className={panelSectionClass("memory")}>
-        <MemoryCenter />
-      </section>
+      {memoryMounted && (
+        <section hidden={!showTab("memory")} {...panelProps("memory", showTab("memory"))}>
+          <MemoryCenter />
+        </section>
+      )}
 
     </main>
   );

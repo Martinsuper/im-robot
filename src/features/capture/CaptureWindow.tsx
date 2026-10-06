@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import type { CaptureSelection } from "../../types/appTypes";
 import { normalizeCaptureSelection } from "../app/appShared";
 import { runCommand, runCommandQuiet } from "../app/appRuntime";
@@ -16,7 +16,7 @@ export function CaptureWindow() {
     setSelection(normalizeCaptureSelection(origin.x, origin.y, event.clientX, event.clientY));
   }
 
-  async function confirm() {
+  const confirm = useCallback(async () => {
     if (!selection || !hasSelection) return;
     setError("");
     try {
@@ -24,7 +24,7 @@ export function CaptureWindow() {
     } catch (captureError) {
       setError(String(captureError));
     }
-  }
+  }, [hasSelection, selection]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -33,7 +33,7 @@ export function CaptureWindow() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hasSelection, selection]);
+  }, [confirm, hasSelection]);
 
   return (
     <main

@@ -81,19 +81,18 @@ export interface Live2DCharacterPetProps {
 
 function loadScript(src: string) {
   return new Promise<void>((resolve, reject) => {
-    fetch(src)
-      .then((response) => {
-        if (!response.ok) throw new Error(`Failed to load ${src}: ${response.status} ${response.statusText}`);
-        return response.text();
-      })
-      .then((source) => {
-        new Function("globalObject", `${source}\n;globalObject.Live2DCubismCore = Live2DCubismCore;`)(window);
-        resolve();
-      })
-      .catch((error) => {
-        console.error("[Live2D] Failed to load Cubism Core script:", error);
-        reject(error);
-      });
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.dataset.pikoLive2dCore = "true";
+    script.addEventListener("load", () => resolve(), { once: true });
+    script.addEventListener("error", () => {
+      script.remove();
+      const error = new Error(`Failed to load ${src}`);
+      console.error("[Live2D] Failed to load Cubism Core script:", error);
+      reject(error);
+    }, { once: true });
+    document.head.appendChild(script);
   });
 }
 

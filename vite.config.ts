@@ -7,6 +7,22 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  build: {
+    // Pixi is a large, lazily loaded graphics runtime. Keep it isolated from
+    // the regular window bundles and use a realistic warning ceiling for that
+    // single optional chunk.
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("live2d") || id.includes("cubism")) return "vendor-live2d";
+          if (id.includes("pixi.js") || id.includes("@pixi/")) return "vendor-pixi";
+          return undefined;
+        },
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

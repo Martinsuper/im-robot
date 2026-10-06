@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- shared UI facade intentionally exports components, hooks, and option tables */
 import { CSSProperties, useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { emit, listen, UnlistenFn } from "@tauri-apps/api/event";
@@ -548,6 +549,29 @@ export const quietModeOptions: Array<{ label: string; labelKey: string; value: Q
   { label: "极简", labelKey: "app.quietMode.minimal", value: "minimal" },
 ];
 
+/**
+ * Top-level panel navigation is grouped into four destinations rather than
+ * seven flat tabs: the seven-tab layout gave every tab equal visual weight even
+ * though "settings" owned five subsections and "reminders" owned one.
+ *
+ * "about" is no longer a top-level tab -- its sections live under the settings
+ * group, which is where users look for permissions and version info anyway.
+ */
+export type PanelGroup = "companion" | "productivity" | "memory" | "settings";
+
+export const panelGroupOptions: Array<{
+  label: string;
+  labelKey: string;
+  value: PanelGroup;
+  /** Which leaf tab to activate when this group is first chosen. */
+  defaultTab: PanelTab;
+}> = [
+  { label: "伙伴", labelKey: "app.group.companion", value: "companion", defaultTab: "companion" },
+  { label: "效率", labelKey: "app.group.productivity", value: "productivity", defaultTab: "reminders" },
+  { label: "记忆", labelKey: "app.group.memory", value: "memory", defaultTab: "memory" },
+  { label: "设置", labelKey: "app.group.settings", value: "settings", defaultTab: "settings" },
+];
+
 export const panelTabOptions: Array<{ label: string; labelKey: string; value: PanelTab }> = [
   { label: "精灵", labelKey: "app.tab.companion", value: "companion" },
   { label: "设置", labelKey: "app.tab.settings", value: "settings" },
@@ -556,6 +580,40 @@ export const panelTabOptions: Array<{ label: string; labelKey: string; value: Pa
   { label: "历史", labelKey: "app.tab.history", value: "history" },
   { label: "记忆", labelKey: "app.tab.memory", value: "memory" },
   { label: "关于", labelKey: "app.tab.about", value: "about" },
+];
+
+/** Which top-level group each leaf tab belongs to. */
+export const panelTabGroup: Record<PanelTab, PanelGroup> = {
+  companion: "companion",
+  reminders: "productivity",
+  calendar: "productivity",
+  history: "productivity",
+  memory: "memory",
+  settings: "settings",
+  about: "settings",
+};
+
+/** Leaf tabs shown as the secondary row inside each group. */
+export const panelGroupTabs: Record<PanelGroup, PanelTab[]> = {
+  companion: ["companion"],
+  productivity: ["reminders", "calendar", "history"],
+  memory: ["memory"],
+  settings: ["settings", "about"],
+};
+
+/** The five subsections of the settings leaf, shown as an in-page switcher. */
+export type SettingsSectionId = "preferences" | "personality" | "rhythm" | "provider" | "preview";
+
+export const settingsSectionOptions: Array<{
+  label: string;
+  labelKey: string;
+  value: SettingsSectionId;
+}> = [
+  { label: "个性化", labelKey: "app.settingsSection.preferences", value: "preferences" },
+  { label: "互动", labelKey: "app.settingsSection.personality", value: "personality" },
+  { label: "休息", labelKey: "app.settingsSection.rhythm", value: "rhythm" },
+  { label: "模型", labelKey: "app.settingsSection.provider", value: "provider" },
+  { label: "预览", labelKey: "app.settingsSection.preview", value: "preview" },
 ];
 
 export const reminderRepeatOptions: Array<{ label: string; labelKey: string; value: ReminderRepeat }> = [

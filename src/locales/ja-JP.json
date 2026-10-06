@@ -22,6 +22,19 @@
       "memory": "メモリー",
       "about": "情報"
     },
+    "group": {
+      "companion": "ペット",
+      "productivity": "仕事",
+      "memory": "記憶",
+      "settings": "設定"
+    },
+    "settingsSection": {
+      "preferences": "个性化",
+      "personality": "交流",
+      "rhythm": "休憩",
+      "provider": "モデル",
+      "preview": "プレビュー"
+    },
     "repeat": {
       "none": "一回のみ",
       "daily": "毎日",
@@ -135,7 +148,8 @@
     "foregroundApp": "フォアグラウンドアプリ感知",
     "foregroundAppEnabled": "有効",
     "foregroundAppPaused": "一時停止中",
-    "languageLabel": "表示言語"
+    "languageLabel": "表示言語",
+    "sectionsAriaLabel": "設定セクション"
   },
   "onboarding": {
     "title": "Piko へようこそ",
@@ -482,7 +496,8 @@
       "untitled": "無題の会話"
     },
     "nav": {
-      "ariaLabel": "パネルナビゲーション"
+      "ariaLabel": "パネルナビゲーション",
+      "groupAriaLabel": "グループ内ナビゲーション"
     },
     "reminders": {
       "add": "追加",

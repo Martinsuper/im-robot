@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- preview parsing helpers are intentionally colocated with the renderer */
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "../app/appRuntime";

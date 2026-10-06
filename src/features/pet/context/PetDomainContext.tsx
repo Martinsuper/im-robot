@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- domain context intentionally exports provider, hooks, and selectors */
 import React, { createContext, useContext, useMemo, useState, useEffect } from "react";
 import {
   GrowthSnapshot,
@@ -8,6 +9,7 @@ import {
   type HumanInteractionEvent,
 } from "../interaction";
 import {
+  type InteractionRecord,
   PersonalityDimensions,
   PersonalityManager,
   describePersonality,
@@ -93,7 +95,7 @@ interface PetDomainContextValue {
 
   // 更新函数
   updateGrowth: (event: HumanInteractionEvent) => void;
-  recordInteraction: (signal: any) => void;
+  recordInteraction: (signal: InteractionRecord) => void;
   evaluateBehavior: () => void;
 
   // AI 解析触发
@@ -196,7 +198,7 @@ export function PetDomainProvider({ children }: PetDomainProviderProps) {
   }, []);
 
   const recordInteraction = useMemo(() => {
-    return (signal: any) => {
+    return (signal: InteractionRecord) => {
       personalityManager.recordInteraction(signal);
     };
   }, [personalityManager]);

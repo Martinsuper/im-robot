@@ -15,6 +15,9 @@ artifacts
 .tauri
 test-results
 playwright-report
+build-backup/
+preview/
+.workbuddy/
 
 # Editor directories and files
 .vscode/*

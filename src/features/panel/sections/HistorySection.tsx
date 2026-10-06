@@ -12,7 +12,8 @@ import {
 } from "./chatHistoryFilters";
 
 interface HistorySectionProps {
-  className: string;
+  active: boolean;
+  tabProps: Record<string, unknown>;
   focusState: FocusSnapshot;
   chatHistory: ChatHistoryEntry[];
   filteredChatHistory: ChatHistoryEntry[];
@@ -26,7 +27,8 @@ interface HistorySectionProps {
 }
 
 export function HistorySection({
-  className,
+  active,
+  tabProps,
   focusState,
   chatHistory,
   filteredChatHistory,
@@ -39,8 +41,9 @@ export function HistorySection({
   clearChatHistory,
 }: HistorySectionProps) {
   const { t } = useTranslation();
+  if (!active) return null;
   return (
-    <section className={className}>
+    <section className="panel-card" {...tabProps}>
       <div className="focus-summary">
         <span>{t("panel.history.todayFocus", "今日专注")}</span>
         <strong>{t("panel.history.minutes", "{minutes} 分钟").replace("{minutes}", String(focusState.todayMinutes))}</strong>

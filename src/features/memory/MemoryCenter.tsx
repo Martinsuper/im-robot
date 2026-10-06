@@ -56,7 +56,7 @@ export function MemoryCenter() {
   // Sub-tab for advanced views
   const [subView, setSubView] = useState<"memories" | "pending" | "reflections">("memories");
 
-  async function loadMemories() {
+  const loadMemories = useCallback(async () => {
     const input: ListMemoriesInput = {
       status: "active",
       limit: 100,
@@ -70,7 +70,7 @@ export function MemoryCenter() {
       setMemories([]);
       setError(String(error));
     }
-  }
+  }, [filterType]);
 
   async function loadRecent() {
     try {
@@ -119,7 +119,7 @@ export function MemoryCenter() {
     await loadMemories();
   }
 
-  async function searchMemories(query: string) {
+  const searchMemories = useCallback(async (query: string) => {
     if (!query.trim()) {
       setView("list");
       void loadMemories();
@@ -148,7 +148,7 @@ export function MemoryCenter() {
         setIsSearching(false);
       }
     }
-  }
+  }, [filterType, loadMemories]);
 
   const debouncedSearch = useCallback(
     (query: string) => {
@@ -157,7 +157,7 @@ export function MemoryCenter() {
         void searchMemories(query);
       }, 300);
     },
-    [filterType],
+    [searchMemories],
   );
 
   useEffect(() => {
@@ -176,7 +176,7 @@ export function MemoryCenter() {
     return () => {
       void unlisten.then((dispose) => dispose());
     };
-  }, [filterType]);
+  }, [loadMemories]);
 
   async function handleDelete(id: string) {
     try {
