@@ -60,6 +60,8 @@ vi.mock("../app/appShared", () => ({
     theme: "sage",
     language: "zh-CN",
     htmlPreviewEnabled: false,
+    hasApiKey: false,
+    ai: { baseUrl: "http://localhost:11434/v1" },
   },
   formatBytes: (bytes: number) => `${bytes} B`,
 }));
@@ -97,7 +99,14 @@ let chatHistory: ChatHistoryEntry[];
 function installDefaultCommands() {
   runCommandMock.mockImplementation((command: string) => {
     if (command === "get_settings") {
-      return Promise.resolve({ companionName: "Piko", theme: "sage", htmlPreviewEnabled: false, language: "zh-CN" });
+      return Promise.resolve({
+        companionName: "Piko",
+        theme: "sage",
+        htmlPreviewEnabled: false,
+        language: "zh-CN",
+        hasApiKey: false,
+        ai: { baseUrl: "http://localhost:11434/v1" },
+      });
     }
     if (command === "get_bubble_chat_history") {
       return Promise.resolve(chatHistory);
@@ -293,7 +302,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     queueUuids(["req-unused"]);
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
-    expect(screen.getByText("你好，我是 Piko。今天想一起完成什么？")).toBeTruthy(); // 欢迎态
+    expect(screen.getByText(/你好，我是 Piko/)).toBeTruthy(); // 欢迎态
 
     act(() => {
       emitChat({ type: "delta", requestId: "req-ghost", sequence: 1, text: "幽灵消息" });
@@ -335,7 +344,14 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     queueUuids(["req-err"]);
     runCommandMock.mockImplementation((command: string) => {
       if (command === "get_settings") {
-        return Promise.resolve({ companionName: "Piko", theme: "sage", htmlPreviewEnabled: false, language: "zh-CN" });
+        return Promise.resolve({
+          companionName: "Piko",
+          theme: "sage",
+          htmlPreviewEnabled: false,
+          language: "zh-CN",
+          hasApiKey: false,
+          ai: { baseUrl: "http://localhost:11434/v1" },
+        });
       }
       if (command === "get_bubble_chat_history") {
         return Promise.resolve([] as ChatHistoryEntry[]);
@@ -354,6 +370,6 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     await waitFor(() => expect(screen.queryByTitle("停止生成")).toBeNull());
     // 骨架隐藏、错误消息可见（chat_start .catch 完整复位生成态）
     expect(screen.queryByText("正在生成回复")).toBeNull();
-    expect(screen.getByText(/模型服务连接失败/)).toBeTruthy();
+    expect(screen.getByText(/网络好像不太稳定/)).toBeTruthy();
   });
 });

@@ -86,7 +86,7 @@ describe("generatePetCompanionResponse", () => {
     });
     expect(mocks.runCommand).toHaveBeenCalledWith(
       "generate_pet_companion_response",
-      expect.objectContaining({ mode: "dialogue", scene: "chat", bondTier: "warm" }),
+      expect.objectContaining({ input: expect.objectContaining({ mode: "dialogue", scene: "chat", bondTier: "warm" }) }),
       undefined,
     );
   });
@@ -178,7 +178,7 @@ describe("resolvePetIdleMotionStyle", () => {
     expect(mocks.runCommand).toHaveBeenCalledTimes(1);
     expect(mocks.runCommand).toHaveBeenCalledWith(
       "generate_pet_companion_response",
-      expect.objectContaining({ mode: "idleProfile", scene: "idle", bondTier: "warm" }),
+      expect.objectContaining({ input: expect.objectContaining({ mode: "idleProfile", scene: "idle", bondTier: "warm" }) }),
       undefined,
     );
   });
@@ -256,7 +256,7 @@ describe("resolvePetBehaviorProfile", () => {
     expect(mocks.runCommand).toHaveBeenCalledTimes(1);
     expect(mocks.runCommand).toHaveBeenCalledWith(
       "generate_pet_companion_response",
-      expect.objectContaining({ mode: "behaviorProfile", scene: "behavior" }),
+      expect.objectContaining({ input: expect.objectContaining({ mode: "behaviorProfile", scene: "behavior" }) }),
       undefined,
     );
   });
@@ -294,7 +294,7 @@ describe("resolvePetBehaviorPriority", () => {
     expect(mocks.runCommand).toHaveBeenCalledTimes(1);
     expect(mocks.runCommand).toHaveBeenCalledWith(
       "generate_pet_companion_response",
-      expect.objectContaining({ mode: "behaviorPriority", scene: "behavior" }),
+      expect.objectContaining({ input: expect.objectContaining({ mode: "behaviorPriority", scene: "behavior" }) }),
       undefined,
     );
   });
