@@ -45,6 +45,19 @@ pub fn init_memory_db(app: &tauri::AppHandle) -> Result<MemoryDb, String> {
     Ok(MemoryDb(Mutex::new(conn)))
 }
 
+/// 降级方案：主数据库初始化失败时打开进程内临时数据库，保证聊天与记忆命令
+/// 继续可用，仅本次会话的记忆不会持久化（重启即丢弃）。
+pub fn open_in_memory_db() -> Result<MemoryDb, String> {
+    let conn = Connection::open_in_memory().map_err(|e| format!("无法打开进程内数据库: {}", e))?;
+
+    conn.execute_batch("PRAGMA busy_timeout=5000;")
+        .map_err(|e| format!("设置数据库参数失败: {}", e))?;
+
+    run_migrations(&conn)?;
+
+    Ok(MemoryDb(Mutex::new(conn)))
+}
+
 fn run_migrations(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"

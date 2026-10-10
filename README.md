@@ -59,6 +59,16 @@ npm run tauri dev
 - [记忆、存储与数据设计](doc/design/03-memory-storage-and-data.md)
 - [插件、素材与质量设计](doc/design/04-plugins-tooling-quality.md)
 
+## 代码审查
+
+- [代码审查总览与修复路线](doc/review/00-code-review-overview.md)
+- [安全审查](doc/review/01-security-review.md)
+- [前端审查](doc/review/02-frontend-review.md)
+- [后端审查](doc/review/03-backend-review.md)
+- [工程体系审查](doc/review/04-engineering-review.md)
+- [测试覆盖审查](doc/review/05-testing-review.md)
+- [性能审查](doc/review/06-performance-review.md)
+
 ## 素材来源
 
 - 默认像素精灵使用 [OpenPets](https://github.com/alvinunreal/openpets) 的开源素材，遵循 MIT License。

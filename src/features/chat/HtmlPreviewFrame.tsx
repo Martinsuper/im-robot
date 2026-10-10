@@ -1,3 +1,9 @@
+/* eslint-disable react-refresh/only-export-components -- preview parsing helpers are intentionally colocated with the renderer */
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { isTauriRuntime } from "../app/appRuntime";
+import { useTranslation } from "../i18n/I18nProvider";
+
 function isFullHtmlDocument(source: string) {
   const trimmed = source.trimStart();
   return /^<!doctype html\b/i.test(trimmed) || /^<html\b/i.test(trimmed);
@@ -56,20 +62,54 @@ function wrapHtmlFragment(source: string) {
 </html>`;
 }
 
+/// The backend serves preview frames over its own `preview` protocol so the
+/// strict main-window CSP (script-src 'self') does not apply to previewed content.
+export function previewFrameUrl(token: string) {
+  const isMac = navigator.userAgent.includes("Mac");
+  return isMac ? `preview://localhost/frame/${token}` : `http://preview.localhost/frame/${token}`;
+}
+
 export function HtmlPreviewFrame({ source }: { source: string }) {
-  const srcDoc = wrapHtmlFragment(source);
+  const { t } = useTranslation();
+  const srcDoc = useMemo(() => wrapHtmlFragment(source), [source]);
+  const [frameUrl, setFrameUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    let disposed = false;
+    let token: string | null = null;
+    (async () => {
+      try {
+        token = await invoke<string>("create_html_preview_frame", { html: srcDoc });
+      } catch {
+        return;
+      }
+      if (disposed) {
+        void invoke("remove_html_preview_frame", { token }).catch(() => undefined);
+        return;
+      }
+      setFrameUrl(previewFrameUrl(token));
+    })().catch(() => undefined);
+    return () => {
+      disposed = true;
+      if (token) {
+        void invoke("remove_html_preview_frame", { token }).catch(() => undefined);
+      }
+    };
+  }, [srcDoc]);
 
   return (
-    <section className="html-preview-card" aria-label="HTML 预览">
+    <section className="html-preview-card" aria-label={t("chat.preview.ariaLabel", "HTML 预览")}>
       <div className="html-preview-card__header">
-        <span>HTML 预览</span>
-        <span>沙箱 iframe</span>
+        <span>{t("chat.preview.title", "HTML 预览")}</span>
+        <span>{t("chat.preview.sandboxNote", "沙箱 iframe")}</span>
       </div>
       <iframe
         className="html-preview-frame"
         sandbox="allow-scripts allow-forms allow-modals"
-        srcDoc={srcDoc}
-        title="Piko HTML 预览"
+        srcDoc={isTauriRuntime ? undefined : srcDoc}
+        src={isTauriRuntime && frameUrl ? frameUrl : undefined}
+        title={t("chat.preview.frameTitle", "Piko HTML 预览")}
         referrerPolicy="no-referrer"
       />
     </section>

@@ -167,9 +167,7 @@ pub fn get_foreground_app_name() -> Option<String> {
 
         let path = String::from_utf16_lossy(&buf[..len as usize]);
         // Extract just the filename
-        path.rsplit(|c| c == '\\' || c == '/')
-            .next()
-            .map(|s| s.to_string())
+        path.rsplit(['\\', '/']).next().map(|s| s.to_string())
     }
 }
 

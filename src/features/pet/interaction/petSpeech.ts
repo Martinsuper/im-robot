@@ -39,21 +39,31 @@ function getSceneForInteraction(type: string) {
   }
 }
 
+/** i18n 翻译函数的可选注入形态（与 useTranslation().t 一致，见 appShared 的 reminderRepeatLabel 模式） */
+type Translate = (key: string, fallback?: string) => string;
+
+const companionHereFallback = "Piko 在这里陪着你。";
+
 export function getPetSpeechFallbackForInteraction(
   type: string,
   bondTier: BondTier,
-  personality: PersonalityDimensions = fallbackPersonality
+  personality: PersonalityDimensions = fallbackPersonality,
+  translate?: Translate
 ): string {
   const scene = getSceneForInteraction(type);
   const dialogue = dialogueSystem.getBondAwareDialogue(scene, personality, bondTier);
-  return dialogue?.text ?? "Piko 在这里陪着你。";
+  if (dialogue?.text) {
+    return dialogue.text;
+  }
+  return translate ? translate("pet.speech.companionHere", companionHereFallback) : companionHereFallback;
 }
 
 export async function getPetSpeechForInteraction(
   type: string,
   bondTier: BondTier,
   personality: PersonalityDimensions = fallbackPersonality,
-  personalitySummary?: string
+  personalitySummary?: string,
+  translate?: Translate
 ): Promise<string> {
   const scene = getSceneForInteraction(type);
   const generated = await generatePetCompanionResponse({
@@ -70,5 +80,5 @@ export async function getPetSpeechForInteraction(
     return generated.message;
   }
 
-  return getPetSpeechFallbackForInteraction(type, bondTier, personality);
+  return getPetSpeechFallbackForInteraction(type, bondTier, personality, translate);
 }

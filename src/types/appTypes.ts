@@ -13,6 +13,7 @@ export interface AppSettings {
   quietMode: QuietMode;
   companionName: string;
   theme: Theme;
+  language: string;
   sensingPaused: boolean;
   breakRemindersEnabled: boolean;
   breakReminderIntervalMinutes: number;
