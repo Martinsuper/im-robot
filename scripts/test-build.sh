@@ -450,11 +450,21 @@ if $FULL_BUILD; then
   rm -rf "${PROJECT_ROOT}/artifacts/release"
   mkdir -p "${PROJECT_ROOT}/artifacts/release"
 
-  # 运行完整构建
+  # 运行完整构建。测试环境若已有锁定依赖，跳过 npm ci，避免测试本身
+  # 触发 node_modules 的批量清理；干净环境仍由 build.sh 负责安装依赖。
   echo -e "  ${DIM}▶ 执行: ./scripts/build.sh${NC}"
+  BUILD_OPTION=""
+  if [[ -f "${PROJECT_ROOT}/node_modules/@tauri-apps/cli/tauri.js" && -d "${PROJECT_ROOT}/node_modules/typescript" ]]; then
+    BUILD_OPTION="--skip-deps"
+    echo -e "  ${DIM}▶ 检测到现有依赖，使用 --skip-deps${NC}"
+  fi
   BUILD_OUTPUT=""
   BUILD_EXIT=0
-  BUILD_OUTPUT=$(bash "$BUILD_SCRIPT" 2>&1) || BUILD_EXIT=$?
+  if [[ -n "$BUILD_OPTION" ]]; then
+    BUILD_OUTPUT=$(BUILD_TEST_MODE=1 bash "$BUILD_SCRIPT" "$BUILD_OPTION" 2>&1) || BUILD_EXIT=$?
+  else
+    BUILD_OUTPUT=$(BUILD_TEST_MODE=1 bash "$BUILD_SCRIPT" 2>&1) || BUILD_EXIT=$?
+  fi
 
   FULL_END=$(date +%s)
   FULL_DURATION=$((FULL_END - FULL_START))

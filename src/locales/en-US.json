@@ -301,6 +301,15 @@
     "sizeHint": "{width} × {height} · Right-click to confirm"
   },
   "memory": {
+    "center": {
+      "eyebrow": "MEMORY CENTER",
+      "noMemoriesTitle": "No memories yet",
+      "searchNoResultTitle": "No matching memories",
+      "searchResults": "{count} results found",
+      "emptySearchDescription": "No memories found matching \\\"{query}\\\". Try another keyword.",
+      "pendingEmptyDescription": "Memory candidates inferred by Piko will appear here for you to decide whether to remember.",
+      "reflectionsEmptyDescription": "Click “Reflect” to run the first reflection."
+    },
     "actions": {
       "clearAll": "Clear All",
       "clearing": "Clearing…",

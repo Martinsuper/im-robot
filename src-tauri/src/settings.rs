@@ -136,9 +136,9 @@ fn default_break_reminder_quiet_hours_end() -> String {
 impl Default for AiSettings {
     fn default() -> Self {
         Self {
-            provider: "openai-compatible".to_string(),
+            provider: "ollama".to_string(),
             base_url: "http://localhost:11434/v1".to_string(),
-            model: "gemma4:e4b".to_string(),
+            model: "".to_string(),
             temperature: 0.7,
             timeout_seconds: 120,
         }

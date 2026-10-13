@@ -36,6 +36,11 @@ const memoCategoryOptions: Array<{ label: string; value: MemoCategory }> = [
   { label: "其他", value: "other" },
 ];
 
+const memoCategoryDraftOptions: Array<{ label: string; value: MemoCategory | "" }> = [
+  { label: "自动分类", value: "" },
+  ...memoCategoryOptions,
+];
+
 const memoCategoryLabels: Record<MemoCategory, string> = {
   task: "任务",
   idea: "想法",
@@ -84,7 +89,7 @@ export function RecordsTab() {
   // --- 记录入口 ---
   const [draftTitle, setDraftTitle] = useState("");
   const [draftContent, setDraftContent] = useState("");
-  const [draftCategory, setDraftCategory] = useState<MemoCategory>("idea");
+  const [draftCategory, setDraftCategory] = useState<MemoCategory | "">("");
 
   // --- 搜索 ---
   const [keyword, setKeyword] = useState("");
@@ -206,7 +211,7 @@ export function RecordsTab() {
     const wasEditing = Boolean(editingMemoId);
     try {
       if (isTauriRuntime) {
-        const args = { input: { title, content, category: draftCategory } };
+        const args = { input: { title, content, category: draftCategory || undefined } };
         if (wasEditing) {
           await runCommand("update_memo", { id: editingMemoId, ...args });
         } else {
@@ -220,9 +225,9 @@ export function RecordsTab() {
           id: editingMemoId || `preview-memo-${now}`,
           title,
           content,
-          category: draftCategory,
+          category: draftCategory || "other",
           summary: summarizeText(content),
-          tags: [memoCategoryLabels[draftCategory]],
+          tags: [memoCategoryLabels[draftCategory || "other"]],
           createdAt: now,
           updatedAt: now,
         };
@@ -309,10 +314,10 @@ export function RecordsTab() {
               <span className="sr-only">分类</span>
               <select
                 value={draftCategory}
-                onChange={(event) => setDraftCategory(event.currentTarget.value as MemoCategory)}
+                onChange={(event) => setDraftCategory(event.currentTarget.value as MemoCategory | "")}
                 aria-label="记录分类"
               >
-                {memoCategoryOptions.map((option) => (
+                {memoCategoryDraftOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>

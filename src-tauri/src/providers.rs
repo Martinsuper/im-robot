@@ -140,7 +140,7 @@ pub async fn send_checked_request(
 }
 
 pub fn is_local_provider(provider: &str) -> bool {
-    matches!(provider, "lmstudio" | "openai-compatible")
+    matches!(provider, "lmstudio" | "ollama" | "openai-compatible")
 }
 
 pub fn validate_ai_settings(settings: &AiSettings) -> Result<(), ProviderError> {
@@ -229,7 +229,7 @@ pub enum ProviderKind {
 
 pub fn provider_kind(provider: &str) -> Option<ProviderKind> {
     match provider {
-        "openai-compatible" | "deepseek" | "dashscope" | "lmstudio" => {
+        "openai" | "openai-compatible" | "deepseek" | "dashscope" | "lmstudio" | "ollama" => {
             Some(ProviderKind::OpenAiCompatible)
         }
         "anthropic" => Some(ProviderKind::Anthropic),

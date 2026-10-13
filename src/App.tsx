@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ToastProvider } from "./components/feedback/Toast";
+import { I18nProvider } from "./features/i18n/I18nProvider";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./App.css";
@@ -33,12 +34,14 @@ function App() {
   return (
     // ToastProvider 放在 Suspense 外层：懒加载失败时也能把错误报出来。
     <ToastProvider>
-      <Suspense fallback={<main className="app-loading">加载中…</main>}>
-        {windowLabel === "bubble" ? <BubbleWindow /> : null}
-        {windowLabel === "panel" ? <PanelWindow /> : null}
-        {windowLabel === "capture" ? <CaptureWindow /> : null}
-        {windowLabel === "pet" ? <PetWindow /> : null}
-      </Suspense>
+      <I18nProvider>
+        <Suspense fallback={<main className="app-loading">加载中…</main>}>
+          {windowLabel === "bubble" ? <BubbleWindow /> : null}
+          {windowLabel === "panel" ? <PanelWindow /> : null}
+          {windowLabel === "capture" ? <CaptureWindow /> : null}
+          {windowLabel === "pet" ? <PetWindow /> : null}
+        </Suspense>
+      </I18nProvider>
     </ToastProvider>
   );
 }

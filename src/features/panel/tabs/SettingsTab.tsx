@@ -44,6 +44,7 @@ import {
   getAvailablePetVisualStyleOptions,
   petVisualStyleOptions,
   providerOptions,
+  findProviderPreset,
   quietModeOptions,
   setCustomPetImagePath,
   setPetVisualStyle,
@@ -101,7 +102,11 @@ export function SettingsTab() {
   const [htmlPreviewEnabled, setHtmlPreviewEnabled] = useState(settings.htmlPreviewEnabled);
 
   const [apiKey, setApiKey] = useState("");
+  const [apiKeyClearRequested, setApiKeyClearRequested] = useState(false);
+  const [savedAiSettings, setSavedAiSettings] = useState<AiSettings>(settings.ai);
+  const [savedHasApiKey, setSavedHasApiKey] = useState(settings.hasApiKey);
   const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
+  const [isSavingAi, setIsSavingAi] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [shortcutDraft, setShortcutDraft] = useState<string | null>(null);
@@ -153,9 +158,11 @@ export function SettingsTab() {
     }
     setQuietMode(settings.quietMode);
     setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
-    // AI 参数是显式保存（「保存并测试连接」），服务端回包之外只在首次加载同步。
+    // AI 参数是显式保存，服务端回包之外只在首次加载同步。
     if (isFirstLoad) {
       setAiSettings(settings.ai);
+      setSavedAiSettings(settings.ai);
+      setSavedHasApiKey(settings.hasApiKey);
       setConnectionStatus(settings.hasApiKey ? "已配置密钥" : "等待测试");
     }
   }, [settings]);
@@ -304,27 +311,62 @@ export function SettingsTab() {
 
   function updateAiField<Key extends keyof AiSettings>(key: Key, value: AiSettings[Key]) {
     setAiSettings((current) => ({ ...current, [key]: value }));
+    setConnectionStatus("有未保存的 AI 设置");
   }
 
   function updateProvider(provider: string) {
-    const preset = providerOptions.find((option) => option.value === provider);
-    setAiSettings((current) => ({
-      ...current,
-      provider,
-      baseUrl: preset?.baseUrl ?? current.baseUrl,
-      model: preset?.model ?? current.model,
-    }));
+    const preset = findProviderPreset(provider);
+    setAiSettings((current) => {
+      const currentPreset = findProviderPreset(current.provider);
+      const canApplyPreset = currentPreset
+        ? current.baseUrl === currentPreset.baseUrl && current.model === currentPreset.model
+        : !current.baseUrl && !current.model;
+      return {
+        ...current,
+        provider,
+        ...(canApplyPreset && preset ? { baseUrl: preset.baseUrl, model: preset.model } : {}),
+      };
+    });
+    setConnectionStatus("有未保存的 AI 设置");
   }
 
   async function saveAiSettings() {
-    const next = await runCommand<AppSettings>(
-      "update_ai_settings",
-      { input: { ...aiSettings, apiKey: apiKey || undefined } },
-      { ...defaultAppSettings, ai: aiSettings },
-    );
-    setAiSettings(next.ai);
-    setApiKey("");
-    return next;
+    setIsSavingAi(true);
+    try {
+      const next = await runCommand<AppSettings>(
+        "update_ai_settings",
+        {
+          input: {
+            ...aiSettings,
+            apiKey: apiKeyClearRequested ? null : apiKey.trim() || undefined,
+          },
+        },
+        { ...defaultAppSettings, ai: aiSettings, hasApiKey: apiKeyClearRequested ? false : savedHasApiKey },
+      );
+      setAiSettings(next.ai);
+      setSavedAiSettings(next.ai);
+      setSavedHasApiKey(next.hasApiKey);
+      setApiKey("");
+      setApiKeyClearRequested(false);
+      setConnectionStatus(next.hasApiKey ? "已配置密钥，设置已保存" : "设置已保存，未配置密钥");
+      return next;
+    } finally {
+      setIsSavingAi(false);
+    }
+  }
+
+  function hasUnsavedAiSettings() {
+    return JSON.stringify(aiSettings) !== JSON.stringify(savedAiSettings)
+      || apiKey.trim().length > 0
+      || apiKeyClearRequested;
+  }
+
+  async function saveOnlyAiSettings() {
+    try {
+      await saveAiSettings();
+    } catch (error) {
+      setConnectionStatus(`保存失败：${toUserMessage(error)}`);
+    }
   }
 
   async function loadSpeechModels() {
@@ -753,11 +795,13 @@ export function SettingsTab() {
         description="用哪个服务、能不能连上"
         defaultOpen
       >
-        <section className="panel-card">
-          <p className="eyebrow">MODEL PROVIDER</p>
-          <h2>模型服务</h2>
-          <div className="settings-form">
-            <label>
+      <section className="panel-card model-provider-card">
+        <h2>模型服务</h2>
+        <p className="model-provider-card__lead">
+          选择服务后，填写必要的连接信息。
+        </p>
+        <div className="settings-form model-provider-form">
+          <label className="model-provider-form__provider">
               <span>服务类型</span>
               <select
                 value={aiSettings.provider}
@@ -765,21 +809,100 @@ export function SettingsTab() {
               >
                 {providerOptions.map(({ label, value }) => (
                   <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
+            ))}
+            </select>
+          </label>
+          {findProviderPreset(aiSettings.provider) ? (
+            <p className="model-provider-form__selection" aria-live="polite">
+              已选择 {findProviderPreset(aiSettings.provider)?.label} · {findProviderPreset(aiSettings.provider)?.hint}
+            </p>
+          ) : null}
+          <div className="model-provider-form__fields">
+            <label>
+              <span>Base URL</span>
+              <input
+                value={aiSettings.baseUrl}
+                onChange={(event) => updateAiField("baseUrl", event.currentTarget.value)}
+                placeholder="http://localhost:11434/v1"
+              />
             </label>
             <label>
+              <span>Model</span>
+              <input
+                value={aiSettings.model}
+                onChange={(event) => updateAiField("model", event.currentTarget.value)}
+                placeholder={aiSettings.provider === "lmstudio" ? "可留空，LM Studio 自动使用当前加载模型" : "gemma4:e4b"}
+              />
+            </label>
+          <label>
               <span>API Key</span>
               <input
                 type="password"
                 value={apiKey}
-                onChange={(event) => setApiKey(event.currentTarget.value)}
-                placeholder="本地 Ollama 可留空"
-              />
-            </label>
-            <button type="button" disabled={isTesting} onClick={() => void testConnection()}>
-              {isTesting ? "正在测试..." : "保存并测试连接"}
-            </button>
+                onChange={(event) => {
+                  setApiKey(event.currentTarget.value);
+                  setApiKeyClearRequested(false);
+                  setConnectionStatus("有未保存的 AI 设置");
+                }}
+                placeholder={savedHasApiKey ? "已配置密钥，输入新密钥可替换" : "本地 Ollama 可留空"}
+          />
+          <small>密钥仅用于连接你选择的服务，并保存在本机。</small>
+          </label>
+          </div>
+          {(savedHasApiKey || apiKey.trim()) && (
+            <button
+              type="button"
+              className="button-secondary model-provider-form__clear-key"
+                disabled={isSavingAi || isTesting}
+                onClick={() => {
+                  setApiKey("");
+                  setApiKeyClearRequested(true);
+                  setConnectionStatus("有未保存的 AI 设置");
+                }}
+              >
+                清除已保存的 API Key
+              </button>
+            )}
+          <details className="model-provider-form__advanced">
+            <summary>高级连接设置</summary>
+            <div className="settings-form__row">
+              <label>
+                <span>Temperature</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  value={aiSettings.temperature}
+                  onChange={(event) => updateAiField("temperature", Number(event.currentTarget.value))}
+                />
+              </label>
+              <label>
+                <span>超时秒数</span>
+                <input
+                  type="number"
+                  min="5"
+                  max="600"
+                  value={aiSettings.timeoutSeconds}
+                  onChange={(event) => updateAiField("timeoutSeconds", Number(event.currentTarget.value))}
+                />
+              </label>
+            </div>
+          </details>
+          <div className="model-provider-form__actions" aria-label="模型设置操作">
+              <button
+                type="button"
+                className="button-secondary"
+                disabled={!hasUnsavedAiSettings() || isSavingAi || isTesting}
+                onClick={() => void saveOnlyAiSettings()}
+              >
+                {isSavingAi ? "保存中..." : "保存设置"}
+              </button>
+              <button type="button" disabled={isSavingAi || isTesting} onClick={() => void testConnection()}>
+                {isTesting ? "测试中..." : "保存并测试"}
+              </button>
+            </div>
+            {hasUnsavedAiSettings() && <p className="settings-note">模型设置有未保存修改</p>}
             {connectionStatus.startsWith("连接失败") ? (
               <ErrorState
                 message={connectionStatus}
@@ -1024,7 +1147,7 @@ export function SettingsTab() {
         </section>
       </SettingsGroup>
 
-      <SettingsGroup id="advanced" icon={<SlidersHorizontal size={15} />} title="高级" description="一般不用改">
+      <SettingsGroup id="advanced" icon={<SlidersHorizontal size={15} />} title="高级" description="语音、实验室与插件">
         <details className="settings-subgroup">
           <summary>模型参数</summary>
           <div className="settings-form">
@@ -1069,9 +1192,7 @@ export function SettingsTab() {
                 />
               </label>
             </div>
-            <button type="button" disabled={isTesting} onClick={() => void testConnection()}>
-              {isTesting ? "正在测试..." : "保存并测试连接"}
-            </button>
+            <p className="settings-note">修改后可在上方操作区保存或测试连接。</p>
           </div>
         </details>
 

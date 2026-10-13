@@ -301,6 +301,15 @@
     "sizeHint": "{width} × {height} · 点击右键确认"
   },
   "memory": {
+    "center": {
+      "eyebrow": "MEMORY CENTER",
+      "noMemoriesTitle": "还没有记忆",
+      "searchNoResultTitle": "没有匹配的记忆",
+      "searchResults": "找到 {count} 条结果",
+      "emptySearchDescription": "没有找到与\"{query}\"相关的记忆，换个关键词试试。",
+      "pendingEmptyDescription": "Piko 推断出的候选记忆会出现在这里，由你决定是否记住。",
+      "reflectionsEmptyDescription": "点击「反思」按钮运行第一次反思。"
+    },
     "actions": {
       "clearAll": "清除全部",
       "clearing": "清除中…",

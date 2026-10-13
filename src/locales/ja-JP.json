@@ -301,6 +301,15 @@
     "sizeHint": "{width} × {height} · 右クリックで確定"
   },
   "memory": {
+    "center": {
+      "eyebrow": "MEMORY CENTER",
+      "noMemoriesTitle": "まだメモリーがありません",
+      "searchNoResultTitle": "一致するメモリーがありません",
+      "searchResults": "{count} 件見つかりました",
+      "emptySearchDescription": "「{query}」に関連するメモリーは見つかりませんでした。別のキーワードを試してください。",
+      "pendingEmptyDescription": "Piko が推測したメモリー候補がここに表示され、覚えておくかどうかを選べます。",
+      "reflectionsEmptyDescription": "「振り返り」ボタンで最初の振り返りを実行しましょう。"
+    },
     "actions": {
       "clearAll": "すべて削除",
       "clearing": "削除中…",

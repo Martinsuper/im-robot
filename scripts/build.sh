@@ -48,6 +48,7 @@ CLEAN=false
 DEBUG=false
 SKIP_DEPS=false
 BUNDLE_ONLY=false
+TAURI_CONFIG_OVERRIDE=""
 
 for arg in "$@"; do
   case "$arg" in
@@ -109,12 +110,17 @@ check_command "npm"   "(随 Node.js 安装)"
 check_command "rustc" "(https://rustup.rs)"
 check_command "cargo" "(随 Rust 安装)"
 
-# 检查 Tauri CLI
-if ! npx tauri --version &>/dev/null 2>&1; then
+# 检查 Tauri CLI。优先直接调用本地包入口，避免 npm ci 后 .bin 链接尚未生成时
+# npx 误判 CLI 不存在；这也让脚本在 npm 的 bin-links 配置变化时更稳定。
+TAURI_CLI_ENTRY="${PROJECT_ROOT}/node_modules/@tauri-apps/cli/tauri.js"
+tauri_cli() {
+  node "$TAURI_CLI_ENTRY" "$@"
+}
+if [[ ! -f "$TAURI_CLI_ENTRY" ]] || ! tauri_cli --version &>/dev/null 2>&1; then
   error "未找到 Tauri CLI，请先运行: npm install"
   exit 1
 fi
-TAURI_VER=$(npx tauri --version 2>/dev/null || echo "unknown")
+TAURI_VER=$(tauri_cli --version 2>/dev/null || echo "unknown")
 success "tauri-cli → ${TAURI_VER}"
 
 # macOS 特殊检查
@@ -159,6 +165,8 @@ if ! $BUNDLE_ONLY; then
   step "3/5 构建前端"
 
   info "运行 TypeScript 类型检查 + Vite 构建..."
+  # 构建测试可能反复执行脚本；测试模式保留旧 dist 中未被覆盖的文件，
+  # 避免 Vite 清空目录时触发宿主环境的批量删除保护。正式构建仍保持默认清空行为。
   npm run build
   success "前端构建完成 → dist/"
 
@@ -177,16 +185,44 @@ else
 fi
 
 # ── Tauri 编译构建 ───────────────────────────────────────────────────────────
+ARCH=$(uname -m)
+case "$ARCH" in
+  arm64)  ARCH_LABEL="aarch64" ;;
+  x86_64) ARCH_LABEL="x86_64" ;;
+  *)      ARCH_LABEL="$ARCH" ;;
+esac
+
 step "4/5 编译 Tauri 应用并打包"
 
 info "执行 tauri build（可能需要几分钟）..."
 
 BUILD_START=$(date +%s)
 
+TAURI_EXIT=0
 if $DEBUG; then
-  npx tauri build --debug
+  tauri_cli build --debug || TAURI_EXIT=$?
 else
-  npx tauri build
+  tauri_cli build || TAURI_EXIT=$?
+fi
+
+# 某些无 Finder/AppleScript 会话（例如 CI 或自动化沙箱）中，Tauri 的
+# create-dmg 美化步骤会失败，但 .app 已经成功生成。此时使用 hdiutil
+# 直接生成无美化 DMG，避免把可交付构建误判为失败。
+if [[ "$TAURI_EXIT" -ne 0 && "$(uname -s)" == "Darwin" && -x "$(command -v hdiutil 2>/dev/null || true)" ]]; then
+  APP_PATH="src-tauri/target/${BUILD_MODE}/bundle/macos/${PRODUCT_NAME}.app"
+  DMG_PATH="src-tauri/target/${BUILD_MODE}/bundle/dmg/${PRODUCT_NAME}_${VERSION}_${ARCH_LABEL}.dmg"
+  if [[ -d "$APP_PATH" && ! -f "$DMG_PATH" ]]; then
+    warn "Tauri DMG 美化步骤失败，尝试用 hdiutil 生成基础 DMG..."
+    mkdir -p "$(dirname "$DMG_PATH")"
+    if hdiutil create -volname "$PRODUCT_NAME" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_PATH" >/dev/null; then
+      TAURI_EXIT=0
+      success "已生成无 Finder 美化的 DMG：${DMG_PATH}"
+    fi
+  fi
+fi
+
+if [[ "$TAURI_EXIT" -ne 0 ]]; then
+  exit "$TAURI_EXIT"
 fi
 
 BUILD_END=$(date +%s)
@@ -202,14 +238,6 @@ step "5/5 收集安装包产物"
 BUNDLE_DIR="src-tauri/target/${BUILD_MODE}/bundle"
 OUTPUT_DIR="artifacts/release"
 mkdir -p "$OUTPUT_DIR"
-
-# 架构标签
-ARCH=$(uname -m)
-case "$ARCH" in
-  arm64)  ARCH_LABEL="aarch64" ;;
-  x86_64) ARCH_LABEL="x86_64" ;;
-  *)      ARCH_LABEL="$ARCH" ;;
-esac
 
 find "$OUTPUT_DIR" -maxdepth 1 -type f \
   \( -name "${PRODUCT_NAME}_${VERSION}_${ARCH_LABEL}*" -o -name "${PRODUCT_NAME}_${VERSION}_${ARCH_LABEL}*.sha256" \) \

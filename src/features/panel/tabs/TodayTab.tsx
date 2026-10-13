@@ -139,7 +139,7 @@ export function TodayTab() {
    * 03 §7：三个同步按钮收敛成一个入口。
    *
    * 刻意做成**一次性动作**而不是开关：后端没有持久化「是否开启同步」的字段，
-   * 做成开关会变成第二个「看起来存在但不生效」的控件——正是 Live2D 选择器那类问题。
+   * 做成开关会变成第二个「看起来存在但不生效」的控件。
    */
   async function syncWithSystemCalendar() {
     setIsSyncing(true);

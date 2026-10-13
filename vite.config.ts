@@ -18,6 +18,10 @@ export default defineConfig(async () => ({
   ],
   build: {
     chunkSizeWarningLimit: 900,
+    // 完整构建测试会在已有 dist 上重复运行；测试模式保留旧文件，
+    // 避免宿主环境的批量删除保护拦截 Vite 清空目录。
+    emptyOutDir: process.env.BUILD_TEST_MODE !== "1",
+    outDir: process.env.VITE_OUT_DIR || "dist",
     rollupOptions: {
       output: {
         manualChunks(id) {

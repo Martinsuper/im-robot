@@ -1,18 +1,36 @@
 const BUBBLE_COMPANION_MESSAGE_KEY = "piko-bubble-companion-message";
 
+function getStorage() {
+  if (typeof window === "undefined" || typeof window.localStorage === "undefined") return null;
+  return window.localStorage;
+}
+
 export function getBubbleCompanionMessage() {
-  if (typeof window === "undefined") return "";
-  return window.localStorage.getItem(BUBBLE_COMPANION_MESSAGE_KEY) ?? "";
+  try {
+    return getStorage()?.getItem(BUBBLE_COMPANION_MESSAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export function setBubbleCompanionMessage(message: string) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(BUBBLE_COMPANION_MESSAGE_KEY, message);
-  window.dispatchEvent(new CustomEvent<string>("piko-bubble-companion-message-changed", { detail: message }));
+  try {
+    getStorage()?.setItem(BUBBLE_COMPANION_MESSAGE_KEY, message);
+  } catch {
+    // 存储不可用时仍派发内存中的界面更新，避免影响当前会话。
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent<string>("piko-bubble-companion-message-changed", { detail: message }));
+  }
 }
 
 export function clearBubbleCompanionMessage() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(BUBBLE_COMPANION_MESSAGE_KEY);
-  window.dispatchEvent(new CustomEvent<string>("piko-bubble-companion-message-changed", { detail: "" }));
+  try {
+    getStorage()?.removeItem(BUBBLE_COMPANION_MESSAGE_KEY);
+  } catch {
+    // 与写入相同：清理失败不应阻断当前界面状态更新。
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent<string>("piko-bubble-companion-message-changed", { detail: "" }));
+  }
 }

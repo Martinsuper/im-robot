@@ -445,14 +445,6 @@ button { cursor: pointer; }
   height: 80px;
 }
 
-.pixi-pet {
-  display: block;
-  width: 192px;
-  height: 208px;
-  transform: scale(0.61);
-  transform-origin: center center;
-  pointer-events: none;
-}
 
 .pet-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
@@ -1615,6 +1607,7 @@ h2 { margin-bottom: 6px; color: #263449; font-size: 13px; }
 .empty-state { margin-bottom: 0; color: var(--panel-muted); font-size: 11px; line-height: 1.45; }
 .settings-form { display: grid; gap: 7px; min-width: 0; }
 .settings-form label { display: grid; gap: 4px; color: var(--panel-muted); font-size: 11px; font-weight: 680; }
+.settings-form__hint { margin: 0; color: var(--panel-muted); font-size: 11px; line-height: 1.55; }
 .settings-form input, .settings-form select {
   width: 100%;
   min-width: 0;

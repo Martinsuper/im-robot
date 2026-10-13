@@ -121,7 +121,9 @@ struct AiSettingsInput {
     speech_model: Option<String>,
     temperature: f32,
     timeout_seconds: u64,
-    api_key: Option<String>,
+    /// None = 保持原值；Some(None) = 清除；Some(Some(key)) = 写入新密钥。
+    #[serde(default)]
+    api_key: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -395,7 +397,13 @@ struct MemoInput {
 
 /// 允许的记录分类，与 `summarize_memos` 的分组顺序、前端选项保持一致。
 const MEMO_CATEGORIES: [&str; 7] = [
-    "task", "idea", "learning", "work", "life", "reference", "other",
+    "task",
+    "idea",
+    "learning",
+    "work",
+    "life",
+    "reference",
+    "other",
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1111,9 +1119,9 @@ fn default_break_reminder_quiet_hours_end() -> String {
 impl Default for AiSettings {
     fn default() -> Self {
         Self {
-            provider: "openai-compatible".to_string(),
+            provider: "ollama".to_string(),
             base_url: "http://localhost:11434/v1".to_string(),
-            model: "gemma4:e4b".to_string(),
+            model: "".to_string(),
             speech_model: default_speech_model(),
             temperature: 0.7,
             timeout_seconds: 120,
@@ -1251,7 +1259,10 @@ fn migrate_chat_sessions(app: &AppHandle) -> Result<chat_session::ChatMigrationR
 
 /// 读会话存储。语义与 `load_schedule_items` 一致：
 /// 读路径允许在迁移失败时降级为只读旧文件；写路径拒绝在迁移未完成时写入。
-fn load_chat_sessions(app: &AppHandle, allow_legacy_fallback: bool) -> Result<Vec<chat_session::ChatSession>, String> {
+fn load_chat_sessions(
+    app: &AppHandle,
+    allow_legacy_fallback: bool,
+) -> Result<Vec<chat_session::ChatSession>, String> {
     let _transaction = storage::transaction();
     if !chat_migration_done(app)? {
         match migrate_chat_sessions(app) {
@@ -2042,7 +2053,11 @@ fn memo_input_from_value(value: &Value) -> Result<MemoInput, String> {
         .ok_or_else(|| "备忘录内容不能为空".to_string())?
         .to_string();
     // 模型工具调用走这里；分类交给 infer_memo_category 推断。
-    Ok(MemoInput { title, content, category: None })
+    Ok(MemoInput {
+        title,
+        content,
+        category: None,
+    })
 }
 
 fn calendar_event_input_from_value(value: &Value) -> Result<CalendarEventInput, String> {
@@ -2313,18 +2328,19 @@ fn read_api_key() -> Option<String> {
     keyring_entry().ok()?.get_password().ok()
 }
 
-fn update_api_key(api_key: Option<String>) -> Result<(), String> {
+fn update_api_key(api_key: Option<Option<String>>) -> Result<(), String> {
     let Some(api_key) = api_key else {
         return Ok(());
     };
     let entry = keyring_entry()?;
 
-    if api_key.trim().is_empty() {
-        let _ = entry.delete_credential();
-    } else {
-        entry
+    match api_key {
+        Some(api_key) if !api_key.trim().is_empty() => entry
             .set_password(api_key.trim())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?,
+        Some(_) | None => {
+            let _ = entry.delete_credential();
+        }
     }
     Ok(())
 }
@@ -2343,7 +2359,7 @@ enum ProviderKind {
 fn provider_kind(provider: &str) -> Option<ProviderKind> {
     match provider {
         // ollama 说的是 OpenAI 兼容协议，归到同一分支即可。
-        "openai-compatible" | "deepseek" | "dashscope" | "lmstudio" | "ollama" => {
+        "openai" | "openai-compatible" | "deepseek" | "dashscope" | "lmstudio" | "ollama" => {
             Some(ProviderKind::OpenAiCompatible)
         }
         "anthropic" => Some(ProviderKind::Anthropic),
@@ -2352,12 +2368,8 @@ fn provider_kind(provider: &str) -> Option<ProviderKind> {
     }
 }
 
-/// 本机服务：允许模型名为空（启动后自动探测）。
-///
-/// 注意 `openai-compatible` 也在这里。按 02 §10.1，它本应指 OpenAI 官方接口
-/// （需要 Key、需要模型名），但历史配置里有用户把它当作「自建兼容端点」使用，
-/// 一旦移出这个集合，那些「模型名留空」的既有配置会立刻校验失败。
-/// 先保留，等有迁移手段时再收紧。
+/// 本机服务允许模型名为空；`openai-compatible` 仍保留历史兼容语义，
+/// 因为旧配置可能将其用于自建端点。
 fn is_local_provider(provider: &str) -> bool {
     matches!(provider, "lmstudio" | "ollama" | "openai-compatible")
 }
@@ -5032,6 +5044,9 @@ fn update_ai_settings(app: AppHandle, input: AiSettingsInput) -> Result<AppSetti
     settings.ai = ai;
     settings.has_api_key = read_api_key().is_some();
     persist_settings(&app, &settings)?;
+    let _ = app.emit_to("panel", "settings-updated", &settings);
+    let _ = app.emit_to("pet", "settings-updated", &settings);
+    let _ = app.emit_to("bubble", "settings-updated", &settings);
     Ok(settings)
 }
 
@@ -5431,8 +5446,9 @@ fn clear_my_data(app: AppHandle) -> Result<serde_json::Value, String> {
     // 再清空
     for (name, path, empty) in &files {
         if let Some(path) = path {
-            storage::write(path, empty)
-                .map_err(|error| format!("清空 {name} 失败：{error}。原文件已恢复，未做任何删除。"))?;
+            storage::write(path, empty).map_err(|error| {
+                format!("清空 {name} 失败：{error}。原文件已恢复，未做任何删除。")
+            })?;
         }
     }
 
@@ -5731,14 +5747,22 @@ struct GlobalShortcutState(Mutex<String>);
 /// 所以把可见性切换收敛到这一个函数里，在这里同步改菜单文字。
 fn set_pet_visible(app: &AppHandle, visible: bool) {
     if let Some(window) = app.get_webview_window("pet") {
-        let _ = if visible { window.show() } else { window.hide() };
+        let _ = if visible {
+            window.show()
+        } else {
+            window.hide()
+        };
         if visible {
             let _ = window.set_focus();
         }
     }
     if let Some(state) = app.try_state::<TrayState>() {
         if let Ok(label) = state.toggle_label.lock() {
-            let text = if visible { "隐藏 Piko" } else { "显示 Piko" };
+            let text = if visible {
+                "隐藏 Piko"
+            } else {
+                "显示 Piko"
+            };
             let _ = label.set_text(text);
         }
     }
@@ -5794,9 +5818,8 @@ fn configure_tray(
 fn parse_global_shortcut(value: &str) -> Result<Shortcut, String> {
     use std::str::FromStr;
     // 插件自带的解析器支持 "CmdOrCtrl+Shift+Space" / "Alt+X" 等写法
-    Shortcut::from_str(value).map_err(|_| {
-        format!("快捷键格式看不懂：{value}。请用类似 CmdOrCtrl+Shift+Space 的写法")
-    })
+    Shortcut::from_str(value)
+        .map_err(|_| format!("快捷键格式看不懂：{value}。请用类似 CmdOrCtrl+Shift+Space 的写法"))
 }
 
 /// 注册全局快捷键（R4-2：从设置读取，不再硬编码）。
@@ -5838,26 +5861,24 @@ fn update_global_shortcut(
         if let Ok(previous) = parse_global_shortcut(&rollback) {
             let _ = app.global_shortcut().register(previous);
         }
-        let message = format!(
-            "快捷键注册失败，已恢复原快捷键。多半是被别的应用占用了（{error}）"
-        );
+        let message = format!("快捷键注册失败，已恢复原快捷键。多半是被别的应用占用了（{error}）");
         return Err(message);
     }
 
     let mut settings = read_settings(&app);
     settings.global_shortcut = shortcut.clone();
     persist_settings(&app, &settings)?;
-    *global_shortcut.0.lock().map_err(|_| "无法保存快捷键状态".to_string())? = shortcut;
+    *global_shortcut
+        .0
+        .lock()
+        .map_err(|_| "无法保存快捷键状态".to_string())? = shortcut;
     let _ = app.emit("settings-updated", ());
     Ok(())
 }
 
 /// 当前生效的快捷键（供设置页展示）。
 #[tauri::command]
-fn get_global_shortcut(
-    app: AppHandle,
-    global_shortcut: State<'_, GlobalShortcutState>,
-) -> String {
+fn get_global_shortcut(app: AppHandle, global_shortcut: State<'_, GlobalShortcutState>) -> String {
     global_shortcut
         .0
         .lock()
@@ -5890,9 +5911,26 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
-            // Initialize memory database
-            let memory_db = memory::init_memory_db(app.handle()).expect("无法初始化内存数据库");
-            app.manage(memory_db);
+            // 初始化记忆数据库失败时降级到进程内数据库，避免阻断应用启动；
+            // 同时记录并通知用户，明确说明记忆不会持久化。
+            let memory_db = match memory::init_memory_db(app.handle()) {
+                Ok(db) => db,
+                Err(error) => {
+                    eprintln!("[memory] 持久化数据库初始化失败，降级为本次会话记忆：{error}");
+                    let _ = app
+                        .notification()
+                        .builder()
+                        .title("记忆功能已降级")
+                        .body(format!(
+                            "记忆数据库初始化失败，本次启动不会持久化记忆：{error}"
+                        ))
+                        .show();
+                    memory::open_in_memory_db().map_err(|fallback_error| {
+                        format!("记忆数据库初始化失败，且无法启用本次会话记忆：{fallback_error}")
+                    })?
+                }
+            };
+            app.manage(Arc::new(memory_db));
             app.manage(memory::CandidateCache::default());
             app.manage(typing_activity::TypingActivityState::new(app.handle()));
 
@@ -5903,8 +5941,12 @@ pub fn run() {
             let (tray_toggle, tray_icon) = configure_tray(app)?;
             // 必须持有 TrayIcon：引用计数归零时图标会从菜单栏消失
             app.manage(TrayIconHandle { _icon: tray_icon });
-            app.manage(TrayState { toggle_label: Mutex::new(tray_toggle) });
-            app.manage(GlobalShortcutState(Mutex::new(read_settings(app.handle()).global_shortcut)));
+            app.manage(TrayState {
+                toggle_label: Mutex::new(tray_toggle),
+            });
+            app.manage(GlobalShortcutState(Mutex::new(
+                read_settings(app.handle()).global_shortcut,
+            )));
 
             match migrate_chat_sessions(app.handle()) {
                 Ok(report) if report.already_migrated => {}
@@ -5912,7 +5954,10 @@ pub fn run() {
                     "[chat] 迁移完成：{} 个会话（来自 {} 轮问答），备份于 {}",
                     report.sessions_imported,
                     report.entries_imported,
-                    report.backup_dir.as_deref().unwrap_or("（无旧文件，未备份）")
+                    report
+                        .backup_dir
+                        .as_deref()
+                        .unwrap_or("（无旧文件，未备份）")
                 ),
                 Err(error) => eprintln!("[chat] 迁移中止：{error}"),
             }
@@ -5923,7 +5968,10 @@ pub fn run() {
                     "[schedule] 迁移完成：提醒 {} 条、日程 {} 条，备份于 {}",
                     report.reminders_imported,
                     report.events_imported,
-                    report.backup_dir.as_deref().unwrap_or("（无旧文件，未备份）")
+                    report
+                        .backup_dir
+                        .as_deref()
+                        .unwrap_or("（无旧文件，未备份）")
                 ),
                 Err(error) => eprintln!("[schedule] 迁移中止：{error}"),
             }
@@ -5955,15 +6003,16 @@ pub fn run() {
             watch_calendar_events(app.handle());
             watch_focus_timer(app.handle());
             watch_ambient_nudges(app.handle());
-            app.handle().on_menu_event(|app_handle, event| match event.id.as_ref() {
-                "pet_ctx_chat" => show_bubble(app_handle.clone()),
-                "pet_ctx_break" => {
-                    let timer = app_handle.state::<FocusTimer>();
-                    let _ = start_break(app_handle.clone(), timer, 5);
-                }
-                "pet_ctx_panel" => open_panel(app_handle.clone()),
-                _ => {}
-            });
+            app.handle()
+                .on_menu_event(|app_handle, event| match event.id.as_ref() {
+                    "pet_ctx_chat" => show_bubble(app_handle.clone()),
+                    "pet_ctx_break" => {
+                        let timer = app_handle.state::<FocusTimer>();
+                        let _ = start_break(app_handle.clone(), timer, 5);
+                    }
+                    "pet_ctx_panel" => open_panel(app_handle.clone()),
+                    _ => {}
+                });
             watch_idle_detection(app.handle());
             watch_foreground_app(app.handle());
             typing_activity::start_keyboard_monitor(app.handle());
@@ -6110,17 +6159,18 @@ mod tests {
         coalesce_calendar_delete_calls, collect_due_reminders,
         create_calendar_event_record_at_path, decode_openai_tool_calls,
         delete_calendar_event_batch_record_at_path, extract_chat_deltas, extract_model_ids,
-        find_calendar_conflicts, idle_threshold_seconds,
-        looks_like_unconfirmed_local_action_response, models_url, monitor_contains,
-        next_idle_state, next_repeat_due, normalize_base_url, parse_data_url,
-        prompt_requests_local_action, provider_tools, read_calendar_events_from_path,
-        read_text_attachment, render_icalendar, should_bypass_system_proxy, system_prompt,
-        text_for_speech, today_focus_minutes, update_anthropic_tool_calls,
-        update_gemini_tool_calls, update_openai_tool_calls, validate_ai_settings,
-        validate_declarative_plugin, validate_save_path, version_parts, AiSettings, AppSettings,
-        CalendarEvent, ChatEvent, ChatHistoryEntry, DeclarativePluginPackage, FocusRecord,
-        OpenAiToolCallAccumulator, PluginManifest, PluginRegistry, PluginToolManifest, Reminder,
-        ScreenCapture, TextAttachment, ToolCall,
+        find_calendar_conflicts, idle_threshold_seconds, is_local_provider,
+        looks_like_unconfirmed_local_action_response, memo_from_input, models_url,
+        monitor_contains, next_idle_state, next_repeat_due, normalize_base_url, parse_data_url,
+        prompt_requests_local_action, provider_kind, provider_tools,
+        read_calendar_events_from_path, read_text_attachment, render_icalendar,
+        should_bypass_system_proxy, system_prompt, text_for_speech, today_focus_minutes,
+        update_anthropic_tool_calls, update_gemini_tool_calls, update_openai_tool_calls,
+        validate_ai_settings, validate_declarative_plugin, validate_save_path, version_parts,
+        AiSettings, AppSettings, CalendarEvent, ChatEvent, ChatHistoryEntry,
+        DeclarativePluginPackage, FocusRecord, MemoInput, OpenAiToolCallAccumulator,
+        PluginManifest, PluginRegistry, PluginToolManifest, ProviderKind, Reminder, ScreenCapture,
+        TextAttachment, ToolCall,
     };
     use chrono::{Duration as ChronoDuration, Local, TimeZone};
     use std::{
@@ -6344,6 +6394,47 @@ mod tests {
     fn compares_release_version_parts() {
         assert!(version_parts("v0.2.0") > version_parts("0.1.9"));
         assert_eq!(version_parts("v1.0.0"), vec![1, 0, 0]);
+    }
+
+    #[test]
+    fn ollama_is_registered_as_openai_compatible_provider() {
+        assert_eq!(
+            provider_kind("ollama"),
+            Some(ProviderKind::OpenAiCompatible)
+        );
+        assert!(is_local_provider("ollama"));
+
+        let settings = AiSettings {
+            provider: "ollama".to_string(),
+            base_url: "http://localhost:11434/v1".to_string(),
+            model: "".to_string(),
+            ..Default::default()
+        };
+        assert!(validate_ai_settings(&settings).is_ok());
+        assert_eq!(
+            chat_url(&settings).unwrap(),
+            "http://localhost:11434/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn openai_official_provider_uses_openai_compatible_protocol() {
+        let settings = AiSettings {
+            provider: "openai".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            model: "gpt-4o".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            provider_kind("openai"),
+            Some(ProviderKind::OpenAiCompatible)
+        );
+        assert!(validate_ai_settings(&settings).is_ok());
+        assert_eq!(
+            chat_url(&settings).unwrap(),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(models_url(&settings), "https://api.openai.com/v1/models");
     }
 
     #[test]
@@ -6722,6 +6813,39 @@ mod tests {
         assert_eq!(reminders[0].status, "pending");
         assert!(reminders[0].due_at > 10);
         assert!(collect_due_reminders(&mut reminders, 10).is_empty());
+    }
+
+    #[test]
+    fn memo_category_prefers_explicit_input_and_preserves_it_in_result() {
+        let memo = memo_from_input(
+            "memo-explicit".to_string(),
+            MemoInput {
+                title: "随手记".to_string(),
+                content: "整理阅读资料".to_string(),
+                category: Some("reference".to_string()),
+            },
+            100,
+        )
+        .expect("memo should be created");
+
+        assert_eq!(memo.category, "reference");
+        assert_eq!(memo.tags[0], "资料");
+    }
+
+    #[test]
+    fn memo_category_falls_back_to_inference_when_not_selected() {
+        let memo = memo_from_input(
+            "memo-inferred".to_string(),
+            MemoInput {
+                title: "修复发布问题".to_string(),
+                content: "检查并提交代码".to_string(),
+                category: None,
+            },
+            100,
+        )
+        .expect("memo should be created");
+
+        assert_eq!(memo.category, "task");
     }
 
     #[test]

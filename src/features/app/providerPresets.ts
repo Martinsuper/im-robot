@@ -21,16 +21,27 @@ export interface ProviderPreset {
   needsApiKey: boolean;
   /** 一句话说明，直接展示给用户。 */
   hint: string;
+  /** 首次引导只展示无需填写高级连接参数的预设。 */
+  showInOnboarding?: boolean;
 }
 
 export const providerPresets: ProviderPreset[] = [
   {
-    value: "openai-compatible",
+    value: "openai",
     label: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4o",
     needsApiKey: true,
     hint: "官方接口，需要一个 API Key。",
+  },
+  {
+    value: "openai-compatible",
+    label: "OpenAI 兼容 API",
+    baseUrl: "",
+    model: "",
+    needsApiKey: true,
+    hint: "适用于中转服务或其他兼容 Chat Completions 的服务，请填写 API 地址、模型名和密钥。",
+    showInOnboarding: false,
   },
   {
     value: "anthropic",
@@ -82,6 +93,11 @@ export const providerPresets: ProviderPreset[] = [
   },
 ];
 
+/** 首次引导不展示需要手动填写 Base URL / Model 的高级入口。 */
+export const onboardingProviderPresets = providerPresets.filter(
+  (preset) => preset.showInOnboarding !== false,
+);
+
 /** 「本地」这一类（不需要 Key、可以留空模型名）。 */
 export const localProviderValues = providerPresets
   .filter((preset) => !preset.needsApiKey)
@@ -92,6 +108,8 @@ export function findProviderPreset(value: string): ProviderPreset | undefined {
 }
 
 /** 解析当前配置用的是哪个预设；自建端点会返回 undefined。 */
-export function resolveProviderPreset(ai: Pick<AiSettings, "provider">): ProviderPreset | undefined {
+export function resolveProviderPreset(
+  ai: Pick<AiSettings, "provider">,
+): ProviderPreset | undefined {
   return findProviderPreset(ai.provider);
 }

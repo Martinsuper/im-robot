@@ -125,8 +125,11 @@ const UPDATE_ASSET_EXTENSIONS: [&str; 9] = [
 /// Restrict the name to a bare file inside the updates directory: no absolute
 /// paths, no traversal, and only installer-shaped extensions.
 pub fn sanitize_update_file_name(raw: Option<String>) -> Result<String, UpdateError> {
-    let candidate = raw.unwrap_or_else(|| "piko-update.bin".to_string());
+    let candidate = raw.unwrap_or_else(|| "piko-update.zip".to_string());
     let trimmed = candidate.trim();
+    if trimmed.contains('\\') || trimmed.contains('/') {
+        return Err(UpdateError::InvalidFileName);
+    }
     let name = Path::new(trimmed)
         .file_name()
         .and_then(|name| name.to_str())
@@ -134,9 +137,6 @@ pub fn sanitize_update_file_name(raw: Option<String>) -> Result<String, UpdateEr
         .ok_or(UpdateError::InvalidFileName)?;
     // Unix 上反斜杠不是路径分隔符（file_name() 会原样保留），为让行为跨平台
     // 一致，名字里残留任何分隔符一律拒绝——合法的 GitHub 资产名不会包含它们。
-    if name.contains('\\') || name.contains('/') {
-        return Err(UpdateError::InvalidFileName);
-    }
     let extension = name
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
@@ -259,6 +259,54 @@ pub fn version_parts(version: &str) -> Vec<u64> {
         .split('.')
         .map(|part| part.parse().unwrap_or(0))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sanitize_update_file_name, version_parts, UpdateError};
+
+    #[test]
+    fn accepts_supported_update_asset_names_and_defaults() {
+        assert_eq!(
+            sanitize_update_file_name(Some("  Piko-1.2.7.DMG  ".to_string())).unwrap(),
+            "Piko-1.2.7.DMG"
+        );
+        assert_eq!(
+            sanitize_update_file_name(None).unwrap(),
+            "piko-update.zip"
+        );
+        assert_eq!(
+            sanitize_update_file_name(Some("signature.SIG".to_string())).unwrap(),
+            "signature.SIG"
+        );
+    }
+
+    #[test]
+    fn rejects_paths_and_unsupported_or_missing_extensions() {
+        assert!(matches!(
+            sanitize_update_file_name(Some("../update.dmg".to_string())),
+            Err(UpdateError::InvalidFileName)
+        ));
+        assert!(matches!(
+            sanitize_update_file_name(Some("nested/update.dmg".to_string())),
+            Err(UpdateError::InvalidFileName)
+        ));
+        assert!(matches!(
+            sanitize_update_file_name(Some("update".to_string())),
+            Err(UpdateError::MissingExtension)
+        ));
+        assert!(matches!(
+            sanitize_update_file_name(Some("update.tar.gz".to_string())),
+            Err(UpdateError::UnsupportedFileType)
+        ));
+    }
+
+    #[test]
+    fn compares_versions_without_treating_malformed_parts_as_large_versions() {
+        assert!(version_parts(" v1.10.0 ") > version_parts("1.9.9"));
+        assert_eq!(version_parts("v1.bad.2"), vec![1, 0, 2]);
+        assert_eq!(version_parts("1.2"), vec![1, 2]);
+    }
 }
 
 #[tauri::command]

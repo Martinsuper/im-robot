@@ -1,16 +1,22 @@
 import type { Dispatch, SetStateAction } from "react";
-import type { AiSettings, AppSettings, OnboardingStatus, QuietMode, Theme } from "../../../types/appTypes";
+import { ChevronDown } from "lucide-react";
+import type {
+  AiSettings,
+  AppSettings,
+  OnboardingStatus,
+  QuietMode,
+  Theme,
+} from "../../../types/appTypes";
 import { useTranslation, type Locale } from "../../i18n/I18nProvider";
 import {
   defaultAppSettings,
   getAvailablePetVisualStyleOptions,
-  live2dModelOptions,
   providerOptions,
   quietModeOptions,
-  setLive2DModelId,
   setPetVisualStyle,
 } from "../../app/appShared";
-import type { Live2DModelId, PetVisualStyle } from "../../app/appShared";
+import type { PetVisualStyle } from "../../app/appShared";
+import { findProviderPreset } from "../../app/providerPresets";
 import { reportCommandError, runCommand } from "../../app/appRuntime";
 
 interface PreferencesSectionProps {
@@ -21,7 +27,6 @@ interface PreferencesSectionProps {
   sensingPaused: boolean;
   setAppSettings: Dispatch<SetStateAction<AppSettings>>;
   petVisualStyle: PetVisualStyle;
-  live2dModelId: Live2DModelId;
   customPetImagePath: string;
   chooseCustomPetImage: () => Promise<void>;
   clearCustomPetImage: () => void;
@@ -40,7 +45,6 @@ export function PreferencesSection({
   sensingPaused,
   setAppSettings,
   petVisualStyle,
-  live2dModelId,
   customPetImagePath,
   chooseCustomPetImage,
   clearCustomPetImage,
@@ -50,9 +54,9 @@ export function PreferencesSection({
   refreshOnboardingStatus,
   preferencesStatus,
 }: PreferencesSectionProps) {
-  const availablePetVisualStyleOptions = getAvailablePetVisualStyleOptions(Boolean(customPetImagePath));
-  const enabledLive2DModelOptions = live2dModelOptions.filter((option) => option.enabled);
-  const disabledLive2DModelOptions = live2dModelOptions.filter((option) => !option.enabled);
+  const availablePetVisualStyleOptions = getAvailablePetVisualStyleOptions(
+    Boolean(customPetImagePath),
+  );
   const { locale, setLocale, t } = useTranslation();
   const languageOptions: Array<{ value: Locale; label: string }> = [
     { value: "zh-CN", label: "简体中文" },
@@ -70,53 +74,69 @@ export function PreferencesSection({
           <input
             value={companionName}
             maxLength={24}
-            onChange={(event) => setAppSettings((current) => ({ ...current, companionName: event.currentTarget.value }))}
+            onChange={(event) =>
+              setAppSettings((current) => ({
+                ...current,
+                companionName: event.currentTarget.value,
+              }))
+            }
           />
         </label>
         <label>
           <span>{t("panel.settings.themeLabel", "主题色")}</span>
-          <select value={theme} onChange={(event) => setAppSettings((current) => ({ ...current, theme: event.currentTarget.value as Theme }))}>
-            <option value="sage">{t("panel.settings.themeSage", "鼠尾草绿")}</option>
-            <option value="blue">{t("panel.settings.themeOcean", "湖水蓝")}</option>
-            <option value="peach">{t("panel.settings.themePeach", "暖桃色")}</option>
+          <select
+            value={theme}
+            onChange={(event) =>
+              setAppSettings((current) => ({
+                ...current,
+                theme: event.currentTarget.value as Theme,
+              }))
+            }
+          >
+            <option value="sage">
+              {t("panel.settings.themeSage", "鼠尾草绿")}
+            </option>
+            <option value="blue">
+              {t("panel.settings.themeOcean", "湖水蓝")}
+            </option>
+            <option value="peach">
+              {t("panel.settings.themePeach", "暖桃色")}
+            </option>
           </select>
         </label>
         <label>
           <span>{t("panel.settings.petStyleLabel", "精灵形象")}</span>
           <select
             value={petVisualStyle}
-            onChange={(event) => setPetVisualStyle(event.currentTarget.value as PetVisualStyle)}
+            onChange={(event) =>
+              setPetVisualStyle(event.currentTarget.value as PetVisualStyle)
+            }
           >
-            {availablePetVisualStyleOptions.map(({ label, labelKey, value }) => (
-              <option key={value} value={value}>{t(labelKey, label)}</option>
-            ))}
+            {availablePetVisualStyleOptions.map(
+              ({ label, labelKey, value }) => (
+                <option key={value} value={value}>
+                  {t(labelKey, label)}
+                </option>
+              ),
+            )}
           </select>
         </label>
-        {petVisualStyle === "character" ? (
-          <label>
-            <span>{t("panel.settings.live2dModelLabel", "Live2D 模型")}</span>
-            <select
-              value={live2dModelId}
-              onChange={(event) => setLive2DModelId(event.currentTarget.value as Live2DModelId)}
-            >
-              {enabledLive2DModelOptions.map(({ label, value, note }) => (
-                <option key={value} value={value}>{label} · {note}</option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        {petVisualStyle === "character" && disabledLive2DModelOptions.length ? (
-          <p className="empty-state">
-            {disabledLive2DModelOptions.map((option) => `${option.label}：${option.note}`).join("；")}
-          </p>
-        ) : null}
         <div className="custom-pet-picker">
-          <span>{customPetImagePath ? customPetImagePath.split(/[\\/]/).pop() : t("panel.settings.noCustomImage", "未选择自定义图片")}</span>
+          <span>
+            {customPetImagePath
+              ? customPetImagePath.split(/[\\/]/).pop()
+              : t("panel.settings.noCustomImage", "未选择自定义图片")}
+          </span>
           <div>
             <button type="button" onClick={() => void chooseCustomPetImage()}>
               {t("panel.settings.chooseImage", "选择图片")}
             </button>
-            <button type="button" className="is-secondary" onClick={clearCustomPetImage} disabled={!customPetImagePath}>
+            <button
+              type="button"
+              className="is-secondary"
+              onClick={clearCustomPetImage}
+              disabled={!customPetImagePath}
+            >
               {t("panel.settings.clearImage", "清除")}
             </button>
           </div>
@@ -125,7 +145,12 @@ export function PreferencesSection({
           <input
             type="checkbox"
             checked={!sensingPaused}
-            onChange={(event) => setAppSettings((current) => ({ ...current, sensingPaused: !event.currentTarget.checked }))}
+            onChange={(event) =>
+              setAppSettings((current) => ({
+                ...current,
+                sensingPaused: !event.currentTarget.checked,
+              }))
+            }
           />
           <span>{t("panel.settings.sensingLabel", "主动感知")}</span>
         </label>
@@ -139,7 +164,10 @@ export function PreferencesSection({
         </label>
         <label>
           <span>{t("settings.languageLabel", "界面语言")}</span>
-          <select value={locale} onChange={(event) => setLocale(event.currentTarget.value as Locale)}>
+          <select
+            value={locale}
+            onChange={(event) => setLocale(event.currentTarget.value as Locale)}
+          >
             {languageOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -156,12 +184,16 @@ export function PreferencesSection({
             void runCommand<AppSettings>("reset_onboarding", undefined, {
               ...defaultAppSettings,
               companionName,
-            }).then(() => refreshOnboardingStatus()).catch(reportCommandError("reset_onboarding"));
+            })
+              .then(() => refreshOnboardingStatus())
+              .catch(reportCommandError("reset_onboarding"));
           }}
         >
           {t("settings.runOnboarding", "重新运行引导")}
         </button>
-        {preferencesStatus && <p className="connection-status">{preferencesStatus}</p>}
+        {preferencesStatus && (
+          <p className="connection-status">{preferencesStatus}</p>
+        )}
       </div>
     </section>
   );
@@ -174,14 +206,22 @@ interface QuietModeSectionProps {
   updateQuietMode: (mode: QuietMode) => void;
 }
 
-export function QuietModeSection({ active, tabProps, quietMode, updateQuietMode }: QuietModeSectionProps) {
+export function QuietModeSection({
+  active,
+  tabProps,
+  quietMode,
+  updateQuietMode,
+}: QuietModeSectionProps) {
   const { t } = useTranslation();
   if (!active) return null;
   return (
     <section className="panel-card" {...tabProps}>
       <p className="eyebrow">PERSONALITY</p>
       <h2>{t("panel.settings.quietModeTitle", "互动活泼度")}</h2>
-      <div className="segmented-control" aria-label={t("panel.settings.quietModeTitle", "互动活泼度")}>
+      <div
+        className="segmented-control"
+        aria-label={t("panel.settings.quietModeTitle", "互动活泼度")}
+      >
         {quietModeOptions.map(({ label, labelKey, value }) => (
           <button
             className={value === quietMode ? "is-active" : ""}
@@ -233,7 +273,12 @@ export function BreakReminderSection({
           <input
             type="checkbox"
             checked={breakRemindersEnabled}
-            onChange={(event) => setAppSettings((current) => ({ ...current, breakRemindersEnabled: event.currentTarget.checked }))}
+            onChange={(event) =>
+              setAppSettings((current) => ({
+                ...current,
+                breakRemindersEnabled: event.currentTarget.checked,
+              }))
+            }
           />
           <span>{t("panel.settings.breakEnable", "开启休息提醒")}</span>
         </label>
@@ -246,7 +291,14 @@ export function BreakReminderSection({
               max="240"
               step="5"
               value={breakReminderIntervalMinutes}
-              onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderIntervalMinutes: Number(event.currentTarget.value) }))}
+              onChange={(event) =>
+                setAppSettings((current) => ({
+                  ...current,
+                  breakReminderIntervalMinutes: Number(
+                    event.currentTarget.value,
+                  ),
+                }))
+              }
             />
           </label>
           <label>
@@ -257,7 +309,14 @@ export function BreakReminderSection({
               max="240"
               step="5"
               value={breakReminderCooldownMinutes}
-              onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderCooldownMinutes: Number(event.currentTarget.value) }))}
+              onChange={(event) =>
+                setAppSettings((current) => ({
+                  ...current,
+                  breakReminderCooldownMinutes: Number(
+                    event.currentTarget.value,
+                  ),
+                }))
+              }
             />
           </label>
         </div>
@@ -265,7 +324,12 @@ export function BreakReminderSection({
           <input
             type="checkbox"
             checked={breakReminderQuietHoursEnabled}
-            onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderQuietHoursEnabled: event.currentTarget.checked }))}
+            onChange={(event) =>
+              setAppSettings((current) => ({
+                ...current,
+                breakReminderQuietHoursEnabled: event.currentTarget.checked,
+              }))
+            }
           />
           <span>{t("panel.settings.quietHoursEnable", "启用静默时段")}</span>
         </label>
@@ -275,7 +339,12 @@ export function BreakReminderSection({
             <input
               type="time"
               value={breakReminderQuietHoursStart}
-              onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderQuietHoursStart: event.currentTarget.value }))}
+              onChange={(event) =>
+                setAppSettings((current) => ({
+                  ...current,
+                  breakReminderQuietHoursStart: event.currentTarget.value,
+                }))
+              }
             />
           </label>
           <label>
@@ -283,14 +352,24 @@ export function BreakReminderSection({
             <input
               type="time"
               value={breakReminderQuietHoursEnd}
-              onChange={(event) => setAppSettings((current) => ({ ...current, breakReminderQuietHoursEnd: event.currentTarget.value }))}
+              onChange={(event) =>
+                setAppSettings((current) => ({
+                  ...current,
+                  breakReminderQuietHoursEnd: event.currentTarget.value,
+                }))
+              }
             />
           </label>
         </div>
         <button type="button" onClick={() => void saveWorkRhythmPreferences()}>
           {t("panel.settings.breakSaveButton", "保存休息提醒设置")}
         </button>
-        <p className="empty-state">{t("panel.settings.breakHint", "提醒会根据今日输入、空闲状态和前台场景自动判断，只在适合的时候发声。")}</p>
+        <p className="empty-state">
+          {t(
+            "panel.settings.breakHint",
+            "提醒会根据今日输入、空闲状态和前台场景自动判断，只在适合的时候发声。",
+          )}
+        </p>
       </div>
     </section>
   );
@@ -301,7 +380,10 @@ interface ModelProviderSectionProps {
   tabProps: Record<string, unknown>;
   aiSettings: AiSettings;
   updateProvider: (provider: string) => void;
-  updateAiField: <Key extends keyof AiSettings>(key: Key, value: AiSettings[Key]) => void;
+  updateAiField: <Key extends keyof AiSettings>(
+    key: Key,
+    value: AiSettings[Key],
+  ) => void;
   apiKey: string;
   setApiKey: Dispatch<SetStateAction<string>>;
   isTesting: boolean;
@@ -322,37 +404,68 @@ export function ModelProviderSection({
   connectionStatus,
 }: ModelProviderSectionProps) {
   const { t } = useTranslation();
+  const selectedProvider = findProviderPreset(aiSettings.provider);
+  const isOpenAiCompatible = aiSettings.provider === "openai-compatible";
   if (!active) return null;
   return (
-    <section className="panel-card" {...tabProps}>
-      <p className="eyebrow">MODEL PROVIDER</p>
+    <section className="panel-card model-provider-card" {...tabProps}>
       <h2>{t("panel.settings.providerTitle", "模型服务")}</h2>
-      <div className="settings-form">
-        <label>
+      <p className="model-provider-card__lead">
+        {t("panel.settings.providerLead", "选择服务后，填写必要的连接信息。")}
+      </p>
+      <div className="settings-form model-provider-form">
+        <label className="model-provider-form__provider">
           <span>{t("panel.settings.providerTypeLabel", "服务类型")}</span>
           <select
             value={aiSettings.provider}
             onChange={(event) => updateProvider(event.currentTarget.value)}
           >
             {providerOptions.map(({ label, value }) => (
-              <option key={value} value={value}>{label}</option>
+              <option key={value} value={value}>
+                {label}
+              </option>
             ))}
           </select>
         </label>
+        {selectedProvider ? (
+          <p className="model-provider-form__selection" aria-live="polite">
+            已选择 {selectedProvider.label} · {selectedProvider.hint}
+          </p>
+        ) : null}
+        <div className="model-provider-form__fields">
         <label>
-          <span>Base URL</span>
+          <span>
+            {isOpenAiCompatible ? "API 地址（Base URL）" : "Base URL"}
+          </span>
           <input
             value={aiSettings.baseUrl}
-            onChange={(event) => updateAiField("baseUrl", event.currentTarget.value)}
-            placeholder="http://localhost:11434/v1"
+            onChange={(event) =>
+              updateAiField("baseUrl", event.currentTarget.value)
+            }
+            placeholder={
+              isOpenAiCompatible
+                ? "https://api.example.com/v1"
+                : "http://localhost:11434/v1"
+            }
           />
         </label>
         <label>
-          <span>Model</span>
+          <span>{isOpenAiCompatible ? "模型名称（Model）" : "Model"}</span>
           <input
             value={aiSettings.model}
-            onChange={(event) => updateAiField("model", event.currentTarget.value)}
-            placeholder={aiSettings.provider === "lmstudio" ? t("panel.settings.modelPlaceholderLmStudio", "可留空，LM Studio 自动使用当前加载模型") : "gemma4:e4b"}
+            onChange={(event) =>
+              updateAiField("model", event.currentTarget.value)
+            }
+            placeholder={
+              aiSettings.provider === "lmstudio"
+                ? t(
+                    "panel.settings.modelPlaceholderLmStudio",
+                    "可留空，LM Studio 自动使用当前加载模型",
+                  )
+                : isOpenAiCompatible
+                  ? "例如 gpt-4o-mini、qwen-plus"
+                  : "gemma4:e4b"
+            }
           />
         </label>
         <label>
@@ -361,38 +474,67 @@ export function ModelProviderSection({
             type="password"
             value={apiKey}
             onChange={(event) => setApiKey(event.currentTarget.value)}
-            placeholder={t("panel.settings.apiKeyPlaceholder", "本地 Ollama 可留空")}
+            placeholder={
+              isOpenAiCompatible
+                ? "填写第三方服务提供的 API Key"
+              : t("panel.settings.apiKeyPlaceholder", "本地 Ollama 可留空")
+            }
           />
+          <small>密钥仅用于连接你选择的服务，并保存在本机。</small>
         </label>
-        <div className="settings-form__row">
-          <label>
-            <span>Temperature</span>
-            <input
-              type="number"
-              min="0"
-              max="2"
-              step="0.1"
-              value={aiSettings.temperature}
-              onChange={(event) => updateAiField("temperature", Number(event.currentTarget.value))}
-            />
-          </label>
-          <label>
-            <span>{t("panel.settings.timeoutLabel", "超时秒数")}</span>
-            <input
-              type="number"
-              min="5"
-              max="600"
-              value={aiSettings.timeoutSeconds}
-              onChange={(event) =>
-                updateAiField("timeoutSeconds", Number(event.currentTarget.value))
-              }
-            />
-          </label>
         </div>
-        <button type="button" disabled={isTesting} onClick={testConnection}>
-          {isTesting ? t("panel.settings.testing", "正在测试...") : t("panel.settings.saveAndTest", "保存并测试连接")}
-        </button>
-        <p className="connection-status">{connectionStatus}</p>
+        <details className="model-provider-form__advanced">
+          <summary>
+            <span>高级连接设置</span>
+            <ChevronDown
+              className="model-provider-form__advanced-icon"
+              size={14}
+              aria-hidden="true"
+            />
+          </summary>
+          <div className="settings-form__row">
+            <label>
+              <span>Temperature</span>
+              <input
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                value={aiSettings.temperature}
+                onChange={(event) =>
+                  updateAiField("temperature", Number(event.currentTarget.value))
+                }
+              />
+            </label>
+            <label>
+              <span>{t("panel.settings.timeoutLabel", "超时秒数")}</span>
+              <input
+                type="number"
+                min="5"
+                max="600"
+                value={aiSettings.timeoutSeconds}
+                onChange={(event) =>
+                  updateAiField(
+                    "timeoutSeconds",
+                    Number(event.currentTarget.value),
+                  )
+                }
+              />
+            </label>
+          </div>
+        </details>
+        <div className="model-provider-form__actions">
+          <button type="button" disabled={isTesting} onClick={testConnection}>
+            {isTesting
+              ? t("panel.settings.testing", "正在测试...")
+              : t("panel.settings.saveAndTest", "保存并测试连接")}
+          </button>
+          {connectionStatus ? (
+            <p className="connection-status" role="status">
+              {connectionStatus}
+            </p>
+          ) : null}
+        </div>
       </div>
     </section>
   );
@@ -405,7 +547,12 @@ interface HtmlPreviewSectionProps {
   updateHtmlPreviewEnabled: (enabled: boolean) => Promise<void>;
 }
 
-export function HtmlPreviewSection({ active, tabProps, htmlPreviewEnabled, updateHtmlPreviewEnabled }: HtmlPreviewSectionProps) {
+export function HtmlPreviewSection({
+  active,
+  tabProps,
+  htmlPreviewEnabled,
+  updateHtmlPreviewEnabled,
+}: HtmlPreviewSectionProps) {
   const { t } = useTranslation();
   if (!active) return null;
   return (
@@ -417,11 +564,18 @@ export function HtmlPreviewSection({ active, tabProps, htmlPreviewEnabled, updat
           <input
             type="checkbox"
             checked={htmlPreviewEnabled}
-            onChange={(event) => void updateHtmlPreviewEnabled(event.currentTarget.checked)}
+            onChange={(event) =>
+              void updateHtmlPreviewEnabled(event.currentTarget.checked)
+            }
           />
           <span>{t("panel.settings.htmlPreviewToggle", "HTML 预览插件")}</span>
         </label>
-        <p className="empty-state">{t("panel.settings.htmlPreviewHint", "开启后，气泡窗口会在检测到 HTML 片段时优先使用沙箱 iframe 预览。")}</p>
+        <p className="empty-state">
+          {t(
+            "panel.settings.htmlPreviewHint",
+            "开启后，气泡窗口会在检测到 HTML 片段时优先使用沙箱 iframe 预览。",
+          )}
+        </p>
       </div>
     </section>
   );

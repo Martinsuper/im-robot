@@ -11,7 +11,7 @@
 /* 每个折叠分组是一个 .settings-group（外壳见 PanelChrome），内部纵向堆叠卡片。 */
 .tab--settings .settings-group__body {
   display: grid;
-  gap: var(--space-2, 8px);
+  gap: var(--space-3, 12px);
 }
 
 /* 卡片在设置里一律占满整行，不再用 App.css 里的 6/7/12 栅格。 */
@@ -30,12 +30,154 @@
   font-weight: 700;
 }
 
+/* 每个 settings-group 已经是容器，组内项目不再重复呈现为独立卡片。 */
+.tab--settings .settings-group__body > .panel-card:not(.companion-metrics-card) {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.tab--settings .settings-group__body > .panel-card:not(.companion-metrics-card) + .panel-card:not(.companion-metrics-card) {
+  padding-top: var(--space-3, 12px);
+  border-top: 1px solid var(--piko-line);
+}
+
+.tab--settings .settings-group__body > .panel-card > .eyebrow {
+  margin: 0 0 3px;
+  color: var(--piko-muted);
+  font-size: var(--text-xs, 9px);
+  letter-spacing: .14em;
+}
+
+/* 模型服务采用单层表单：分组已经提供外壳，内容不再重复套一张卡。 */
+.tab--settings .model-provider-card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.model-provider-card__lead {
+  margin: 0 0 var(--space-3, 12px);
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  line-height: 1.5;
+}
+
+.model-provider-form {
+  gap: var(--space-3, 12px);
+}
+
+.model-provider-form__provider select {
+  min-height: 38px;
+  font-size: var(--text-md, 12px);
+  font-weight: 700;
+}
+
+.model-provider-form__selection {
+  margin: calc(var(--space-2, 8px) * -1) 0 0;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  line-height: 1.5;
+}
+
+.model-provider-form__fields {
+  display: grid;
+  gap: var(--space-3, 12px);
+  padding-top: var(--space-3, 12px);
+  border-top: 1px solid var(--piko-line);
+}
+
+.model-provider-form__fields small {
+  margin-top: -1px;
+  color: var(--piko-muted);
+  font-size: var(--text-xs, 9px);
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.model-provider-form__advanced {
+  border-top: 1px solid var(--piko-line);
+  padding-top: var(--space-3, 12px);
+}
+
+.model-provider-form__advanced > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  font-weight: 650;
+  list-style: none;
+}
+
+.model-provider-form__advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.model-provider-form__advanced-icon {
+  flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.model-provider-form__advanced[open] > summary {
+  margin-bottom: var(--space-3, 12px);
+  color: var(--piko-ink);
+}
+
+.model-provider-form__advanced[open] > summary .model-provider-form__advanced-icon {
+  transform: rotate(180deg);
+}
+
+.model-provider-form__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3, 12px);
+}
+
+.model-provider-form__actions > button {
+  min-height: 34px;
+  padding: 0 var(--space-4, 16px);
+  border-radius: var(--radius-md, 9px);
+}
+
+.model-provider-form__actions .connection-status {
+  margin: 0;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+}
+
 /* 辅助说明。取代原先散落的 <p className="empty-state"> 说明文案。 */
 .settings-note {
   margin: 0;
   color: var(--piko-muted);
   font-size: var(--text-sm, 11px);
   line-height: 1.5;
+}
+
+.settings-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2, 8px);
+}
+
+.settings-actions > button {
+  min-width: 0;
+}
+
+.button-secondary {
+  border: 1px solid var(--piko-line);
+  background: transparent;
+  color: var(--piko-ink);
+}
+
+.button-secondary:hover:not(:disabled) {
+  background: var(--piko-fill);
 }
 
 /* 只读展示项（例如通知权限状态），比表单 label 更轻。 */
@@ -55,13 +197,14 @@
 
 /* 高级组内的四小节：模型参数 / 语音 / 实验室 / 插件。 */
 .settings-subgroup {
-  border: 1px solid var(--piko-line);
-  border-radius: var(--radius-lg, 13px);
-  background: var(--piko-fill, #fffefa);
-  padding: var(--space-3, 12px);
+  border: 0;
+  border-top: 1px solid var(--piko-line);
+  border-radius: 0;
+  background: transparent;
+  padding: var(--space-3, 12px) 0 0;
 }
 .settings-subgroup + .settings-subgroup {
-  margin-top: var(--space-2, 8px);
+  margin-top: var(--space-3, 12px);
 }
 .settings-subgroup > summary {
   cursor: pointer;

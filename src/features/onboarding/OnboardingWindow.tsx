@@ -3,7 +3,11 @@ import type { AppSettings, ModelInfo } from "../../types/appTypes";
 import { toUserMessage } from "../../lib/errors";
 import { useToast } from "../../components/feedback/toastStore";
 import { defaultAiSettings, defaultAppSettings } from "../app/appShared";
-import { findProviderPreset, providerPresets, type ProviderPreset } from "../app/providerPresets";
+import {
+  findProviderPreset,
+  onboardingProviderPresets,
+  type ProviderPreset,
+} from "../app/providerPresets";
 import { runCommand } from "../app/appRuntime";
 import "./onboarding.css";
 
@@ -43,7 +47,11 @@ const FALLBACK_ADVANCED: AdvancedAiParams = {
  * 这是本文件里唯一允许出现 `baseUrl` / `model` / `temperature` / `timeoutSeconds`
  * 的地方：它们是命令参数，不出现在任何 label 或可见文案里。
  */
-function buildAiInput(preset: ProviderPreset, apiKey: string, advanced: AdvancedAiParams) {
+function buildAiInput(
+  preset: ProviderPreset,
+  apiKey: string,
+  advanced: AdvancedAiParams,
+) {
   return {
     provider: preset.value,
     baseUrl: preset.baseUrl,
@@ -64,7 +72,13 @@ function describeLocalFailure(preset: ProviderPreset): string | null {
   try {
     const url = new URL(preset.baseUrl);
     const host = url.hostname.toLowerCase();
-    if (host !== "localhost" && host !== "127.0.0.1" && host !== "::1" && host !== "[::1]") return null;
+    if (
+      host !== "localhost" &&
+      host !== "127.0.0.1" &&
+      host !== "::1" &&
+      host !== "[::1]"
+    )
+      return null;
     const port = url.port || (url.protocol === "https:" ? "443" : "80");
     // 「本地 Ollama」→「Ollama」，读起来才像一句话。
     const service = preset.label.replace(/^本地\s*/, "");
@@ -75,8 +89,14 @@ function describeLocalFailure(preset: ProviderPreset): string | null {
 }
 
 /** 失败文案：本机服务优先给「去启动它」这种能照做的提示，其余走统一的人话化。 */
-function describeConnectionFailure(error: unknown, preset: ProviderPreset): string {
-  return describeLocalFailure(preset) ?? toUserMessage(error, "连不上这个服务，请检查后重试。");
+function describeConnectionFailure(
+  error: unknown,
+  preset: ProviderPreset,
+): string {
+  return (
+    describeLocalFailure(preset) ??
+    toUserMessage(error, "连不上这个服务，请检查后重试。")
+  );
 }
 
 interface TestResult {
@@ -95,24 +115,30 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
   const toast = useToast();
   const [step, setStep] = useState(1);
   const [companionName, setCompanionName] = useState(DEFAULT_COMPANION_NAME);
-  const [providerValue, setProviderValue] = useState(providerPresets[0].value);
+  const [providerValue, setProviderValue] = useState(
+    onboardingProviderPresets[0].value,
+  );
   const [apiKey, setApiKey] = useState("");
   const [test, setTest] = useState<TestResult>(IDLE_TEST);
   const [testing, setTesting] = useState(false);
   const [finishing, setFinishing] = useState(false);
 
-  const preset = findProviderPreset(providerValue) ?? providerPresets[0];
+  const preset =
+    findProviderPreset(providerValue) ?? onboardingProviderPresets[0];
 
   // 高级参数：挂载时读一次既有配置，之后原样回传。读不到就用默认值，不阻塞引导。
   const advancedRef = useRef<AdvancedAiParams>(FALLBACK_ADVANCED);
   useEffect(() => {
     let cancelled = false;
-    void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
+    void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings)
+      .then((settings) => {
         const ai = settings?.ai;
         if (cancelled || !ai) return;
         advancedRef.current = {
           speechModel: ai.speechModel || FALLBACK_ADVANCED.speechModel,
-          temperature: Number.isFinite(ai.temperature) ? ai.temperature : FALLBACK_ADVANCED.temperature,
+          temperature: Number.isFinite(ai.temperature)
+            ? ai.temperature
+            : FALLBACK_ADVANCED.temperature,
           timeoutSeconds: Number.isFinite(ai.timeoutSeconds)
             ? ai.timeoutSeconds
             : FALLBACK_ADVANCED.timeoutSeconds,
@@ -137,7 +163,11 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
       await runCommand<AppSettings>("update_ai_settings", {
         input: buildAiInput(preset, apiKey, advancedRef.current),
       });
-      const models = await runCommand<ModelInfo[]>("list_models", undefined, []);
+      const models = await runCommand<ModelInfo[]>(
+        "list_models",
+        undefined,
+        [],
+      );
       const names = (models ?? []).map((model) => model.id).filter(Boolean);
       if (!names.length) {
         setTest({ tone: "success", text: "连上了，但没找到可用模型。" });
@@ -146,10 +176,16 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
       const shown = names.slice(0, 3).join("、");
       setTest({
         tone: "success",
-        text: names.length > 3 ? `连上了，可以用：${shown} 等 ${names.length} 个模型。` : `连上了，可以用：${shown}。`,
+        text:
+          names.length > 3
+            ? `连上了，可以用：${shown} 等 ${names.length} 个模型。`
+            : `连上了，可以用：${shown}。`,
       });
     } catch (error) {
-      setTest({ tone: "error", text: describeConnectionFailure(error, preset) });
+      setTest({
+        tone: "error",
+        text: describeConnectionFailure(error, preset),
+      });
     } finally {
       setTesting(false);
     }
@@ -162,7 +198,9 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
         input: buildAiInput(preset, apiKey, advancedRef.current),
       });
     } catch (error) {
-      toast.error(toUserMessage(error, "设置没保存成功，可以稍后在「设置」里再配一次。"));
+      toast.error(
+        toUserMessage(error, "设置没保存成功，可以稍后在「设置」里再配一次。"),
+      );
     }
     setStep(3);
   }, [preset, apiKey, toast]);
@@ -185,7 +223,9 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
       await runCommand("show_bubble");
       onComplete();
     } catch (error) {
-      toast.error(toUserMessage(error, "引导没结束成功，请再点一次「开始使用」。"));
+      toast.error(
+        toUserMessage(error, "引导没结束成功，请再点一次「开始使用」。"),
+      );
     } finally {
       setFinishing(false);
     }
@@ -211,7 +251,11 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
             </p>
             <h1 className="onb-title">欢迎使用 Piko</h1>
           </div>
-          <button type="button" className="onb-btn onb-btn--quiet" onClick={() => void handleSkipOnboarding()}>
+          <button
+            type="button"
+            className="onb-btn onb-btn--quiet"
+            onClick={() => void handleSkipOnboarding()}
+          >
             跳过引导
           </button>
         </header>
@@ -221,7 +265,9 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
             <h2 className="onb-step-title" id="onb-step-title">
               先给它起个名字
             </h2>
-            <p className="onb-hint">以后改名字也很容易，「设置 → 伙伴」里随时能改。</p>
+            <p className="onb-hint">
+              以后改名字也很容易，「设置 → 伙伴」里随时能改。
+            </p>
             <div className="onb-field">
               <label className="onb-label" htmlFor="onb-companion-name">
                 它的名字
@@ -245,7 +291,11 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
               >
                 以后再说
               </button>
-              <button type="button" className="onb-btn onb-btn--primary" onClick={() => setStep(2)}>
+              <button
+                type="button"
+                className="onb-btn onb-btn--primary"
+                onClick={() => setStep(2)}
+              >
                 继续
               </button>
             </footer>
@@ -267,7 +317,7 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
                 value={providerValue}
                 onChange={(event) => handleProviderChange(event.target.value)}
               >
-                {providerPresets.map((option) => (
+                {onboardingProviderPresets.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -307,12 +357,20 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
               {testing ? "正在连接…" : "测试连接"}
             </button>
 
-            <p className={`onb-result${test.tone === "idle" ? "" : ` onb-result--${test.tone}`}`} role="status" aria-live="polite">
+            <p
+              className={`onb-result${test.tone === "idle" ? "" : ` onb-result--${test.tone}`}`}
+              role="status"
+              aria-live="polite"
+            >
               {test.text}
             </p>
 
             <footer className="onb-foot">
-              <button type="button" className="onb-btn onb-btn--ghost" onClick={handleSkipAi}>
+              <button
+                type="button"
+                className="onb-btn onb-btn--ghost"
+                onClick={handleSkipAi}
+              >
                 跳过，先用本地的
               </button>
               <button

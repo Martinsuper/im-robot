@@ -165,7 +165,9 @@ pub(crate) fn sessions_from_entries(entries: &[ChatHistoryEntry]) -> Vec<ChatSes
     let mut sessions: Vec<ChatSession> = Vec::new();
     for entry in ordered {
         match sessions.last_mut() {
-            Some(current) if entry.created_at.saturating_sub(current.updated_at) <= SESSION_GAP_SECONDS => {
+            Some(current)
+                if entry.created_at.saturating_sub(current.updated_at) <= SESSION_GAP_SECONDS =>
+            {
                 current.messages.extend(messages_from_entry(entry));
                 current.updated_at = entry.created_at.max(current.updated_at);
             }
@@ -191,7 +193,9 @@ pub(crate) fn append_entry_to_sessions(
 ) -> (String, usize) {
     let messages = messages_from_entry(entry).to_vec();
     let session_id = match sessions.last_mut() {
-        Some(current) if entry.created_at.saturating_sub(current.updated_at) <= SESSION_GAP_SECONDS => {
+        Some(current)
+            if entry.created_at.saturating_sub(current.updated_at) <= SESSION_GAP_SECONDS =>
+        {
             current.messages.extend(messages);
             current.updated_at = entry.created_at.max(current.updated_at);
             current.id.clone()
@@ -298,7 +302,10 @@ pub(crate) fn migrate_legacy_chat_at(
     })
 }
 
-fn backup_legacy_history(history_path: &Path, base_dir: Option<&Path>) -> Result<Option<String>, String> {
+fn backup_legacy_history(
+    history_path: &Path,
+    base_dir: Option<&Path>,
+) -> Result<Option<String>, String> {
     let Some(base_dir) = base_dir else {
         return Ok(None);
     };
@@ -421,7 +428,10 @@ mod tests {
             source_entry_id: None,
         });
         let entries = entries_view(&sessions);
-        let pending = entries.iter().find(|item| item.prompt == "还没回答").unwrap();
+        let pending = entries
+            .iter()
+            .find(|item| item.prompt == "还没回答")
+            .unwrap();
         assert_eq!(pending.response, "");
     }
 
@@ -434,7 +444,10 @@ mod tests {
         let mut restored_ids: Vec<&str> = restored.iter().map(|item| item.id.as_str()).collect();
         original_ids.sort_unstable();
         restored_ids.sort_unstable();
-        assert_eq!(restored_ids, original_ids, "往返后 id 必须一致，否则导入去重会失准");
+        assert_eq!(
+            restored_ids, original_ids,
+            "往返后 id 必须一致，否则导入去重会失准"
+        );
     }
 
     #[test]
@@ -450,7 +463,10 @@ mod tests {
     #[test]
     fn appending_beyond_the_gap_starts_a_new_session() {
         let mut sessions = sessions_from_entries(&[entry(1000, "第一问")]);
-        append_entry_to_sessions(&mut sessions, &entry(1000 + SESSION_GAP_SECONDS + 1, "隔了很久"));
+        append_entry_to_sessions(
+            &mut sessions,
+            &entry(1000 + SESSION_GAP_SECONDS + 1, "隔了很久"),
+        );
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[1].title, "隔了很久");
     }
@@ -462,11 +478,18 @@ mod tests {
             // 每次都超出一个间隔，强制新开会话
             append_entry_to_sessions(
                 &mut sessions,
-                &entry(1000 + index as u64 * (SESSION_GAP_SECONDS + 10), &format!("第 {index} 问")),
+                &entry(
+                    1000 + index as u64 * (SESSION_GAP_SECONDS + 10),
+                    &format!("第 {index} 问"),
+                ),
             );
         }
         assert_eq!(sessions.len(), MAX_SESSIONS);
-        assert!(sessions.last().unwrap().title.contains(&format!("第 {}", MAX_SESSIONS + 4)));
+        assert!(sessions
+            .last()
+            .unwrap()
+            .title
+            .contains(&format!("第 {}", MAX_SESSIONS + 4)));
     }
 
     #[test]
@@ -483,7 +506,10 @@ mod tests {
         assert_eq!(first.sessions_imported, 1);
         assert_eq!(first.entries_imported, 1);
         let backup = PathBuf::from(first.backup_dir.clone().unwrap());
-        assert_eq!(fs::read(backup.join("chat-history.json")).unwrap(), original_bytes);
+        assert_eq!(
+            fs::read(backup.join("chat-history.json")).unwrap(),
+            original_bytes
+        );
 
         let second = fixture.migrate().unwrap();
         assert!(second.already_migrated, "第二次必须是空操作");
@@ -512,7 +538,9 @@ mod tests {
         .unwrap();
         let error = fixture.migrate().unwrap_err();
         assert!(error.contains("为避免覆盖"), "{error}");
-        assert!(fs::read_to_string(&fixture.sessions).unwrap().contains("session-9"));
+        assert!(fs::read_to_string(&fixture.sessions)
+            .unwrap()
+            .contains("session-9"));
     }
 
     #[test]

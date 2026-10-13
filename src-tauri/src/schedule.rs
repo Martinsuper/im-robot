@@ -415,7 +415,10 @@ mod tests {
     fn merges_both_sources_into_one_sorted_timeline() {
         let fixture = Fixture::new();
         fixture.write_legacy(
-            json!([legacy_reminder("reminder-2", 200), legacy_reminder("reminder-1", 100)]),
+            json!([
+                legacy_reminder("reminder-2", 200),
+                legacy_reminder("reminder-1", 100)
+            ]),
             json!([legacy_event("calendar-event-1", 150, 180)]),
         );
 
@@ -485,7 +488,10 @@ mod tests {
 
         let items = fixture.schedule_items();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id, mapped_local_id, "迁移不得改写 system-* 形式的 id");
+        assert_eq!(
+            items[0].id, mapped_local_id,
+            "迁移不得改写 system-* 形式的 id"
+        );
         assert_eq!(items[0].source, "migrated:calendar-events.json");
     }
 
@@ -529,7 +535,10 @@ mod tests {
         fs::write(&fixture.events, json!([]).to_string()).unwrap();
 
         let error = fixture.migrate().unwrap_err();
-        assert!(error.contains("reminders.json"), "错误要指出哪个文件坏了：{error}");
+        assert!(
+            error.contains("reminders.json"),
+            "错误要指出哪个文件坏了：{error}"
+        );
         assert!(!fixture.marker.exists(), "失败时绝不能写下完成标记");
         assert!(
             !fixture.schedule.exists(),
@@ -581,7 +590,10 @@ mod tests {
 
         let report = fixture.migrate().unwrap();
         let backup = PathBuf::from(report.backup_dir.unwrap());
-        assert_eq!(fs::read_to_string(backup.join("reminders.json")).unwrap(), reminders);
+        assert_eq!(
+            fs::read_to_string(backup.join("reminders.json")).unwrap(),
+            reminders
+        );
         assert!(backup.join("calendar-events.json").exists());
     }
 
@@ -663,7 +675,10 @@ mod tests {
         // 只写提醒：日程必须原样保留
         let after_reminders = merge_reminders(&items, &[reminder("reminder-9", 900)]);
         assert_eq!(after_reminders.len(), 2);
-        assert_eq!(calendar_view(&after_reminders), vec![event("calendar-event-1", 200)]);
+        assert_eq!(
+            calendar_view(&after_reminders),
+            vec![event("calendar-event-1", 200)]
+        );
         assert_eq!(
             reminders_view(&after_reminders)
                 .iter()
