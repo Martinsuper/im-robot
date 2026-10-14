@@ -15,7 +15,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
-    menu::{ContextMenu, Menu, MenuItem},
+    menu::{ContextMenu, Menu, MenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
     State, Webview, WindowEvent,
@@ -31,7 +31,9 @@ pub mod app_awareness;
 mod chat;
 mod chat_session;
 mod chat_stream;
+mod credentials;
 use chat::*;
+use credentials::{read_api_key, update_api_key};
 mod debounce;
 pub mod memory;
 mod reminder_schedule;
@@ -46,8 +48,6 @@ const PET_MARGIN: i32 = 16;
 /// How many pixels of the pet window stay visible when tucked at screen edge.
 const PET_PEEK: i32 = 40;
 const PET_MOVE_DEBOUNCE_MS: u64 = 220;
-const KEYRING_SERVICE: &str = "com.duanluyao.imrobot";
-const KEYRING_ACCOUNT: &str = "provider-api-key";
 const MAX_TEXT_ATTACHMENT_BYTES: u64 = 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_PREVIEW_CHARS: usize = 240;
 
@@ -744,12 +744,31 @@ impl PikoPlugin for MemoPlugin {
     }
 }
 
+fn calendar_events_tool_result(events: &[CalendarEvent]) -> Result<Value, String> {
+    let iso_time = |timestamp: u64| -> Result<String, String> {
+        let timestamp = i64::try_from(timestamp).map_err(|_| "日程时间无效")?;
+        Local
+            .timestamp_opt(timestamp, 0)
+            .single()
+            .map(|time| time.to_rfc3339())
+            .ok_or_else(|| "日程时间无效".to_string())
+    };
+    let mut values = Vec::with_capacity(events.len());
+    for event in events {
+        let mut value = serde_json::to_value(event).map_err(|error| error.to_string())?;
+        value["startAt"] = json!(iso_time(event.start_at)?);
+        value["endAt"] = json!(iso_time(event.end_at)?);
+        values.push(value);
+    }
+    Ok(Value::Array(values))
+}
+
 impl CalendarPlugin {
     fn tool_manifests() -> Vec<PluginToolManifest> {
         vec![
             PluginToolManifest {
                 name: "list_events".to_string(),
-                description: "列出全部本地日程，供查询和删除前定位目标".to_string(),
+                description: "列出全部本地日程，供查询和删除前定位目标；startAt/endAt 为带本地时区的 ISO 8601 时间".to_string(),
                 input_schema: json!({ "type": "object", "properties": {} }),
                 risk: "read".to_string(),
                 confirmation: "never".to_string(),
@@ -873,18 +892,15 @@ impl PikoPlugin for CalendarPlugin {
 
     fn execute(&self, app: &AppHandle, tool: &str, input: Value) -> Result<Value, String> {
         match tool {
-            "list_events" => {
-                serde_json::to_value(read_calendar_events(app)).map_err(|error| error.to_string())
-            }
+            "list_events" => calendar_events_tool_result(&read_calendar_events(app)),
             "detect_conflicts" => {
                 let start_at = tool_timestamp(&input["startAt"])?;
                 let end_at = tool_timestamp(&input["endAt"])?;
-                serde_json::to_value(find_calendar_conflicts(
+                calendar_events_tool_result(&find_calendar_conflicts(
                     &read_calendar_events(app),
                     start_at,
                     end_at,
                 ))
-                .map_err(|error| error.to_string())
             }
             "create_event" => {
                 let event_input = calendar_event_input_from_value(&input)?;
@@ -2318,31 +2334,6 @@ fn read_settings(app: &AppHandle) -> AppSettings {
 fn persist_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
     let path = app_settings_path(app).ok_or("无法获取设置路径")?;
     storage::write(&path, settings)
-}
-
-fn keyring_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(|error| error.to_string())
-}
-
-fn read_api_key() -> Option<String> {
-    keyring_entry().ok()?.get_password().ok()
-}
-
-fn update_api_key(api_key: Option<Option<String>>) -> Result<(), String> {
-    let Some(api_key) = api_key else {
-        return Ok(());
-    };
-    let entry = keyring_entry()?;
-
-    match api_key {
-        Some(api_key) if !api_key.trim().is_empty() => entry
-            .set_password(api_key.trim())
-            .map_err(|error| error.to_string())?,
-        Some(_) | None => {
-            let _ = entry.delete_credential();
-        }
-    }
-    Ok(())
 }
 
 fn normalize_base_url(base_url: &str) -> String {
@@ -3786,8 +3777,11 @@ fn create_calendar_event_record(
     app: &AppHandle,
     input: CalendarEventInput,
 ) -> Result<CalendarEvent, String> {
-    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
-    let event = create_calendar_event_record_at_path(&path, input)?;
+    let _transaction = storage::transaction();
+    let mut events = schedule::calendar_view(&load_schedule_items(app, false)?);
+    let event = calendar_event_from_input(input)?;
+    events.push(event.clone());
+    persist_calendar_events(app, &events)?;
     let _ = app.emit("calendar-events-updated", ());
     Ok(event)
 }
@@ -3825,8 +3819,10 @@ fn delete_calendar_event_batch_record(
     app: &AppHandle,
     input: CalendarDeleteBatchInput,
 ) -> Result<Vec<CalendarEvent>, String> {
-    let path = calendar_events_path(app).ok_or_else(|| "无法获取日程记录路径".to_string())?;
-    let deleted = delete_calendar_event_batch_record_at_path(&path, input)?;
+    let _transaction = storage::transaction();
+    let mut events = schedule::calendar_view(&load_schedule_items(app, false)?);
+    let deleted = remove_calendar_event_batch(&mut events, input)?;
+    persist_calendar_events(app, &events)?;
     let deleted_ids = deleted
         .iter()
         .map(|event| event.id.clone())
@@ -3841,6 +3837,19 @@ fn delete_calendar_event_batch_record_at_path(
     input: CalendarDeleteBatchInput,
 ) -> Result<Vec<CalendarEvent>, String> {
     let _transaction = storage::transaction();
+    let mut events = read_calendar_events_from_path(path);
+    let deleted = remove_calendar_event_batch(&mut events, input)?;
+    persist_calendar_events_to_path(path, &events)?;
+    Ok(deleted)
+}
+
+fn remove_calendar_event_batch(
+    events: &mut Vec<CalendarEvent>,
+    input: CalendarDeleteBatchInput,
+) -> Result<Vec<CalendarEvent>, String> {
+    if input.events.is_empty() {
+        return Err("请至少选择一条日程".to_string());
+    }
     let mut ids = HashSet::new();
     for event in &input.events {
         if !ids.insert(event.id.as_str()) {
@@ -3848,7 +3857,6 @@ fn delete_calendar_event_batch_record_at_path(
         }
     }
 
-    let mut events = read_calendar_events_from_path(path);
     let deleted = events
         .iter()
         .filter(|event| ids.contains(event.id.as_str()))
@@ -3858,7 +3866,6 @@ fn delete_calendar_event_batch_record_at_path(
         return Err("部分待删除日程已不存在，请重新查询日程后再试".to_string());
     }
     events.retain(|event| !ids.contains(event.id.as_str()));
-    persist_calendar_events_to_path(path, &events)?;
     Ok(deleted)
 }
 
@@ -4050,6 +4057,26 @@ fn list_provider_tools(provider: String, registry: State<'_, PluginRegistry>) ->
     provider_tools(&provider, &registry.manifests())
 }
 
+fn selected_calendar_batch_events(
+    events: &Value,
+    indexes: Option<Vec<usize>>,
+) -> Result<Value, String> {
+    let events = events.as_array().ok_or("批量日程参数无效")?;
+    let indexes = indexes.unwrap_or_else(|| (0..events.len()).collect());
+    if indexes.is_empty() {
+        return Err("请至少选择一条日程".to_string());
+    }
+    let mut selected = Vec::with_capacity(indexes.len());
+    let mut seen = HashSet::new();
+    for index in indexes {
+        if !seen.insert(index) {
+            return Err("批量日程选择项重复".to_string());
+        }
+        selected.push(events.get(index).cloned().ok_or("批量日程选择项无效")?);
+    }
+    Ok(Value::Array(selected))
+}
+
 #[tauri::command]
 fn confirm_chat_action(
     app: AppHandle,
@@ -4064,26 +4091,14 @@ fn confirm_chat_action(
         .map_err(|_| "无法读取待确认动作".to_string())?
         .remove(&id)
         .ok_or_else(|| "该动作草稿已失效".to_string())?;
-    if draft.plugin_id == "piko.calendar" && draft.tool_name == "create_event_batch" {
-        let events = draft.arguments["events"]
-            .as_array()
-            .cloned()
-            .ok_or_else(|| "批量日程参数无效".to_string())?;
-        let selected_indexes = selected_indexes.unwrap_or_else(|| (0..events.len()).collect());
-        if selected_indexes.is_empty() {
-            return Err("请至少选择一条日程".to_string());
-        }
-        draft.arguments["events"] = Value::Array(
-            selected_indexes
-                .into_iter()
-                .map(|index| {
-                    events
-                        .get(index)
-                        .cloned()
-                        .ok_or_else(|| "批量日程选择项无效".to_string())
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        );
+    if draft.plugin_id == "piko.calendar"
+        && matches!(
+            draft.tool_name.as_str(),
+            "create_event_batch" | "delete_event_batch"
+        )
+    {
+        draft.arguments["events"] =
+            selected_calendar_batch_events(&draft.arguments["events"], selected_indexes)?;
     }
     let calendar_events = if draft.plugin_id == "piko.calendar" {
         read_calendar_events(&app)
@@ -5768,6 +5783,17 @@ fn set_pet_visible(app: &AppHandle, visible: bool) {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn configure_application_menu(app: &tauri::App) -> tauri::Result<()> {
+    let menu = Menu::default(app.handle())?;
+    let chat = MenuItem::with_id(app, "pet_ctx_chat", "对话", true, None::<&str>)?;
+    let panel = MenuItem::with_id(app, "pet_ctx_panel", "主面板", true, None::<&str>)?;
+    let actions = Submenu::with_items(app, "Piko 操作", true, &[&chat, &panel])?;
+    menu.append(&actions)?;
+    app.set_menu(menu)?;
+    Ok(())
+}
+
 fn configure_tray(
     app: &tauri::App,
 ) -> Result<(MenuItem<tauri::Wry>, tauri::tray::TrayIcon<tauri::Wry>), Box<dyn std::error::Error>> {
@@ -5911,6 +5937,7 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            credentials::initialize(app.path().app_data_dir()?)?;
             // 初始化记忆数据库失败时降级到进程内数据库，避免阻断应用启动；
             // 同时记录并通知用户，明确说明记忆不会持久化。
             let memory_db = match memory::init_memory_db(app.handle()) {
@@ -5976,6 +6003,8 @@ pub fn run() {
                 Err(error) => eprintln!("[schedule] 迁移中止：{error}"),
             }
 
+            #[cfg(target_os = "macos")]
+            configure_application_menu(app)?;
             configure_global_shortcut(app)?;
             app.state::<PluginRegistry>()
                 .register_declarative_plugins(app.handle());
@@ -6846,6 +6875,189 @@ mod tests {
         .expect("memo should be created");
 
         assert_eq!(memo.category, "task");
+    }
+
+    #[test]
+    fn batch_delete_reads_unified_events_and_preserves_reminders() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schedule-items.json");
+        let items: Vec<super::schedule::ScheduleItem> = serde_json::from_value(serde_json::json!([
+            {"id":"r1","kind":"reminder","title":"提醒","startAt":100},
+            {"id":"e1","kind":"event","title":"一","startAt":100,"endAt":200},
+            {"id":"e2","kind":"event","title":"二","startAt":300,"endAt":400},
+            {"id":"e3","kind":"event","title":"三","startAt":500,"endAt":600}
+        ]))
+        .unwrap();
+        super::storage::write(&path, &items).unwrap();
+        let loaded: Vec<super::schedule::ScheduleItem> = super::storage::read(&path).unwrap();
+        let mut events = super::schedule::calendar_view(&loaded);
+        let before = serde_json::to_value(&events).unwrap();
+        let missing = super::calendar_delete_batch_input_from_value(&serde_json::json!({
+            "events":[{"id":"e1"},{"id":"missing"}]
+        }))
+        .unwrap();
+        assert!(super::remove_calendar_event_batch(&mut events, missing).is_err());
+        assert_eq!(serde_json::to_value(&events).unwrap(), before);
+        let input = super::calendar_delete_batch_input_from_value(&serde_json::json!({
+            "events":[{"id":"e1"},{"id":"e2"},{"id":"e3"}]
+        }))
+        .unwrap();
+        assert_eq!(
+            super::remove_calendar_event_batch(&mut events, input)
+                .unwrap()
+                .len(),
+            3
+        );
+        super::storage::write(
+            &path,
+            &super::schedule::merge_calendar_events(&loaded, &events),
+        )
+        .unwrap();
+        let after: Vec<super::schedule::ScheduleItem> = super::storage::read(&path).unwrap();
+        assert!(super::schedule::calendar_view(&after).is_empty());
+        assert_eq!(super::schedule::reminders_view(&after)[0].id, "r1");
+    }
+
+    #[test]
+    fn batch_delete_invalid_targets_never_mutate_events() {
+        let original: Vec<super::CalendarEvent> = serde_json::from_value(serde_json::json!([
+            {"id":"e1","title":"一","startAt":100,"endAt":200},
+            {"id":"e2","title":"二","startAt":300,"endAt":400}
+        ]))
+        .unwrap();
+        for targets in [
+            serde_json::json!([]),
+            serde_json::json!([{"id":"e1"},{"id":"e1"}]),
+            serde_json::json!([{"id":"e1"},{"id":"missing"}]),
+        ] {
+            let mut events = original.clone();
+            let input = super::CalendarDeleteBatchInput {
+                events: targets
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(super::calendar_delete_input_from_value)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+            };
+            assert!(super::remove_calendar_event_batch(&mut events, input).is_err());
+            assert_eq!(events, original, "验证失败时不得部分删除");
+        }
+        assert!(super::selected_calendar_batch_events(&serde_json::json!({}), None).is_err());
+        assert!(super::selected_calendar_batch_events(&serde_json::json!([]), None).is_err());
+    }
+
+    #[test]
+    fn calendar_lifecycle_roundtrip_keeps_reminders_and_selected_event_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("schedule-items.json");
+        let initial: Vec<super::schedule::ScheduleItem> =
+            serde_json::from_value(serde_json::json!([
+                {"id":"r1","kind":"reminder","title":"不得删除的提醒","startAt":1792130400}
+            ]))
+            .unwrap();
+        let reminder_before = serde_json::to_value(&initial[0]).unwrap();
+        let events = ["回归-评审", "回归-取消验证"]
+            .into_iter()
+            .map(|title| {
+                super::calendar_event_from_input(super::CalendarEventInput {
+                    title: title.into(),
+                    start_at: 1792130400,
+                    end_at: 1792134000,
+                    location: Some("测试会议室".into()),
+                    notes: Some("持久化回归".into()),
+                })
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_ne!(events[0].id, events[1].id);
+        super::storage::write(
+            &path,
+            &super::schedule::merge_calendar_events(&initial, &events),
+        )
+        .unwrap();
+        let reloaded: Vec<super::schedule::ScheduleItem> = super::storage::read(&path).unwrap();
+        let mut remaining = super::schedule::calendar_view(&reloaded);
+        assert_eq!(remaining, events, "重新读取必须保留 ID、日期、地点和备注");
+        let arguments = serde_json::to_value(&remaining).unwrap();
+        let selected = super::selected_calendar_batch_events(&arguments, Some(vec![1])).unwrap();
+        let input =
+            super::calendar_delete_batch_input_from_value(&serde_json::json!({"events":selected}))
+                .unwrap();
+        assert_eq!(
+            super::remove_calendar_event_batch(&mut remaining, input).unwrap(),
+            vec![events[1].clone()]
+        );
+        super::storage::write(
+            &path,
+            &super::schedule::merge_calendar_events(&reloaded, &remaining),
+        )
+        .unwrap();
+        let reloaded: Vec<super::schedule::ScheduleItem> = super::storage::read(&path).unwrap();
+        assert_eq!(
+            super::schedule::calendar_view(&reloaded),
+            vec![events[0].clone()]
+        );
+        assert_eq!(serde_json::to_value(&reloaded[0]).unwrap(), reminder_before);
+        let mut remaining = super::schedule::calendar_view(&reloaded);
+        let input = super::calendar_delete_batch_input_from_value(&serde_json::json!({
+            "events": [{"id":events[0].id}]
+        }))
+        .unwrap();
+        super::remove_calendar_event_batch(&mut remaining, input).unwrap();
+        super::storage::write(
+            &path,
+            &super::schedule::merge_calendar_events(&reloaded, &remaining),
+        )
+        .unwrap();
+        let final_items: Vec<super::schedule::ScheduleItem> = super::storage::read(&path).unwrap();
+        assert!(super::schedule::calendar_view(&final_items).is_empty());
+        assert_eq!(
+            serde_json::to_value(&final_items).unwrap(),
+            serde_json::to_value(&initial).unwrap()
+        );
+    }
+
+    #[test]
+    fn batch_delete_respects_selected_targets_and_rejects_empty_or_duplicate_choices() {
+        let events = serde_json::json!([{"id":"e1"},{"id":"e2"},{"id":"e3"}]);
+        assert_eq!(
+            super::selected_calendar_batch_events(&events, Some(vec![1])).unwrap(),
+            serde_json::json!([{"id":"e2"}])
+        );
+        assert_eq!(
+            super::selected_calendar_batch_events(&events, None).unwrap(),
+            events
+        );
+        assert!(super::selected_calendar_batch_events(&events, Some(vec![])).is_err());
+        assert!(super::selected_calendar_batch_events(&events, Some(vec![1, 1])).is_err());
+        assert!(super::selected_calendar_batch_events(&events, Some(vec![3])).is_err());
+    }
+
+    #[test]
+    fn calendar_query_tools_return_exact_iso_times_and_preserve_ids() {
+        let event = super::CalendarEvent {
+            id: "test-calendar-id".into(),
+            title: "评审".into(),
+            start_at: 1792044000,
+            end_at: 1792047600,
+            location: Some("回归测试会议室".into()),
+            notes: None,
+        };
+        let result = super::calendar_events_tool_result(&[event]).unwrap();
+        assert_eq!(result[0]["id"], "test-calendar-id");
+        let start =
+            chrono::DateTime::parse_from_rfc3339(result[0]["startAt"].as_str().unwrap()).unwrap();
+        let end =
+            chrono::DateTime::parse_from_rfc3339(result[0]["endAt"].as_str().unwrap()).unwrap();
+        assert_eq!(start.timestamp(), 1792044000);
+        assert_eq!(end.timestamp(), 1792047600);
+        assert_eq!(end.signed_duration_since(start).num_minutes(), 60);
+        assert_eq!(result[0]["location"], "回归测试会议室");
+        assert_eq!(
+            super::calendar_events_tool_result(&[]).unwrap(),
+            serde_json::json!([])
+        );
     }
 
     #[test]

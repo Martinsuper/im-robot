@@ -9,10 +9,10 @@ use thiserror::Error;
 /// `From<SettingsError> for String` 兼容命令边界既有的 `Result<_, String>` 签名。
 #[derive(Debug, Error)]
 pub enum SettingsError {
-    #[error("无法访问系统凭据存储：{0}")]
+    #[error("无法访问密钥配置文件：{0}")]
     Entry(String),
     #[error("凭据存取失败：{0}")]
-    Keyring(String),
+    CredentialFile(String),
 }
 
 impl From<SettingsError> for String {
@@ -21,8 +21,6 @@ impl From<SettingsError> for String {
     }
 }
 
-const KEYRING_SERVICE: &str = "com.duanluyao.imrobot";
-const KEYRING_ACCOUNT: &str = "provider-api-key";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -239,27 +237,11 @@ pub fn persist_settings(app: &AppHandle, settings: &AppSettings) {
     }
 }
 
-fn keyring_entry() -> Result<keyring::Entry, SettingsError> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
-        .map_err(|error| SettingsError::Entry(error.to_string()))
-}
 
 pub fn read_api_key() -> Option<String> {
-    keyring_entry().ok()?.get_password().ok()
+    crate::credentials::read_api_key()
 }
 
 pub fn update_api_key(api_key: Option<String>) -> Result<(), SettingsError> {
-    let Some(api_key) = api_key else {
-        return Ok(());
-    };
-    let entry = keyring_entry()?;
-
-    if api_key.trim().is_empty() {
-        let _ = entry.delete_credential();
-    } else {
-        entry
-            .set_password(api_key.trim())
-            .map_err(|error| SettingsError::Keyring(error.to_string()))?;
-    }
-    Ok(())
+    crate::credentials::update_api_key(api_key.map(Some)).map_err(SettingsError::CredentialFile)
 }

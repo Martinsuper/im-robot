@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { toUserMessage } from "./errors";
 
 describe("toUserMessage", () => {
+  it("不把 Tauri 状态未注册错误误报成网络故障", () => {
+    expect(toUserMessage(
+      "state not managed for field `memory_db` on command `chat_start`. You must call `.manage()` before using this command",
+      "网络好像不太稳定",
+    )).toBe("应用内部服务未正确初始化，请更新应用或重启后重试。");
+  });
   it("把常见英文网络错误映射成可行动的中文提示", () => {
     expect(toUserMessage(new Error("TypeError: Failed to fetch"))).toBe("网络连接失败，请检查网络后重试。");
     expect(toUserMessage("Error: request timed out")).toBe("请求超时，请稍后重试。");

@@ -258,6 +258,8 @@ struct MigrationMarker {
     migrated_at: u64,
     reminders: usize,
     events: usize,
+    #[serde(default)]
+    legacy_calendar_recovered: bool,
 }
 
 /// 迁移的路径级实现。与 `AppHandle` 解耦，便于单测。
@@ -269,8 +271,36 @@ pub(crate) fn migrate_legacy_schedule_at(
     schedule_path: &Path,
     marker_path: &Path,
 ) -> Result<ScheduleMigrationReport, String> {
-    let marker: MigrationMarker = storage::read_or_default(marker_path);
+    let mut marker: MigrationMarker = storage::read_or_default(marker_path);
     if marker.version >= SCHEMA_VERSION {
+        // Old single-event creation kept writing the archive after migration.
+        // Recover only IDs generated after migration, once: archived pre-migration
+        // events may have been deleted and must never be resurrected.
+        if !marker.legacy_calendar_recovered {
+            let events: Vec<CalendarEvent> = storage::read(events_path)?;
+            let mut items: Vec<ScheduleItem> = storage::read(schedule_path)?;
+            let mut recovered = 0;
+            for event in events {
+                let created_after_migration = event
+                    .id
+                    .strip_prefix("calendar-event-")
+                    .and_then(|id| id.parse::<u128>().ok())
+                    .is_some_and(|created| {
+                        created > u128::from(marker.migrated_at) * 1_000_000_000
+                    });
+                if created_after_migration && !items.iter().any(|item| item.id == event.id) {
+                    items.push(ScheduleItem::from_calendar_event(&event));
+                    recovered += 1;
+                }
+            }
+            if recovered > 0 {
+                backup_legacy_files(reminders_path, events_path, schedule_path.parent())?;
+                sort_schedule_items(&mut items);
+                storage::write(schedule_path, &items)?;
+            }
+            marker.legacy_calendar_recovered = true;
+            storage::write(marker_path, &marker)?;
+        }
         return Ok(ScheduleMigrationReport {
             already_migrated: true,
             reminders_imported: marker.reminders,
@@ -317,6 +347,7 @@ pub(crate) fn migrate_legacy_schedule_at(
             migrated_at: unix_timestamp(),
             reminders: reminders.len(),
             events: events.len(),
+            legacy_calendar_recovered: true,
         },
     )?;
 
@@ -406,6 +437,37 @@ mod tests {
 
     /// 真实数据里系统同步过来的日程 id 长这样（见 calendar-sync-mapping.json 的 localId）。
     /// 迁移必须原样保留它，否则系统日历的 id 映射会全部失效。
+    #[test]
+    fn recovers_post_migration_legacy_events_once_without_resurrecting_deleted_events() {
+        let fixture = Fixture::new();
+        fixture.write_legacy(json!([]), json!([]));
+        fixture.migrate().unwrap();
+        storage::write(
+            &fixture.marker,
+            &json!({
+                "version": 1, "migratedAt": 10, "reminders": 0, "events": 0
+            }),
+        )
+        .unwrap();
+        fixture.write_legacy(
+            json!([]),
+            json!([
+                legacy_event("calendar-event-5000000000", 100, 200),
+                legacy_event("calendar-event-11000000000", 300, 400)
+            ]),
+        );
+        fixture.migrate().unwrap();
+        let items = fixture.schedule_items();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "calendar-event-11000000000");
+        assert_eq!(calendar_view(&items)[0].start_at, 300);
+        fixture.migrate().unwrap();
+        assert_eq!(fixture.schedule_items().len(), 1);
+        storage::write(&fixture.schedule, &Vec::<ScheduleItem>::new()).unwrap();
+        fixture.migrate().unwrap();
+        assert!(fixture.schedule_items().is_empty());
+    }
+
     fn system_event_id() -> String {
         "system-macos-40A03588-791E-4CE1-89C1-2C455F4438EA3a4o0jqp2ambjo79k7iunvlrb77q40google2ecom"
             .to_string()

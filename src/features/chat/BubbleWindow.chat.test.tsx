@@ -340,6 +340,102 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     expect(screen.queryByText("正在生成回复")).toBeNull();
   });
 
+  it("确认成功保留实际执行结果，不再发起可能重复写入的模型请求", async () => {
+    queueUuids(["req-confirm"]);
+    runCommandMock.mockImplementation((command: string) => {
+      if (command === "get_settings") return Promise.resolve({
+        companionName: "Piko", theme: "sage", htmlPreviewEnabled: false,
+        language: "zh-CN", hasApiKey: true, ai: { baseUrl: "http://127.0.0.1:8317/v1" },
+      });
+      if (command === "get_bubble_chat_history") return Promise.resolve([]);
+      if (command === "confirm_chat_action") return Promise.resolve({
+        message: "日程已创建。", followUpPrompt: "系统已经执行，请确认结果。", result: {},
+      });
+      return Promise.resolve(undefined);
+    });
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    submitPrompt("创建明早起床日程");
+    act(() => emitChat({ type: "action-proposed", requestId: "req-confirm", draft: {
+      id: "draft-calendar", pluginId: "piko.calendar", toolName: "create_event",
+      summary: "创建起床日程", arguments: {}, createdAt: 0,
+    } }));
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await screen.findByText("日程已创建。");
+    expect(chatStartInputCalls()).toHaveLength(1);
+    expect(runCommandMock.mock.calls.filter(call => call[0] === "confirm_chat_action")).toHaveLength(1);
+    expect(screen.queryByText("待确认操作")).toBeNull();
+    expect(screen.queryByText("正在生成回复")).toBeNull();
+    act(() => emitChat({ type: "failed", requestId: "req-confirm", message: "迟到的错误" }));
+    expect(screen.getByText("日程已创建。")).toBeTruthy();
+    expect(screen.queryByText("迟到的错误")).toBeNull();
+  });
+
+  it.each(["create_event_batch", "delete_event_batch"])("%s 只提交勾选的日程且直接显示执行结果", async (toolName) => {
+    queueUuids(["req-batch"]);
+    const defaultCommands = runCommandMock.getMockImplementation()!;
+    runCommandMock.mockImplementation((command: string, ...args: unknown[]) => {
+      if (command === "confirm_chat_action") return Promise.resolve({
+        message: "所选日程执行成功。", result: {},
+      });
+      return defaultCommands(command, ...args);
+    });
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    submitPrompt("处理测试日程");
+    act(() => emitChat({ type: "action-proposed", requestId: "req-batch", draft: {
+      id: "draft-batch", pluginId: "piko.calendar", toolName, summary: "批量操作两条测试日程",
+      arguments: { events: [{ id: "a", title: "测试 A" }, { id: "b", title: "测试 B" }] }, createdAt: 0,
+    } }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "测试 A" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    await screen.findByText("所选日程执行成功。");
+    expect(runCommandMock).toHaveBeenCalledWith("confirm_chat_action", {
+      id: "draft-batch", selectedIndexes: [1],
+    });
+    expect(chatStartInputCalls()).toHaveLength(1);
+    expect(screen.queryByText("待确认操作")).toBeNull();
+  });
+
+  it("批量删除取消全部勾选后禁止确认，取消草稿不执行删除", async () => {
+    queueUuids(["req-cancel-batch"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    submitPrompt("删除测试日程");
+    act(() => emitChat({ type: "action-proposed", requestId: "req-cancel-batch", draft: {
+      id: "draft-cancel-batch", pluginId: "piko.calendar", toolName: "delete_event_batch",
+      summary: "删除测试日程", arguments: { events: [{ id: "a", title: "测试 A" }] }, createdAt: 0,
+    } }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "测试 A" }));
+    expect((screen.getByRole("button", { name: "确认执行" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await screen.findByText("已取消该操作。");
+    expect(runCommandMock).toHaveBeenCalledWith("reject_chat_action", { id: "draft-cancel-batch" });
+    expect(runCommandMock.mock.calls.filter(call => call[0] === "confirm_chat_action")).toHaveLength(0);
+    expect(chatStartInputCalls()).toHaveLength(1);
+  });
+
+  it("批量删除执行失败不显示成功、不发起第二次模型请求", async () => {
+    queueUuids(["req-failed-batch"]);
+    const defaultCommands = runCommandMock.getMockImplementation()!;
+    runCommandMock.mockImplementation((command: string, ...args: unknown[]) => {
+      if (command === "confirm_chat_action") return Promise.reject(new Error("待删除日程不存在"));
+      return defaultCommands(command, ...args);
+    });
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    submitPrompt("删除测试日程");
+    act(() => emitChat({ type: "action-proposed", requestId: "req-failed-batch", draft: {
+      id: "draft-failed-batch", pluginId: "piko.calendar", toolName: "delete_event_batch",
+      summary: "删除测试日程", arguments: { events: [{ id: "a", title: "测试 A" }] }, createdAt: 0,
+    } }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "确认执行" })));
+    expect(screen.getByRole("button", { name: "确认执行" })).toBeTruthy();
+    expect(screen.queryByText("日程已删除。")).toBeNull();
+    expect(chatStartInputCalls()).toHaveLength(1);
+    expect(runCommandMock.mock.calls.filter(call => call[0] === "confirm_chat_action")).toHaveLength(1);
+  });
+
   it("chat_start 被拒绝时隐藏骨架并展示连接失败消息", async () => {
     queueUuids(["req-err"]);
     runCommandMock.mockImplementation((command: string) => {

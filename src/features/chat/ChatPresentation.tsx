@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Coffee, FileText, MessageCircle, RotateCcw, Settings2, Square } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Coffee, Copy, Download, FileText, MessageCircle, MoreHorizontal, RotateCcw, Settings2, Square, Volume2 } from "lucide-react";
 import { runCommand } from "../app/appRuntime";
 import { suggestionsFor } from "./chatSuggestions";
 import { foldReply, foldedRemainder, shouldFoldReply } from "./replyFolding";
@@ -113,7 +113,7 @@ export function InlineToolbar({
         onClick={onCopy}
         title="复制结果"
       >
-        {copyFeedback ? "✓" : "📋"}
+        {copyFeedback ? <Check size={15} /> : <Copy size={15} />}
       </button>
       <button
         type="button"
@@ -121,13 +121,13 @@ export function InlineToolbar({
         onClick={onSpeech}
         title={isSpeaking ? "停止朗读" : "朗读回复"}
       >
-        {isSpeaking ? "🔊⏹" : "🔊"}
+        {isSpeaking ? <Square size={14} /> : <Volume2 size={15} />}
       </button>
       <button type="button" className="inline-toolbar__btn" onClick={onSave} title="保存回复">
-        💾
+        <Download size={15} />
       </button>
       <details className="inline-more-menu" data-no-drag>
-        <summary className="inline-toolbar__btn" title="更多">⋯</summary>
+        <summary className="inline-toolbar__btn" title="更多" aria-label="更多操作"><MoreHorizontal size={16} /></summary>
         <div>
           <button
             type="button"
@@ -159,8 +159,8 @@ export function HistoryItem({
 }) {
   return (
     <div className={`bubble-thread__history-item${isExpanded ? " bubble-thread__history-item--expanded" : ""}`}>
-      <button type="button" className="bubble-thread__history-toggle" onClick={onToggle}>
-        <span className="bubble-thread__history-arrow">{isExpanded ? "▾" : "▸"}</span>
+      <button type="button" className="bubble-thread__history-toggle" onClick={onToggle} aria-expanded={isExpanded}>
+        <span className="bubble-thread__history-arrow">{isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</span>
         <span className="bubble-thread__history-prompt">{truncate(entry.prompt, 30)}</span>
         <span className="bubble-thread__history-time">{formatTime(entry.createdAt)}</span>
       </button>
@@ -184,7 +184,7 @@ export function HistoryItem({
               onClick={() => void navigator.clipboard.writeText(entry.response)}
               title="复制"
             >
-              📋
+              <Copy size={15} />
             </button>
             <button
               type="button"
@@ -200,7 +200,7 @@ export function HistoryItem({
               }}
               title="朗读"
             >
-              🔊
+              <Volume2 size={15} />
             </button>
           </div>
         </div>
@@ -221,8 +221,9 @@ export function WelcomeState({ companionName, message, onSuggest }: { companionN
   return (
     <div className="bubble-welcome">
       <PetSprite mode="idle" />
+      <h1 className="bubble-welcome__title">今天想聊点什么？</h1>
       <p className="bubble-welcome__greeting">
-        {message || `你好，我是 ${companionName} 👋\n可以问我问题，也可以让我帮你记点东西。`}
+        {message || `你好，我是 ${companionName}。随时陪你聊聊，也帮你记下灵感。`}
       </p>
       <div className="bubble-suggestions" aria-label="提问建议">
         {suggestions.map((suggestion, index) => {

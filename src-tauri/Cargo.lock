@@ -2503,14 +2503,13 @@ dependencies = [
 
 [[package]]
 name = "im-robot"
-version = "1.2.8"
+version = "1.2.9"
 dependencies = [
  "base64 0.22.1",
  "bzip2",
  "chrono",
  "core-graphics 0.23.2",
  "futures-util",
- "keyring",
  "objc2-app-kit",
  "objc2-foundation",
  "parking_lot",
@@ -2803,16 +2802,6 @@ dependencies = [
  "bitflags 2.11.1",
  "serde",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "keyring"
-version = "3.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
-dependencies = [
- "log",
- "zeroize",
 ]
 
 [[package]]

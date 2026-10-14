@@ -22,6 +22,12 @@ pub(super) fn system_prompt(companion_name: &str, memory_context: Option<&str>) 
         now.format("%Y-%m-%d %H:%M:%S %:z")
     );
 
+    let base = format!(
+        "{base}\n重要：create_event、create_event_batch、create_reminder、create_memo 以及删除工具只会生成待确认草稿，不会立即写入或删除数据。用户提出明确的创建或删除请求且参数齐全时，必须立即调用相应工具来展示应用的确认卡片，不要先用文字要求用户回复‘确认’。由应用在用户点击确认卡片后执行操作。用户回复‘确认’且此前只有文字草稿时，仍须调用工具生成确认卡片；不能仅用文字声称操作已完成。"
+    );
+
+    let base = format!("{base}\n查询工具返回的 startAt/endAt 是带时区的 ISO 8601 时间。日期、时间和地点必须照工具结果回答，不要根据记录 ID、创建时间或历史对话猜测日程时间。");
+
     match memory_context {
         Some(ctx) if !ctx.is_empty() => {
             format!(
@@ -33,8 +39,47 @@ pub(super) fn system_prompt(companion_name: &str, memory_context: Option<&str>) 
     }
 }
 
+fn text_without_quoted_titles(text: &str) -> String {
+    let mut closing = None;
+    let mut result = String::new();
+    for character in text.chars() {
+        if let Some(expected) = closing {
+            if character == expected {
+                closing = None;
+                result.push(' ');
+            }
+            continue;
+        }
+        closing = match character {
+            '“' => Some('”'),
+            '「' => Some('」'),
+            '"' => Some('"'),
+            _ => None,
+        };
+        if closing.is_none() {
+            result.push(character);
+        }
+    }
+    result
+}
+
 pub(super) fn prompt_requests_local_action(prompt: &str) -> bool {
-    let normalized = prompt.to_lowercase();
+    let normalized = text_without_quoted_titles(prompt).to_lowercase();
+    if [
+        "只查询",
+        "仅查询",
+        "只检查",
+        "仅检查",
+        "只查看",
+        "仅查看",
+        "query only",
+        "read only",
+    ]
+    .iter()
+    .any(|term| normalized.contains(term))
+    {
+        return false;
+    }
     let has_local_target = ["提醒", "日程", "备忘", "calendar", "reminder", "memo"]
         .iter()
         .any(|term| normalized.contains(term));
@@ -66,30 +111,96 @@ pub(super) fn prompt_requests_local_action(prompt: &str) -> bool {
 }
 
 pub(super) fn looks_like_unconfirmed_local_action_response(response: &str) -> bool {
-    let normalized = response.to_lowercase();
+    let normalized = text_without_quoted_titles(response).to_lowercase();
     let has_local_target = ["提醒", "日程", "备忘", "calendar", "reminder", "memo"]
         .iter()
         .any(|term| normalized.contains(term));
-    let has_mutation = [
-        "创建", "新增", "添加", "设置", "安排", "删除", "移除", "取消", "记下", "记到", "create",
-        "add", "set", "schedule", "delete", "remove", "cancel",
-    ]
-    .iter()
-    .any(|term| normalized.contains(term));
-    let claims_success = [
+    let mutations = [
+        "创建", "新增", "添加", "设置", "安排", "删除", "移除", "取消", "记下", "记到",
+    ];
+    let prefixes = [
         "已",
+        "已经",
         "成功",
-        "完成",
-        "created",
-        "scheduled",
-        "deleted",
-        "removed",
-        "done",
-    ]
-    .iter()
-    .any(|term| normalized.contains(term));
+        "已成功",
+        "已经成功",
+        "已帮你",
+        "已经帮你",
+        "已为你",
+        "已经为你",
+    ];
+    let chinese_claim = prefixes.iter().any(|prefix| {
+        mutations
+            .iter()
+            .any(|mutation| normalized.contains(&format!("{prefix}{mutation}")))
+    });
+    let english_claim = ["created", "scheduled", "deleted", "removed"]
+        .iter()
+        .any(|verb| {
+            normalized
+                .split_whitespace()
+                .any(|word| word.trim_matches(|c: char| !c.is_alphabetic()) == *verb)
+        });
+    has_local_target && (chinese_claim || english_claim)
+}
 
-    has_local_target && has_mutation && claims_success
+fn unconfirmed_action_claim_requires_tool(
+    prompt: &str,
+    response: &str,
+    received_read_tool_result: bool,
+) -> bool {
+    looks_like_unconfirmed_local_action_response(response)
+        && (!received_read_tool_result || prompt_requests_local_action(prompt))
+}
+
+#[cfg(test)]
+mod query_regressions {
+    use super::*;
+
+    #[test]
+    fn query_titles_and_saved_records_are_not_success_claims() {
+        let prompt = "请查询已保存的日程，是否存在“功能测试-取消验证”？";
+        assert!(!prompt_requests_local_action(prompt));
+        assert!(!looks_like_unconfirmed_local_action_response(
+            "没有找到已保存的日程“功能测试-取消验证”。"
+        ));
+        assert!(!looks_like_unconfirmed_local_action_response(
+            "已有日程安排：项目评审，10:00–11:00。"
+        ));
+        assert!(!unconfirmed_action_claim_requires_tool(
+            "请查询已保存的日程“功能测试-项目评审”，告诉我日期、时间和地点。",
+            "已创建的日程是：项目评审，10:00–11:00。",
+            true,
+        ));
+    }
+
+    #[test]
+    fn read_results_cannot_substitute_for_requested_writes() {
+        assert!(unconfirmed_action_claim_requires_tool(
+            "请创建日程“功能测试-项目评审”",
+            "日程已创建。",
+            true,
+        ));
+        assert!(unconfirmed_action_claim_requires_tool(
+            "删除日程“功能测试-取消验证”",
+            "日程已删除。",
+            false,
+        ));
+    }
+
+    #[test]
+    fn read_only_checks_can_describe_previous_writes_without_requesting_new_ones() {
+        let prompt = "请查询所有已保存的日程，确认“测试日程”已删除。只查询。";
+        assert!(!prompt_requests_local_action(prompt));
+        assert!(!unconfirmed_action_claim_requires_tool(
+            prompt,
+            "测试日程已删除，其他日程仍存在。",
+            true
+        ));
+        assert!(!prompt_requests_local_action(
+            "请检查是否冲突，只检查，不创建或删除日程。"
+        ));
+    }
 }
 
 pub(super) fn openai_user_content(prompt: &str, screenshot: Option<&ScreenCapture>) -> Value {
@@ -501,6 +612,8 @@ async fn stream_chat(
     );
     let mut assistant_response = String::new();
     let mut sequence = 0;
+    let mut retried_missing_tool_call = false;
+    let mut received_read_tool_result = false;
 
     for tool_round in 0..=4 {
         let response = match tokio::select! { biased; _ = cancelled.cancelled() => return Ok(StreamChatOutcome::Cancelled), result = send_chat_request(&client, &settings.ai, &request_body) => result }
@@ -562,7 +675,40 @@ async fn stream_chat(
         }
 
         if openai_tool_calls.is_empty() {
-            if looks_like_unconfirmed_local_action_response(&assistant_response) {
+            if unconfirmed_action_claim_requires_tool(
+                prompt,
+                &assistant_response,
+                received_read_tool_result,
+            ) {
+                if !retried_missing_tool_call
+                    && tool_round < 4
+                    && provider_kind(&settings.ai.provider) == Some(ProviderKind::OpenAiCompatible)
+                {
+                    retried_missing_tool_call = true;
+                    let messages = request_body["messages"]
+                        .as_array_mut()
+                        .ok_or_else(|| "模型请求格式无效".to_string())?;
+                    messages.push(json!({ "role": "assistant", "content": assistant_response }));
+                    let correction = if prompt_requests_local_action(prompt) {
+                        "刚才的回答没有产生任何可执行草稿，操作尚未完成。请根据用户请求调用正确的创建或删除工具，生成待确认卡片。工具仅生成草稿，实际执行由应用在用户确认后完成。不要用文字代替工具调用；参数不足时请追问。"
+                    } else {
+                        "请调用相应的查询工具读取已保存的真实数据，再回答用户的问题。不要调用创建或删除工具，不要生成操作草稿，也不要根据历史对话推断数据。"
+                    };
+                    messages.push(json!({
+                        "role": "user",
+                        "content": correction
+                    }));
+                    assistant_response.clear();
+                    sequence = 0;
+                    emit_chat_event(
+                        app,
+                        ChatEvent::Started {
+                            request_id: request_id.to_string(),
+                            working,
+                        },
+                    );
+                    continue;
+                }
                 return Err(
                     "模型没有返回可执行的工具调用，因此不会创建或删除日程/提醒。请重试，或换用支持工具调用的模型。"
                         .to_string(),
@@ -598,6 +744,7 @@ async fn stream_chat(
                 return Ok(StreamChatOutcome::ActionProposed);
             }
             let result = registry.execute(app, call.clone())?;
+            received_read_tool_result = true;
             tool_results.push((id, call, result));
         }
         append_provider_tool_results(&mut request_body, &settings.ai.provider, &tool_results)?;
@@ -711,7 +858,7 @@ pub(super) async fn chat_start(
     drafts: State<'_, ActionDrafts>,
     attachments: State<'_, TextAttachmentStore>,
     captures: State<'_, ScreenCaptureStore>,
-    memory_db: State<'_, memory::MemoryDb>,
+    memory_db: State<'_, Arc<memory::MemoryDb>>,
     cache: State<'_, memory::CandidateCache>,
     input: ChatStartInput,
 ) -> Result<(), String> {

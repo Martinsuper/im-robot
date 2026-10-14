@@ -6,6 +6,7 @@ import "./styles/tokens.css";
 import "./styles/base.css";
 import "./App.css";
 import "./features/app/design-system.css";
+import "./features/chat/bubble.css";
 
 type WindowLabel = "pet" | "bubble" | "panel" | "capture";
 

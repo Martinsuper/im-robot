@@ -17,6 +17,7 @@ const TECHNICAL_PREFIXES: RegExp[] = [
 
 /** 常见失败 → 可行动的中文提示。顺序敏感：先具体后笼统。 */
 const KNOWN_FAILURES: Array<{ test: RegExp; message: string }> = [
+  { test: /state not managed|state.*not.*managed|must call.*manage\(\)/i, message: "应用内部服务未正确初始化，请更新应用或重启后重试。" },
   { test: /api\s?key|unauthorized|401|invalid_api_key/i, message: "API Key 无效或已过期，请在「设置 → 对话与模型」中重新填写。" },
   { test: /insufficient|quota|balance|余额|额度/i, message: "账户额度不足，请检查服务商余额。" },
   { test: /429|rate.?limit|too many requests|频繁/i, message: "请求过于频繁，请稍后再试。" },

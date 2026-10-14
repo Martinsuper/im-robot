@@ -1,0 +1,74 @@
+/* Chat surface overrides are scoped so panel and pet windows keep their layout. */
+.bubble-shell {
+  grid-template-rows: 40px minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--piko-paper);
+  border-radius: 18px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.bubble-topbar { gap: 10px; padding: 0 0 10px; border-bottom-color: var(--piko-line); }
+.bubble-topbar__left { gap: 8px; }
+.bubble-topbar__name { font-size: 14px; letter-spacing: 0; }
+.bubble-topbar__center { justify-content: flex-start; }
+.bubble-topbar__status { gap: 5px; font-size: 11px; }
+.bubble-topbar__dot { width: 5px; height: 5px; background: var(--piko-accent); }
+.bubble-topbar__btn { color: var(--piko-muted); }
+.bubble-thread { gap: 12px; padding: 4px 0 8px; }
+.bubble-welcome { gap: 10px; padding: 12px 8px; }
+.bubble-welcome__title { margin: 4px 0 0; color: var(--piko-ink); font-size: 19px; font-weight: 600; letter-spacing: -.5px; }
+.bubble-welcome__greeting { max-width: 310px; color: var(--piko-muted); font-size: 12px; font-weight: 400; line-height: 1.7; white-space: pre-line; }
+.bubble-suggestions { gap: 6px; margin-top: 6px; }
+.bubble-suggestions button { padding: 7px 9px; border-radius: 9px; background: transparent; cursor: pointer; }
+.bubble-thread__history { gap: 6px; }
+.bubble-thread__history-item { background: rgba(255, 255, 255, .5); border: 1px solid var(--piko-line); border-radius: 10px; }
+.bubble-thread__history-toggle { padding: 9px 10px; color: var(--piko-ink); }
+.bubble-thread__history-arrow { display: flex; width: 13px; color: var(--piko-muted); }
+.bubble-thread__history-prompt { font-size: 12px; font-weight: 500; }
+.bubble-thread__history-time { font-size: 10px; color: var(--piko-muted); }
+.bubble-thread__history-response { margin-left: 29px; color: var(--piko-muted); font-size: 11px; }
+.bubble-thread__collapse-all { padding: 7px; font-size: 11px; color: var(--piko-muted); }
+.bubble-thread__current { gap: 10px; }
+.bubble-thread__user-bubble { padding: 10px 13px; border-radius: 13px 13px 4px 13px; line-height: 1.65; }
+.bubble-thread__ai-card { max-width: 100%; gap: 9px; padding: 8px 0; }
+.bubble-thread__ai-content { color: var(--piko-ink); overflow-wrap: anywhere; }
+.bubble-thread__ai-content strong { color: inherit; }
+.bubble-thread__ai-content a { color: var(--piko-accent); }
+.bubble-thread__ai-content p { margin-bottom: 10px; }
+.bubble-thread__ai-content h1 { font-size: 18px; }
+.bubble-thread__ai-content h2 { font-size: 16px; }
+.bubble-thread__ai-content h3 { font-size: 14px; }
+.bubble-thread__ai-content table { display: block; overflow-x: auto; font-size: 12px; }
+.bubble-shell .inline-toolbar { gap: 3px; }
+.bubble-shell .inline-toolbar__btn { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; color: var(--piko-muted); background: transparent; cursor: pointer; }
+.bubble-shell .inline-toolbar__btn:hover,
+.bubble-shell .inline-toolbar__btn--active,
+.bubble-shell .inline-toolbar__btn--feedback { color: var(--piko-accent); background: var(--piko-soft); }
+.bubble-shell .inline-more-menu div { top: auto; bottom: calc(100% + 6px); min-width: 130px; }
+.bubble-shell .inline-more-menu button { min-height: 32px; font-size: 12px; }
+.bubble-input-zone { gap: 8px; }
+.bubble-shell .prompt-form { grid-template-columns: minmax(0, 1fr) 32px; grid-template-rows: auto 32px; gap: 5px 8px; padding: 10px; border-radius: 14px; background: var(--piko-fill); transition: border-color 160ms ease, box-shadow 160ms ease; }
+.bubble-shell .prompt-form input { grid-column: 1 / -1; grid-row: 1; height: 34px; padding: 3px 4px; font-size: 13px; }
+.bubble-shell .prompt-form input::placeholder { color: var(--piko-muted); }
+.bubble-shell .prompt-tools { grid-column: 1; grid-row: 2; gap: 4px; }
+.bubble-shell .prompt-tools button { width: 30px; height: 30px; border: 0; border-radius: 7px; }
+.bubble-shell .prompt-tools button:hover { background: var(--piko-soft); color: var(--piko-accent); }
+.bubble-shell .prompt-tools button.is-active { background: #b85a51; color: white; }
+.bubble-shell .prompt-form > button { grid-column: 2; grid-row: 2; min-width: 32px; width: 32px; height: 32px; border-radius: 10px; }
+.bubble-shell .prompt-form > button:disabled { background: var(--piko-soft); color: var(--piko-muted); opacity: 1; }
+.bubble-input-zone__chip { max-width: 100%; height: 28px; background: var(--piko-soft); color: var(--piko-ink); font-size: 11px; }
+.bubble-input-zone__chip-text { max-width: 240px; min-width: 0; }
+.bubble-input-zone__chip-remove { min-width: 22px; min-height: 22px; }
+.bubble-context-note { grid-column: 1; margin: 0; font-size: 11px; }
+.bubble-shell:has(.bubble-context-note) { grid-template-rows: 40px minmax(0, 1fr) auto auto; }
+.bubble-shell .model-setup-card { margin-bottom: 0; padding: 12px; }
+.bubble-shell .reply-fold-toggle { font-size: 11px; }
+@media (max-width: 360px), (max-height: 340px) {
+  .bubble-shell { padding: 8px 10px; gap: 8px; }
+  .bubble-welcome { padding: 4px; gap: 6px; }
+  .bubble-welcome__title { font-size: 17px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bubble-shell *, .bubble-shell *::before { animation: none !important; transition: none !important; }
+  .bubble-thread__ai-card--entering { opacity: 1; transform: none; filter: none; }
+}

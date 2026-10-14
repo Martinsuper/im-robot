@@ -450,22 +450,17 @@ export function BubbleWindow() {
       setPendingAction(undefined);
       setSelectedChoiceIndexes([]);
       setMessage(execution.message);
-      if (isTauriRuntime) {
-        const followUpRequestId = crypto.randomUUID();
-        activeRequestId.current = followUpRequestId;
-        setRequestId(followUpRequestId);
-        setIsThinking(true);
-        setShowReplySkeleton(true);
-        setIsReplyEntering(false);
-        receivedFirstDelta.current = false;
-        clearSkeletonHideTimer();
-        await runCommand<void>("chat_start", {
-          input: {
-            requestId: followUpRequestId,
-            prompt: execution.followUpPrompt,
-          },
-        });
-      }
+      // Execution already returned the authoritative result. A second model
+      // request can misclassify that result or propose the same action again.
+      activeRequestId.current = undefined;
+      setRequestId(undefined);
+      setReplyStatus("done");
+      setReplyError("");
+      setIsThinking(false);
+      clearSkeletonHideTimer();
+      setShowReplySkeleton(false);
+      setIsReplyEntering(false);
+      refreshChatHistory();
     } catch (error) {
       toast.error(toUserMessage(error, "保存失败，请重试。"));
     }
@@ -752,7 +747,7 @@ export function BubbleWindow() {
       <header className="bubble-topbar" onPointerDown={startBubbleDrag}>
         <div className="bubble-topbar__left">
           <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
-          <span className="bubble-topbar__name">{companionName.toUpperCase()}</span>
+          <span className="bubble-topbar__name">{companionName}</span>
         </div>
         <div className="bubble-topbar__center">
           <span className={`bubble-topbar__status${topbarStatus.pulse ? " bubble-topbar__status--pulse" : ""}`}>
@@ -773,7 +768,7 @@ export function BubbleWindow() {
       </header>
 
       {/* Layer 2: Thread Area */}
-      <section className="bubble-thread" ref={threadScrollRef}>
+      <section className="bubble-thread" ref={threadScrollRef} aria-label="对话内容">
         {showWelcome && !aiConfigured && (
           <ModelSetupCard onOpenSettings={openModelSettings} />
         )}
@@ -791,7 +786,7 @@ export function BubbleWindow() {
             ))}
             {expandedHistoryIds.size > 0 && (
               <button type="button" className="bubble-thread__collapse-all" onClick={collapseAllHistory}>
-                ── 折叠全部 ({expandedHistoryIds.size}) ──
+                收起历史记录 · {expandedHistoryIds.size}
               </button>
             )}
           </div>
@@ -895,7 +890,7 @@ export function BubbleWindow() {
                 <span className="bubble-input-zone__chip-text">
                   📄 {attachment.displayName} · {formatBytes(attachment.byteSize)}
                 </span>
-                <button type="button" className="bubble-input-zone__chip-remove" onClick={() => void clearAttachment()}>
+                <button type="button" className="bubble-input-zone__chip-remove" aria-label="移除附件" onClick={() => void clearAttachment()}>
                   ✕
                 </button>
               </div>
@@ -904,7 +899,7 @@ export function BubbleWindow() {
               <div className="bubble-input-zone__chip">
                 <img src={screenshot.dataUrl} alt="" className="bubble-input-zone__chip-thumb" />
                 <span className="bubble-input-zone__chip-text">截图 {screenshot.width}×{screenshot.height}</span>
-                <button type="button" className="bubble-input-zone__chip-remove" onClick={() => void clearScreenshot()}>
+                <button type="button" className="bubble-input-zone__chip-remove" aria-label="移除截图" onClick={() => void clearScreenshot()}>
                   ✕
                 </button>
               </div>
