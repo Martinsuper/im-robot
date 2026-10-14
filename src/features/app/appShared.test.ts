@@ -3,30 +3,37 @@ import {
   getAvailablePetVisualStyleOptions,
   getNextPetVisualStyle,
   getPetVisualStyle,
+  resolvePetVisualStyle,
 } from "./appShared";
 
 describe("pet visual style switching", () => {
-  it("没有自定义图片时跳过自定义图片风格（R3-5：三选一）", () => {
+  it("缺失自定义图片和无效值使用相同的经典回退", () => {
+    expect(resolvePetVisualStyle("custom", false)).toBe("classic");
+    expect(resolvePetVisualStyle("custom", true)).toBe("custom");
+    expect(resolvePetVisualStyle("obsolete", false)).toBe("classic");
+    expect(resolvePetVisualStyle("character", false)).toBe("classic");
+    expect(resolvePetVisualStyle(null, false)).toBe("classic");
+  });
+  it("没有自定义图片时跳过自定义图片风格", () => {
     expect(getAvailablePetVisualStyleOptions(false).map((option) => option.value)).toEqual([
       "lumi",
-      "character",
+      "classic",
     ]);
-    expect(getNextPetVisualStyle("character", false)).toBe("lumi");
+    expect(getNextPetVisualStyle("lumi", false)).toBe("classic");
   });
 
   it("有自定义图片时包含自定义图片风格", () => {
     expect(getAvailablePetVisualStyleOptions(true).map((option) => option.value)).toEqual([
       "lumi",
-      "character",
       "custom",
+      "classic",
     ]);
-    expect(getNextPetVisualStyle("character", true)).toBe("custom");
-    expect(getNextPetVisualStyle("custom", true)).toBe("lumi");
+    expect(getNextPetVisualStyle("lumi", true)).toBe("custom");
+    expect(getNextPetVisualStyle("custom", true)).toBe("classic");
   });
 
-  it("classic 仍是合法的存量值，只是不再出现在选择器里", () => {
-    // vitest.config 没配 DOM 环境（仓库里没有 jsdom 依赖），这里手动 stub 一个
-    // 最小 localStorage：这个测试只关心「存量 classic 不会被校验拒绝」。
+  it("classic 存量值与选择器一致", () => {
+    // 用最小 localStorage 验证旧用户保存值与可选项一致。
     const store = new Map<string, string>([["piko-pet-visual-style", "classic"]]);
     vi.stubGlobal("window", {
       localStorage: {
@@ -36,6 +43,7 @@ describe("pet visual style switching", () => {
     });
 
     expect(getPetVisualStyle()).toBe("classic");
+    expect(getAvailablePetVisualStyleOptions(false).some((option) => option.value === getPetVisualStyle())).toBe(true);
     vi.unstubAllGlobals();
   });
 
@@ -46,7 +54,7 @@ describe("pet visual style switching", () => {
       seen.add(current);
       current = getNextPetVisualStyle(current, false);
     }
-    expect(seen).toEqual(new Set(["lumi", "character"]));
+    expect(seen).toEqual(new Set(["lumi", "classic"]));
   });
 });
 

@@ -44,6 +44,7 @@ async function installSettingsBackend(page: Page, mode: "persistent" | "lost" | 
   }, { mode });
   await page.goto("/?view=panel");
   await page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "设置" }).click();
+  await page.locator("#settings-group-ai > summary").click();
   await expect(page.locator("#settings-group-ai").getByLabel("Model", { exact: true })).toHaveValue("gpt-6-luna");
 }
 

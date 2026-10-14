@@ -83,6 +83,8 @@ test("settings is grouped into companion / model / notify / system / about / adv
   await expect(groups.nth(5)).not.toHaveAttribute("open", /.*/);
 
   // 系统与隐私组里要有「导出我的数据」（05 §4.4）
+  await expect(page.locator("#settings-group-system")).not.toHaveAttribute("open", /.*/);
+  await page.locator("#settings-group-system > summary").click();
   await expect(page.getByRole("button", { name: "导出我的数据" })).toBeVisible();
 
 });

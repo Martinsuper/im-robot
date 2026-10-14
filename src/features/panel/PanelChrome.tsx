@@ -9,7 +9,7 @@ const icons = { today: CalendarCheck, records: NotebookPen, settings: Settings2 
 const titles: Record<PanelTab, [string, string]> = {
   today: ["今天要做什么", "一条时间线，一个计时器，就够了。"],
   records: ["写下的，和记住的", "你写的和 Piko 记住的，都在这里，都能搜到。"],
-  settings: ["按你的习惯来", "让这个小伙伴更懂你的节奏。"],
+  settings: ["设置", ""],
 };
 
 export function PanelHeader({ tab, companionName }: { tab: PanelTab; companionName: string }) {
@@ -23,7 +23,7 @@ export function PanelHeader({ tab, companionName }: { tab: PanelTab; companionNa
       <div className="panel-heading">
         <div>
           <h1>{titles[tab][0]}</h1>
-          <p>{titles[tab][1]}</p>
+          {titles[tab][1] ? <p>{titles[tab][1]}</p> : null}
         </div>
         <button type="button" className="status-pill status-pill--action" onClick={() => void runCommand("show_bubble")}>
           <MessageCircle size={14} />对话

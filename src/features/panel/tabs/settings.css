@@ -258,3 +258,120 @@
 .tab--settings .companion-metrics-card[open] > summary {
   margin-bottom: var(--space-2, 8px);
 }
+
+/* 紧凑设置：标签与控件同排，组标题作为唯一外层标题。 */
+.tab--settings {
+  gap: 6px;
+}
+.tab--settings .settings-group {
+  padding: 0 12px;
+  border-radius: 10px;
+}
+.tab--settings .settings-group > summary {
+  min-height: 42px;
+  padding: 8px 0;
+}
+.tab--settings .settings-group__title {
+  flex: 1;
+}
+.tab--settings .settings-group__body {
+  gap: 10px;
+  padding-bottom: 12px;
+}
+.tab--settings .settings-form,
+.tab--settings .model-provider-form__fields {
+  gap: 8px;
+}
+.tab--settings .settings-form label:not(.setting-toggle) {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.tab--settings .settings-form label > small {
+  grid-column: 2;
+  font-size: 11px;
+}
+.tab--settings .settings-form input:not([type="checkbox"]),
+.tab--settings .settings-form select {
+  min-height: 32px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.tab--settings .settings-form__row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.tab--settings .settings-form .setting-toggle {
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  min-height: 32px;
+  font-size: 12px;
+}
+.tab--settings .settings-form .setting-toggle input {
+  width: 16px;
+  height: 16px;
+}
+.tab--settings .custom-pet-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.tab--settings .custom-pet-picker > span {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+}
+.tab--settings .custom-pet-picker > div {
+  flex: 0 0 auto;
+}
+.tab--settings .custom-pet-picker button {
+  padding: 0 10px;
+  min-height: 30px;
+}
+.tab--settings .companion-metrics-card {
+  order: 0;
+  padding: 8px 0 0;
+  border: 0;
+  border-top: 1px solid var(--piko-line);
+  border-radius: 0;
+  background: transparent;
+}
+.tab--settings .companion-metrics-card summary span {
+  display: inline;
+  margin: 0;
+  font-size: 11px;
+}
+.tab--settings .settings-note,
+.tab--settings .settings-readonly {
+  font-size: 11px;
+}
+.tab--settings .model-provider-form__fields {
+  padding-top: 8px;
+}
+.tab--settings .model-provider-form__actions {
+  gap: 8px;
+}
+.tab--settings .settings-pet-actions > button {
+  min-height: 30px;
+}
+@media (max-width: 360px) {
+  .tab--settings .settings-form label:not(.setting-toggle) {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+}
+.tab--settings .custom-pet-picker > div {
+  display: flex;
+  gap: 6px;
+}
+.tab--settings .custom-pet-picker button {
+  flex: 0 0 auto;
+}
+.tab--settings .settings-pet-actions > button {
+  border-radius: 7px;
+}

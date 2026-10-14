@@ -7,7 +7,7 @@ import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notif
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { CompanionHero, SettingsGroup } from "../PanelChrome";
+import { SettingsGroup } from "../PanelChrome";
 import { EmptyState, ErrorState } from "../../../components/feedback/States";
 import { useToast, type ToastTone } from "../../../components/feedback/toastStore";
 import { toUserMessage } from "../../../lib/errors";
@@ -42,7 +42,6 @@ import {
   defaultAppSettings,
   formatBytes,
   getAvailablePetVisualStyleOptions,
-  petVisualStyleOptions,
   providerOptions,
   findProviderPreset,
   quietModeOptions,
@@ -132,8 +131,6 @@ export function SettingsTab() {
   const petVisualStyle = usePetVisualStyle();
   const customPetImagePath = useCustomPetImagePath();
   const availablePetVisualStyleOptions = getAvailablePetVisualStyleOptions(Boolean(customPetImagePath));
-  const petVisualStyleLabel = petVisualStyleOptions.find((option) => option.value === petVisualStyle)?.label ?? "机甲猫";
-  const appearanceSelectRef = useRef<HTMLSelectElement>(null);
 
   /**
    * 共享缓存 → 本地草稿的单向同步。
@@ -431,7 +428,6 @@ export function SettingsTab() {
 
   function clearCustomPetImage() {
     clearCustomPetImagePath();
-    if (petVisualStyle === "custom") setPetVisualStyle("lumi");
   }
 
   /**
@@ -612,31 +608,89 @@ export function SettingsTab() {
       }).format(interactionStats.lastInteractionAt)
     : "暂无";
 
-  const statuses: Array<[string, string]> = [
-    ["桌面精灵", "在线"],
-    ["AI 对话", connectionStatus],
-    ["文件处理", "可用"],
-    ["提醒", "可用"],
-  ];
-
   return (
     <div className="tab tab--settings">
       <SettingsGroup
         id="companion"
         icon={<PawPrint size={15} />}
         title="伙伴"
-        description="名字、外观与它有多爱说话"
         defaultOpen
       >
-        <CompanionHero
-          companionName={companionName}
-          styleLabel={petVisualStyleLabel}
-          onAppearance={() => {
-            appearanceSelectRef.current?.scrollIntoView({ block: "nearest" });
-            appearanceSelectRef.current?.focus();
-          }}
-        />
 
+
+        <div className="settings-actions settings-pet-actions">
+          <button type="button" className="button-secondary" onClick={() => void runCommand("show_pet")}>显示伙伴</button>
+          <button type="button" className="button-secondary" onClick={() => void runCommand("hide_pet")}>隐藏伙伴</button>
+        </div>
+
+        <section className="panel-card">
+          <div className="settings-form">
+            <label>
+              <span>精灵名称</span>
+              <input
+                value={companionName}
+                maxLength={24}
+                onChange={(event) => updatePreferences({ companionName: event.currentTarget.value })}
+              />
+            </label>
+            <label>
+              <span>主题色</span>
+              <select value={theme} onChange={(event) => updatePreferences({ theme: event.currentTarget.value as Theme })}>
+                <option value="sage">鼠尾草绿</option>
+                <option value="blue">湖水蓝</option>
+                <option value="peach">暖桃色</option>
+              </select>
+            </label>
+            <label>
+              <span>精灵形象</span>
+              <select
+                value={petVisualStyle}
+                onChange={(event) => setPetVisualStyle(event.currentTarget.value as typeof petVisualStyle)}
+              >
+                {availablePetVisualStyleOptions.map(({ label, value }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <div className="custom-pet-picker">
+              <span>{customPetImagePath ? customPetImagePath.split(/[\\/]/).pop() : "未选择自定义图片"}</span>
+              <div>
+                <button type="button" onClick={() => void chooseCustomPetImage()}>
+                  选择图片
+                </button>
+                <button type="button" className="is-secondary" onClick={clearCustomPetImage} disabled={!customPetImagePath}>
+                  清除
+                </button>
+              </div>
+            </div>
+            <label className="setting-toggle">
+              <input
+                type="checkbox"
+                checked={!sensingPaused}
+                onChange={(event) => updatePreferences({ sensingPaused: !event.currentTarget.checked })}
+              />
+              <span>主动感知</span>
+            </label>
+          </div>
+        </section>
+
+        <section className="panel-card">
+          <h2>互动方式</h2>
+          <div className="settings-form">
+            <div className="segmented-control" aria-label="安静模式">
+              {quietModeOptions.map(({ label, value }) => (
+                <button
+                  className={value === quietMode ? "is-active" : ""}
+                  key={value}
+                  type="button"
+                  onClick={() => updateQuietMode(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
         <details className="panel-card companion-metrics-card">
           <summary>
             一起成长的记录 <span>Lv. {growthSnapshot.level} · {Math.round(interactionStats.intimacy)} 亲密</span>
@@ -644,7 +698,6 @@ export function SettingsTab() {
           <div className="companion-metrics-detail">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">INTERACTION</p>
                 <h2>互动档案</h2>
               </div>
               <strong>{Math.round(interactionStats.intimacy)} 亲密</strong>
@@ -691,115 +744,14 @@ export function SettingsTab() {
             </p>
           </div>
         </details>
-
-        <section className="panel-card companion-status-card">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">STATUS</p>
-              <h2>当前状态</h2>
-            </div>
-            <div className="section-heading__actions">
-              <button type="button" onClick={() => runCommand("show_pet")}>显示精灵</button>
-              <button type="button" onClick={() => runCommand("hide_pet")}>隐藏精灵</button>
-            </div>
-          </div>
-          <div className="status-grid">
-            {statuses.map(([label, value]) => (
-              <div className="status-item" key={label}>
-                <span>{label}</span>
-                <strong>{value}</strong>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel-card">
-          <p className="eyebrow">PREFERENCES</p>
-          <h2>名字与外观</h2>
-          <div className="settings-form">
-            <label>
-              <span>精灵名称</span>
-              <input
-                value={companionName}
-                maxLength={24}
-                onChange={(event) => updatePreferences({ companionName: event.currentTarget.value })}
-              />
-            </label>
-            <label>
-              <span>主题色</span>
-              <select value={theme} onChange={(event) => updatePreferences({ theme: event.currentTarget.value as Theme })}>
-                <option value="sage">鼠尾草绿</option>
-                <option value="blue">湖水蓝</option>
-                <option value="peach">暖桃色</option>
-              </select>
-            </label>
-            <label>
-              <span>精灵形象</span>
-              <select
-                ref={appearanceSelectRef}
-                value={petVisualStyle}
-                onChange={(event) => setPetVisualStyle(event.currentTarget.value as typeof petVisualStyle)}
-              >
-                {availablePetVisualStyleOptions.map(({ label, value }) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
-            <div className="custom-pet-picker">
-              <span>{customPetImagePath ? customPetImagePath.split(/[\\/]/).pop() : "未选择自定义图片"}</span>
-              <div>
-                <button type="button" onClick={() => void chooseCustomPetImage()}>
-                  选择图片
-                </button>
-                <button type="button" className="is-secondary" onClick={clearCustomPetImage} disabled={!customPetImagePath}>
-                  清除
-                </button>
-              </div>
-            </div>
-            <label className="setting-toggle">
-              <input
-                type="checkbox"
-                checked={!sensingPaused}
-                onChange={(event) => updatePreferences({ sensingPaused: !event.currentTarget.checked })}
-              />
-              <span>主动感知</span>
-            </label>
-          </div>
-        </section>
-
-        <section className="panel-card">
-          <p className="eyebrow">PERSONALITY</p>
-          <h2>安静模式</h2>
-          <div className="settings-form">
-            <div className="segmented-control" aria-label="安静模式">
-              {quietModeOptions.map(({ label, value }) => (
-                <button
-                  className={value === quietMode ? "is-active" : ""}
-                  key={value}
-                  type="button"
-                  onClick={() => updateQuietMode(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <p className="settings-note">安静：只在被叫到时回应；活泼：会主动找你说话。</p>
-          </div>
-        </section>
       </SettingsGroup>
 
       <SettingsGroup
         id="ai"
         icon={<MessageCircle size={15} />}
         title="对话与模型"
-        description="用哪个服务、能不能连上"
-        defaultOpen
       >
       <section className="panel-card model-provider-card">
-        <h2>模型服务</h2>
-        <p className="model-provider-card__lead">
-          选择服务后，填写必要的连接信息。
-        </p>
         <div className="settings-form model-provider-form">
           <label className="model-provider-form__provider">
               <span>服务类型</span>
@@ -812,11 +764,6 @@ export function SettingsTab() {
             ))}
             </select>
           </label>
-          {findProviderPreset(aiSettings.provider) ? (
-            <p className="model-provider-form__selection" aria-live="polite">
-              已选择 {findProviderPreset(aiSettings.provider)?.label} · {findProviderPreset(aiSettings.provider)?.hint}
-            </p>
-          ) : null}
           <div className="model-provider-form__fields">
             <label>
               <span>Base URL</span>
@@ -920,11 +867,8 @@ export function SettingsTab() {
         id="notify"
         icon={<BellRing size={15} />}
         title="提醒与免打扰"
-        description="什么时候它该闭嘴"
-        defaultOpen
       >
         <section className="panel-card">
-          <p className="eyebrow">WORK RHYTHM</p>
           <h2>休息提醒</h2>
           <div className="settings-form">
             <label className="setting-toggle">
@@ -985,12 +929,10 @@ export function SettingsTab() {
                 />
               </label>
             </div>
-            <p className="settings-note">提醒会根据今日输入、空闲状态和前台场景自动判断，只在适合的时候发声。</p>
           </div>
         </section>
 
         <section className="panel-card">
-          <p className="eyebrow">NOTIFICATIONS</p>
           <h2>通知权限</h2>
           <div className="settings-form">
             <div className="settings-readonly">
@@ -1010,11 +952,8 @@ export function SettingsTab() {
         id="system"
         icon={<ShieldCheck size={15} />}
         title="系统与隐私"
-        description="开机、驻留与你的数据"
-        defaultOpen
       >
         <section className="panel-card">
-          <p className="eyebrow">SYSTEM</p>
           <h2>开机与驻留</h2>
           <div className="settings-form">
             <label className="setting-toggle">
@@ -1029,7 +968,6 @@ export function SettingsTab() {
         </section>
 
         <section className="panel-card">
-          <p className="eyebrow">SHORTCUT</p>
           <h2>全局快捷键</h2>
           <div className="settings-form">
             <label>
@@ -1051,12 +989,10 @@ export function SettingsTab() {
                 </button>
               </div>
             ) : null}
-            <p className="settings-note">被别的应用占用时保存会失败，并自动恢复原快捷键。</p>
           </div>
         </section>
 
         <section className="panel-card">
-          <p className="eyebrow">DATA</p>
           <h2>我的数据</h2>
           <div className="settings-form">
             <button type="button" onClick={() => void exportMyData()}>
@@ -1070,7 +1006,6 @@ export function SettingsTab() {
         </section>
 
         <section className="panel-card">
-          <p className="eyebrow">DANGER</p>
           <h2>清空我的数据</h2>
           <div className="settings-form">
             <p className="settings-note">
@@ -1095,9 +1030,8 @@ export function SettingsTab() {
         </section>
       </SettingsGroup>
 
-      <SettingsGroup id="about" icon={<Info size={15} />} title="关于" description="版本、更新与权限状态">
+      <SettingsGroup id="about" icon={<Info size={15} />} title="关于">
         <section className="panel-card">
-          <p className="eyebrow">PRIVACY & PERMISSIONS</p>
           <h2>权限中心</h2>
           <div className="permission-list">
             <div><span>通知权限</span><strong>{notificationPermission}</strong></div>
@@ -1110,16 +1044,15 @@ export function SettingsTab() {
         <section className="panel-card">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">ABOUT</p>
               <h2>版本信息</h2>
             </div>
             <div className="section-heading__actions">
               <button type="button" onClick={() => void checkForUpdates()}>
                 检查更新
               </button>
-              <button type="button" disabled={!updateUrl || isDownloadingUpdate} onClick={() => void downloadUpdate()}>
+              {updateUrl && <button type="button" disabled={isDownloadingUpdate} onClick={() => void downloadUpdate()}>
                 {isDownloadingUpdate ? "正在下载..." : "下载更新"}
-              </button>
+              </button>}
             </div>
           </div>
           <p className="settings-note">Piko Desktop Companion · v{appVersion}</p>
@@ -1136,66 +1069,16 @@ export function SettingsTab() {
         </section>
 
         <section className="panel-card">
-          <p className="eyebrow">ONBOARDING</p>
           <h2>重新运行引导</h2>
           <div className="settings-form">
             <button type="button" onClick={() => void rerunOnboarding()}>
               重新运行引导
             </button>
-            <p className="settings-note">重新走一遍起名与连接 AI 的流程。</p>
           </div>
         </section>
       </SettingsGroup>
 
-      <SettingsGroup id="advanced" icon={<SlidersHorizontal size={15} />} title="高级" description="语音、实验室与插件">
-        <details className="settings-subgroup">
-          <summary>模型参数</summary>
-          <div className="settings-form">
-            <label>
-              <span>Base URL</span>
-              <input
-                value={aiSettings.baseUrl}
-                onChange={(event) => updateAiField("baseUrl", event.currentTarget.value)}
-                placeholder="http://localhost:11434/v1"
-              />
-            </label>
-            <label>
-              <span>Model</span>
-              <input
-                value={aiSettings.model}
-                onChange={(event) => updateAiField("model", event.currentTarget.value)}
-                placeholder={aiSettings.provider === "lmstudio" ? "可留空，LM Studio 自动使用当前加载模型" : "gemma4:e4b"}
-              />
-            </label>
-            <div className="settings-form__row">
-              <label>
-                <span>Temperature</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="2"
-                  step="0.1"
-                  value={aiSettings.temperature}
-                  onChange={(event) => updateAiField("temperature", Number(event.currentTarget.value))}
-                />
-              </label>
-              <label>
-                <span>超时秒数</span>
-                <input
-                  type="number"
-                  min="5"
-                  max="600"
-                  value={aiSettings.timeoutSeconds}
-                  onChange={(event) =>
-                    updateAiField("timeoutSeconds", Number(event.currentTarget.value))
-                  }
-                />
-              </label>
-            </div>
-            <p className="settings-note">修改后可在上方操作区保存或测试连接。</p>
-          </div>
-        </details>
-
+      <SettingsGroup id="advanced" icon={<SlidersHorizontal size={15} />} title="高级">
         <details className="settings-subgroup">
           <summary>语音</summary>
           {speechModels.length ? (

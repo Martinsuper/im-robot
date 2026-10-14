@@ -1,7 +1,7 @@
 import { CSSProperties, useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { emit, listen, UnlistenFn } from "@tauri-apps/api/event";
-import { LiveCharacterPet } from "./LiveCharacterPet";
+import { emit, listen } from "@tauri-apps/api/event";
+import { disposeAsyncSubscriptions } from "../pet/hooks/eventSubscription";
 
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 import type {
@@ -41,7 +41,7 @@ const robotCatFrameByMode = {
   error: 0,
 } satisfies Record<keyof typeof petSpriteStates, number>;
 
-export type PetVisualStyle = "lumi" | "custom" | "classic" | "character";
+export type PetVisualStyle = "lumi" | "custom" | "classic";
 
 export const petVisualStyleStorageKey = "piko-pet-visual-style";
 export const customPetImageStorageKey = "piko-custom-pet-image-path";
@@ -49,23 +49,27 @@ export const defaultPetVisualStyle: PetVisualStyle = "classic";
 
 export const petVisualStyleOptions: Array<{ label: string; labelKey: string; value: PetVisualStyle }> = [
   { label: "机甲猫", labelKey: "app.petStyle.lumi", value: "lumi" },
-  { label: "Piko 角色形象", labelKey: "app.petStyle.character", value: "character" },
   { label: "自定义图片", labelKey: "app.petStyle.custom", value: "custom" },
-  { label: "Piko 经典兜底", labelKey: "app.petStyle.classic", value: "classic" },
+  { label: "经典 Piko", labelKey: "app.petStyle.classic", value: "classic" },
 ];
+
+export function resolvePetVisualStyle(value: unknown, hasCustomImage = Boolean(getCustomPetImagePath())): PetVisualStyle {
+  if (value === "custom" && !hasCustomImage) return defaultPetVisualStyle;
+  return petVisualStyleOptions.some((option) => option.value === value)
+    ? value as PetVisualStyle
+    : defaultPetVisualStyle;
+}
 
 export function getPetVisualStyle(): PetVisualStyle {
   if (typeof window === "undefined") return defaultPetVisualStyle;
   const stored = window.localStorage.getItem(petVisualStyleStorageKey);
-  if (stored === "custom" && !getCustomPetImagePath()) return "classic";
-  if (petVisualStyleOptions.some((option) => option.value === stored)) return stored as PetVisualStyle;
-  if (stored) {
-    window.localStorage.setItem(petVisualStyleStorageKey, defaultPetVisualStyle);
-  }
-  return defaultPetVisualStyle;
+  const style = resolvePetVisualStyle(stored);
+  if (stored !== style) window.localStorage.setItem(petVisualStyleStorageKey, style);
+  return style;
 }
 
-export function setPetVisualStyle(style: PetVisualStyle) {
+export function setPetVisualStyle(value: PetVisualStyle) {
+  const style = resolvePetVisualStyle(value);
   window.localStorage.setItem(petVisualStyleStorageKey, style);
   window.dispatchEvent(new CustomEvent<PetVisualStyle>("piko-pet-visual-style-changed", { detail: style }));
   if (isTauriRuntime) {
@@ -88,6 +92,9 @@ export function setCustomPetImagePath(path: string) {
 
 export function clearCustomPetImagePath() {
   window.localStorage.removeItem(customPetImageStorageKey);
+  if (window.localStorage.getItem(petVisualStyleStorageKey) === "custom") {
+    setPetVisualStyle(defaultPetVisualStyle);
+  }
   window.dispatchEvent(new CustomEvent<string>("piko-custom-pet-image-changed", { detail: "" }));
   if (isTauriRuntime) {
     void emit("piko-custom-pet-image-changed", "");
@@ -95,12 +102,7 @@ export function clearCustomPetImagePath() {
 }
 
 export function getAvailablePetVisualStyleOptions(hasCustomImage = Boolean(getCustomPetImagePath())) {
-  // R3-5：外观收敛为三选一（05 §4.1）。
-  // "classic" 是兜底渲染（自定义图缺失、资产加载失败时自动回落），不是一种可选风格，
-  // 所以不出现在选择器里；但 getPetVisualStyle 的校验仍接受它，已有用户的存量值不受影响。
-  return petVisualStyleOptions.filter(
-    (option) => option.value !== "classic" && (option.value !== "custom" || hasCustomImage),
-  );
+  return petVisualStyleOptions.filter((option) => option.value !== "custom" || hasCustomImage);
 }
 
 export function getNextPetVisualStyle(
@@ -117,25 +119,24 @@ export function usePetVisualStyle() {
 
   useEffect(() => {
     const update = () => setStyle(getPetVisualStyle());
-    const updateFromEvent = (event: Event) => {
-      setStyle((event as CustomEvent<PetVisualStyle>).detail ?? getPetVisualStyle());
-    };
     const updateFromTauriEvent = (event: { payload: PetVisualStyle }) => {
-      setStyle(event.payload ?? getPetVisualStyle());
+      // 同步持久化值，避免重开窗口后回到旧形象。
+      window.localStorage.setItem(petVisualStyleStorageKey, resolvePetVisualStyle(event.payload));
+      update();
     };
 
     window.addEventListener("storage", update);
-    window.addEventListener("piko-pet-visual-style-changed", updateFromEvent);
-    let unlistenTauri: UnlistenFn | undefined;
-    if (isTauriRuntime) {
-      void listen<PetVisualStyle>("piko-pet-visual-style-changed", updateFromTauriEvent).then((unlisten) => {
-        unlistenTauri = unlisten;
-      });
-    }
+    window.addEventListener("piko-pet-visual-style-changed", update);
+    window.addEventListener("piko-custom-pet-image-changed", update);
+    const dispose = disposeAsyncSubscriptions(isTauriRuntime
+      ? [listen<PetVisualStyle>("piko-pet-visual-style-changed", updateFromTauriEvent)]
+      : []);
+    update();
     return () => {
       window.removeEventListener("storage", update);
-      window.removeEventListener("piko-pet-visual-style-changed", updateFromEvent);
-      unlistenTauri?.();
+      window.removeEventListener("piko-pet-visual-style-changed", update);
+      window.removeEventListener("piko-custom-pet-image-changed", update);
+      dispose();
     };
   }, []);
 
@@ -151,21 +152,20 @@ export function useCustomPetImagePath() {
       setPath((event as CustomEvent<string>).detail ?? getCustomPetImagePath());
     };
     const updateFromTauriEvent = (event: { payload: string }) => {
-      setPath(event.payload ?? getCustomPetImagePath());
+      window.localStorage.setItem(customPetImageStorageKey, event.payload ?? "");
+      update();
     };
 
     window.addEventListener("storage", update);
     window.addEventListener("piko-custom-pet-image-changed", updateFromEvent);
-    let unlistenTauri: UnlistenFn | undefined;
-    if (isTauriRuntime) {
-      void listen<string>("piko-custom-pet-image-changed", updateFromTauriEvent).then((unlisten) => {
-        unlistenTauri = unlisten;
-      });
-    }
+    const dispose = disposeAsyncSubscriptions(isTauriRuntime
+      ? [listen<string>("piko-custom-pet-image-changed", updateFromTauriEvent)]
+      : []);
+    update();
     return () => {
       window.removeEventListener("storage", update);
       window.removeEventListener("piko-custom-pet-image-changed", updateFromEvent);
-      unlistenTauri?.();
+      dispose();
     };
   }, []);
 
@@ -174,7 +174,7 @@ export function useCustomPetImagePath() {
 
 export function useCustomPetImageUrl() {
   const path = useCustomPetImagePath();
-  return path ? convertFileSrc(path) : "";
+  return path ? (isTauriRuntime ? convertFileSrc(path) : path) : "";
 }
 
 function formatCurrentTime() {
@@ -275,10 +275,6 @@ export function PetSprite({
         </span>
       </span>
     );
-  }
-
-  if (effectiveVisualStyle === "character") {
-    return <LiveCharacterPet mode={mode} emotion={emotion} reaction={reaction} compact={compact} mouseDelta={mouseDelta} style={style} />;
   }
 
   if (effectiveVisualStyle === "custom" && customPetImageUrl) {
