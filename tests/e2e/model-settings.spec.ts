@@ -8,7 +8,7 @@ async function installSettingsBackend(page: Page, mode: "persistent" | "lost" | 
       sensingPaused: false, breakRemindersEnabled: true, breakReminderIntervalMinutes: 45,
       breakReminderCooldownMinutes: 30, breakReminderQuietHoursEnabled: false,
       breakReminderQuietHoursStart: "22:00", breakReminderQuietHoursEnd: "08:00",
-      hasApiKey: false, htmlPreviewEnabled: false, globalShortcut: "CmdOrCtrl+Shift+Space",
+      hasApiKey: false, htmlPreviewEnabled: false, agentAutoApproveCommands: false, globalShortcut: "CmdOrCtrl+Shift+Space",
       ai: { provider: "openai-compatible", baseUrl: "http://127.0.0.1:8317/v1",
         model: "gpt-6-luna", speechModel: "base", temperature: 0.7, timeoutSeconds: 120 },
     };
@@ -21,9 +21,14 @@ async function installSettingsBackend(page: Page, mode: "persistent" | "lost" | 
       metadata: { currentWindow: { label: "panel" }, currentWebview: { label: "panel" } },
       transformCallback: () => 1,
       unregisterCallback() {},
-      async invoke(command: string, args?: { input?: Record<string, unknown> }) {
+      async invoke(command: string, args?: { input?: Record<string, unknown>; enabled?: boolean }) {
         calls.push({ command, args: JSON.parse(JSON.stringify(args ?? {})) });
         if (command === "get_settings") return structuredClone(state);
+        if (command === "update_agent_auto_approve_commands") {
+          if (mode === "failure") throw "Settings storage unavailable";
+          state.agentAutoApproveCommands = args?.enabled === true;
+          return structuredClone(state);
+        }
         if (command === "update_ai_settings") {
           if (mode === "failure") throw "Keychain storage unavailable";
           const { apiKey, ...ai } = args!.input!;
@@ -81,4 +86,28 @@ test("does not test the connection or clear the input if saving fails", async ({
   expect(await page.evaluate(() => (window as unknown as {
     __settingsCalls: Array<{ command: string }>;
   }).__settingsCalls.some((call) => call.command === "list_models"))).toBe(false);
+});
+
+
+test("command auto approval can be enabled and disabled in settings", async ({ page }) => {
+  await installSettingsBackend(page, "persistent");
+  await page.locator("#settings-group-system > summary").click();
+  const toggle = page.getByRole("checkbox", { name: "始终自动批准命令执行" });
+  await expect(toggle).not.toBeChecked();
+  await toggle.check();
+  await expect(toggle).toBeChecked();
+  await toggle.uncheck();
+  await expect(toggle).not.toBeChecked();
+  const calls = await page.evaluate(() => (window as unknown as {
+    __settingsCalls: Array<{ command: string; args: unknown }>;
+  }).__settingsCalls.filter((call) => call.command === "update_agent_auto_approve_commands"));
+  expect(calls.map((call) => call.args)).toEqual([{ enabled: true }, { enabled: false }]);
+});
+
+test("failed command permission save keeps automatic approval disabled", async ({ page }) => {
+  await installSettingsBackend(page, "failure");
+  await page.locator("#settings-group-system > summary").click();
+  const toggle = page.getByRole("checkbox", { name: "始终自动批准命令执行" });
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
 });

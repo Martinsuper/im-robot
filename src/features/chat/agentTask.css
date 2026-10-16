@@ -1,0 +1,22 @@
+/* Agent work is part of the same reply, with no second composer. */
+.agent-activity { min-width: 0; margin: 8px 0; font-size: 12px; }
+.agent-activity__details { padding: 8px 10px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 10px; }
+.agent-activity summary { cursor: pointer; }
+.agent-activity__tool { padding: 6px 0; }
+.agent-activity pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.agent-activity__approval { padding: 12px; margin: 8px 0; border: 1px solid #b2934f; border-radius: 10px; background: var(--piko-fill, #fff); }
+.agent-activity__approval p { color: var(--piko-muted, #62736a); line-height: 1.5; }
+.agent-activity button, .chat-workspace button { border: 1px solid var(--piko-line, #d9e1dd); border-radius: 8px; padding: 6px 9px; background: var(--piko-soft, #edf5ef); color: inherit; cursor: pointer; }
+.agent-activity button + button { margin-left: 8px; }
+.agent-activity__status { color: var(--piko-muted, #62736a); }
+.chat-workspace { display: flex; align-items: center; gap: 8px; min-width: 0; margin-bottom: 6px; font-size: 11px; }
+.chat-workspace__directory { flex: 0 1 auto; min-width: 0; max-width: 75%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.chat-workspace button:last-child { margin-left: auto; }
+.chat-workspace button:disabled { opacity: .5; cursor: default; }
+.chat-workspace__directory svg { vertical-align: -2px; margin-right: 2px; }
+.bubble-favorites { display: grid; gap: 4px; margin-bottom: 6px; padding: 8px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 10px; background: var(--piko-soft, #edf5ef); font-size: 12px; max-height: 160px; overflow: auto; }
+.bubble-favorites p { margin: 0; color: var(--piko-muted, #62736a); font-size: 11px; }
+.bubble-favorites__item { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bubble-favorites__title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.bubble-favorites__actions { display: inline-flex; gap: 4px; }
+.bubble-favorites__actions button { padding: 4px 6px; }

@@ -1,3 +1,4 @@
+mod html_preview;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Timelike};
 use futures_util::StreamExt;
@@ -27,6 +28,7 @@ use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::WasiCtxBuilder;
 
 // --- Module declarations for new features ---
+mod agent;
 pub mod app_awareness;
 mod chat;
 mod chat_session;
@@ -91,6 +93,8 @@ struct AppSettings {
     has_api_key: bool,
     #[serde(default)]
     html_preview_enabled: bool,
+    #[serde(default)]
+    agent_auto_approve_commands: bool,
     /// 全局快捷键（02 §3.3 / 06）：打开对话窗口。格式如 "CmdOrCtrl+Shift+Space"。
     #[serde(default = "default_global_shortcut")]
     global_shortcut: String,
@@ -110,6 +114,10 @@ struct AiSettings {
     speech_model: String,
     temperature: f32,
     timeout_seconds: u64,
+    #[serde(default)]
+    context_window: u64,
+    #[serde(default)]
+    max_output_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +129,8 @@ struct AiSettingsInput {
     speech_model: Option<String>,
     temperature: f32,
     timeout_seconds: u64,
+    context_window: Option<u64>,
+    max_output_tokens: Option<u64>,
     /// None = 保持原值；Some(None) = 清除；Some(Some(key)) = 写入新密钥。
     #[serde(default)]
     api_key: Option<Option<String>>,
@@ -414,6 +424,26 @@ struct MemoSummaryGroup {
     latest_updated_at: u64,
     summary: String,
     top_tags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HtmlFavorite {
+    id: String,
+    title: String,
+    html: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_chat_id: Option<String>,
+    created_at: u64,
+    updated_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HtmlFavoriteInput {
+    html: String,
+    #[serde(default)]
+    source_chat_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -1089,6 +1119,7 @@ impl Default for AppSettings {
             ai: AiSettings::default(),
             has_api_key: false,
             html_preview_enabled: false,
+            agent_auto_approve_commands: false,
             global_shortcut: default_global_shortcut(),
             onboarding_completed: false,
             onboarding_version: String::new(),
@@ -1141,6 +1172,8 @@ impl Default for AiSettings {
             speech_model: default_speech_model(),
             temperature: 0.7,
             timeout_seconds: 120,
+            context_window: 0,
+            max_output_tokens: 0,
         }
     }
 }
@@ -1219,6 +1252,13 @@ fn memos_path(app: &AppHandle) -> Option<PathBuf> {
         .app_config_dir()
         .ok()
         .map(|directory| directory.join("memos.json"))
+}
+
+fn html_favorites_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|directory| directory.join("html-favorites.json"))
 }
 
 fn calendar_events_path(app: &AppHandle) -> Option<PathBuf> {
@@ -1396,6 +1436,63 @@ fn persist_memos(app: &AppHandle, memos: &[Memo]) -> Result<(), String> {
     storage::write(&path, memos)
 }
 
+fn read_html_favorites(app: &AppHandle) -> Vec<HtmlFavorite> {
+    html_favorites_path(app)
+        .map(|path| storage::read_or_default(&path))
+        .unwrap_or_default()
+}
+
+fn persist_html_favorites(app: &AppHandle, favorites: &[HtmlFavorite]) -> Result<(), String> {
+    let path = html_favorites_path(app).ok_or("无法获取数据路径")?;
+    storage::write(&path, favorites)
+}
+
+fn html_favorite_id() -> String {
+    format!(
+        "htmlfav-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    )
+}
+
+fn html_favorite_title(html: &str) -> String {
+    let mut text = String::new();
+    let mut in_tag = false;
+    for character in html.chars() {
+        if character == '<' {
+            in_tag = true;
+            if !text.ends_with(' ') {
+                text.push(' ');
+            }
+            continue;
+        }
+        if character == '>' {
+            in_tag = false;
+            continue;
+        }
+        if !in_tag {
+            text.push(character);
+        }
+    }
+    let first_line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let title = truncate_text(&first_line, 30);
+    if title.trim().is_empty() {
+        let now = Local::now();
+        format!("HTML 收藏 {}", now.format("%m-%d %H:%M"))
+    } else {
+        title
+    }
+}
+
 /// 日程视图。同 `read_reminders`：统一存储在 schedule-items.json。
 fn read_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
     match read_schedule_items(app) {
@@ -1407,6 +1504,7 @@ fn read_calendar_events(app: &AppHandle) -> Vec<CalendarEvent> {
     }
 }
 
+#[cfg(test)]
 fn read_calendar_events_from_path(path: &Path) -> Vec<CalendarEvent> {
     storage::read_or_default(path)
 }
@@ -1418,6 +1516,7 @@ fn persist_calendar_events(app: &AppHandle, events: &[CalendarEvent]) -> Result<
     persist_schedule_items(app, &next)
 }
 
+#[cfg(test)]
 fn persist_calendar_events_to_path(path: &Path, events: &[CalendarEvent]) -> Result<(), String> {
     storage::write(path, events)
 }
@@ -2383,6 +2482,15 @@ fn validate_ai_settings(settings: &AiSettings) -> Result<(), String> {
     }
     if !(5..=600).contains(&settings.timeout_seconds) {
         return Err("超时时间必须在 5 到 600 秒之间".to_string());
+    }
+    if settings.context_window != 0 && !(2048..=2_000_000).contains(&settings.context_window) {
+        return Err("上下文窗口应为 0（自动）或 2048 到 2000000".into());
+    }
+    if settings.max_output_tokens != 0 && !(128..=200_000).contains(&settings.max_output_tokens) {
+        return Err("最大输出应为 0（自动）或 128 到 200000".into());
+    }
+    if settings.context_window > 0 && settings.max_output_tokens >= settings.context_window {
+        return Err("最大输出必须小于上下文窗口".into());
     }
     Ok(())
 }
@@ -3353,6 +3461,7 @@ fn clear_chat_context(context: State<'_, ChatContext>) -> Result<(), String> {
 
 #[tauri::command]
 fn get_bubble_chat_history(
+    app: AppHandle,
     context: State<'_, ChatContext>,
 ) -> Result<Vec<ChatHistoryEntry>, String> {
     let mut entries = context
@@ -3360,6 +3469,11 @@ fn get_bubble_chat_history(
         .lock()
         .map_err(|_| "无法读取对话历史".to_string())?
         .clone();
+    for entry in read_chat_history(&app) {
+        if !entries.iter().any(|current| current.id == entry.id) {
+            entries.push(entry);
+        }
+    }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at));
     entries.truncate(20);
     Ok(entries)
@@ -3655,6 +3769,58 @@ fn delete_memo(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn list_html_favorites(app: AppHandle) -> Vec<HtmlFavorite> {
+    let mut favorites = read_html_favorites(&app);
+    favorites.sort_by_key(|favorite| std::cmp::Reverse(favorite.updated_at));
+    favorites
+}
+
+#[tauri::command]
+fn create_html_favorite(app: AppHandle, input: HtmlFavoriteInput) -> Result<HtmlFavorite, String> {
+    let _transaction = storage::transaction();
+    let html = input.html.trim();
+    if html.is_empty() {
+        return Err("收藏内容不能为空".to_string());
+    }
+    if html.len() > 200 * 1024 {
+        return Err("收藏内容过大".to_string());
+    }
+    let mut favorites = read_html_favorites(&app);
+    if let Some(existing) = favorites.iter().find(|item| item.html.trim() == html) {
+        return Ok(existing.clone());
+    }
+    let now = unix_timestamp();
+    let favorite = HtmlFavorite {
+        id: html_favorite_id(),
+        title: html_favorite_title(html),
+        html: html.to_string(),
+        source_chat_id: input.source_chat_id,
+        created_at: now,
+        updated_at: now,
+    };
+    favorites.push(favorite.clone());
+    persist_html_favorites(&app, &favorites)?;
+    let _ = app.emit_to("panel", "html-favorites-updated", ());
+    let _ = app.emit_to("bubble", "html-favorites-updated", ());
+    Ok(favorite)
+}
+
+#[tauri::command]
+fn delete_html_favorite(app: AppHandle, id: String) -> Result<(), String> {
+    let _transaction = storage::transaction();
+    let mut favorites = read_html_favorites(&app);
+    let previous_len = favorites.len();
+    favorites.retain(|favorite| favorite.id != id);
+    if favorites.len() == previous_len {
+        return Err("未找到该收藏".to_string());
+    }
+    persist_html_favorites(&app, &favorites)?;
+    let _ = app.emit_to("panel", "html-favorites-updated", ());
+    let _ = app.emit_to("bubble", "html-favorites-updated", ());
+    Ok(())
+}
+
+#[tauri::command]
 fn summarize_memos(app: AppHandle) -> Vec<MemoSummaryGroup> {
     let memos = read_memos(&app);
     let order = [
@@ -3786,6 +3952,7 @@ fn create_calendar_event_record(
     Ok(event)
 }
 
+#[cfg(test)]
 fn create_calendar_event_record_at_path(
     path: &Path,
     input: CalendarEventInput,
@@ -3832,6 +3999,7 @@ fn delete_calendar_event_batch_record(
     Ok(deleted)
 }
 
+#[cfg(test)]
 fn delete_calendar_event_batch_record_at_path(
     path: &Path,
     input: CalendarDeleteBatchInput,
@@ -5051,6 +5219,8 @@ fn update_ai_settings(app: AppHandle, input: AiSettingsInput) -> Result<AppSetti
             .to_string(),
         temperature: input.temperature,
         timeout_seconds: input.timeout_seconds,
+        context_window: input.context_window.unwrap_or_default(),
+        max_output_tokens: input.max_output_tokens.unwrap_or_default(),
     };
     validate_ai_settings(&ai)?;
     update_api_key(input.api_key)?;
@@ -5251,6 +5421,21 @@ async fn generate_pet_companion_response(
 }
 
 #[tauri::command]
+fn update_agent_auto_approve_commands(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
+    let mut settings = read_settings(&app);
+    settings.agent_auto_approve_commands = enabled;
+    persist_settings(&app, &settings)?;
+    for window in ["panel", "pet", "bubble"] {
+        let _ = app.emit_to(window, "settings-updated", &settings);
+    }
+    Ok(settings)
+}
+
+#[tauri::command]
 fn update_html_preview_enabled(app: AppHandle, enabled: bool) -> Result<AppSettings, String> {
     let _transaction = storage::transaction();
     let mut settings = read_settings(&app);
@@ -5423,6 +5608,11 @@ fn clear_my_data(app: AppHandle) -> Result<serde_json::Value, String> {
         ),
         ("memos.json", memos_path(&app), serde_json::json!([])),
         (
+            "html-favorites.json",
+            html_favorites_path(&app),
+            serde_json::json!([]),
+        ),
+        (
             "chat-history.json",
             chat_history_path(&app),
             serde_json::json!([]),
@@ -5476,6 +5666,7 @@ fn clear_my_data(app: AppHandle) -> Result<serde_json::Value, String> {
     let _ = app.emit("chat-history-updated", ());
     let _ = app.emit("schedule-updated", ());
     let _ = app.emit("memos-updated", ());
+    let _ = app.emit("html-favorites-updated", ());
 
     Ok(serde_json::json!({
         "backupDir": backup_dir.display().to_string(),
@@ -5550,47 +5741,38 @@ fn get_calendar_sync_status(app: AppHandle) -> Result<serde_json::Value, String>
 }
 
 #[tauri::command]
-fn sync_calendar_to_system(app: AppHandle) -> Result<serde_json::Value, String> {
-    let events = read_calendar_events(&app);
-    let result = crate::sync::calendar_sync::push_to_system_calendar(&app, &events)?;
-    let _ = app.emit_to("panel", "calendar-sync-updated", ());
-    Ok(json!({
-        "pushed": result.pushed,
-        "mappingCount": result.mappings.len(),
-    }))
+async fn sync_calendar_to_system(app: AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let events = read_calendar_events(&app);
+        let result = crate::sync::calendar_sync::push_to_system_calendar(&app, &events)?;
+        let _ = app.emit_to("panel", "calendar-sync-updated", ());
+        Ok(json!({
+            "pushed": result.pushed,
+            "mappingCount": result.mappings.len(),
+        }))
+    })
+    .await
+    .map_err(|_| "日历同步任务发生异常，请核对同步结果后再重试".to_string())?
 }
 
 #[tauri::command]
-fn sync_calendar_from_system(app: AppHandle) -> Result<serde_json::Value, String> {
-    // Write debug log to temp file for troubleshooting
-    let log_path = std::env::temp_dir().join("piko_calendar_debug.log");
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .and_then(|mut f| {
-            std::io::Write::write_all(
-                &mut f,
-                format!("[{ts}] sync_calendar_from_system: command invoked\n").as_bytes(),
-            )
-        });
-
-    let since = crate::sync::calendar_sync::read_sync_mappings(&app)
-        .iter()
-        .map(|mapping| mapping.last_synced_at)
-        .max()
-        .unwrap_or(0);
-    let result = crate::sync::calendar_sync::pull_from_system_calendar(&app, since)?;
-    let _ = app.emit("calendar-events-updated", ());
-    let _ = app.emit_to("panel", "calendar-sync-updated", ());
-    Ok(json!({
-        "imported": result.imported,
-        "events": result.events,
-    }))
+async fn sync_calendar_from_system(app: AppHandle) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let since = crate::sync::calendar_sync::read_sync_mappings(&app)
+            .iter()
+            .map(|mapping| mapping.last_synced_at)
+            .max()
+            .unwrap_or(0);
+        let result = crate::sync::calendar_sync::pull_from_system_calendar(&app, since)?;
+        let _ = app.emit("calendar-events-updated", ());
+        let _ = app.emit_to("panel", "calendar-sync-updated", ());
+        Ok(json!({
+            "imported": result.imported,
+            "events": result.events,
+        }))
+    })
+    .await
+    .map_err(|_| "日历同步任务发生异常，请核对同步结果后再重试".to_string())?
 }
 
 // ============================================================================
@@ -5915,8 +6097,13 @@ fn get_global_shortcut(app: AppHandle, global_shortcut: State<'_, GlobalShortcut
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(html_preview::HtmlPreviewStore::default())
+        .register_uri_scheme_protocol("preview", |context, request| {
+            html_preview::response(context.app_handle(), request.uri().path())
+        })
         .manage(ChatRequests::default())
         .manage(ChatContext::default())
+        .manage(agent::AgentRuntime::default())
         .manage(PluginRegistry::with_builtin_plugins())
         .manage(ActionDrafts::default())
         .manage(LocalTts::default())
@@ -5938,6 +6125,11 @@ pub fn run() {
         ))
         .setup(|app| {
             credentials::initialize(app.path().app_data_dir()?)?;
+            for config in &app.config().app.windows {
+                tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
+                    .on_navigation(html_preview::local_preview_navigation)
+                    .build()?;
+            }
             // 初始化记忆数据库失败时降级到进程内数据库，避免阻断应用启动；
             // 同时记录并通知用户，明确说明记忆不会持久化。
             let memory_db = match memory::init_memory_db(app.handle()) {
@@ -5959,6 +6151,7 @@ pub fn run() {
             };
             app.manage(Arc::new(memory_db));
             app.manage(memory::CandidateCache::default());
+            memory::extraction::start(app.handle().clone());
             app.manage(typing_activity::TypingActivityState::new(app.handle()));
 
             // R1：把提醒与日程合并到统一存储。幂等且不删除旧文件；
@@ -6050,6 +6243,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            html_preview::open_html_preview_window,
+            html_preview::create_html_preview_frame,
+            html_preview::remove_html_preview_frame,
             show_bubble,
             hide_bubble,
             toggle_bubble,
@@ -6098,6 +6294,9 @@ pub fn run() {
             update_memo,
             delete_memo,
             summarize_memos,
+            list_html_favorites,
+            create_html_favorite,
+            delete_html_favorite,
             list_calendar_events,
             create_calendar_event,
             delete_calendar_event,
@@ -6119,8 +6318,18 @@ pub fn run() {
             download_speech_model,
             transcribe_voice_input,
             update_html_preview_enabled,
+            update_agent_auto_approve_commands,
             generate_pet_companion_response,
             list_models,
+            agent::agent_start,
+            agent::agent_list_tasks,
+            agent::agent_get_diagnostics,
+            agent::agent_select_workspace,
+            agent::agent_confirm_action,
+            agent::agent_reject_action,
+            agent::agent_cancel,
+            agent::agent_approve,
+            agent::agent_steer,
             chat::chat_start,
             chat::chat_cancel,
             get_bubble_chat_history,
@@ -6157,6 +6366,9 @@ pub fn run() {
             memory::remove_memory_relation,
             memory::get_memory_relations,
             // Memory system (Phase 3+: writer, reflection, maintenance, import/export)
+            memory::extraction::get_memory_extraction_status,
+            memory::extraction::configure_memory_extraction,
+            memory::extraction::extract_memories_now,
             memory::capture_memory_candidates,
             memory::get_pending_candidates,
             memory::apply_memory_candidates,
@@ -6188,7 +6400,7 @@ mod tests {
         coalesce_calendar_delete_calls, collect_due_reminders,
         create_calendar_event_record_at_path, decode_openai_tool_calls,
         delete_calendar_event_batch_record_at_path, extract_chat_deltas, extract_model_ids,
-        find_calendar_conflicts, idle_threshold_seconds, is_local_provider,
+        find_calendar_conflicts, html_favorite_title, idle_threshold_seconds, is_local_provider,
         looks_like_unconfirmed_local_action_response, memo_from_input, models_url,
         monitor_contains, next_idle_state, next_repeat_due, normalize_base_url, parse_data_url,
         prompt_requests_local_action, provider_kind, provider_tools,
@@ -6209,6 +6421,15 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
     use tauri::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
+
+    #[test]
+    fn html_favorite_title_uses_first_text_line() {
+        assert_eq!(
+            html_favorite_title("<h1>计算器</h1><p>内容</p>"),
+            "计算器 内容"
+        );
+        assert!(html_favorite_title("<div></div>").starts_with("HTML 收藏"));
+    }
 
     #[test]
     fn detects_a_position_inside_monitor_bounds() {
@@ -6957,13 +7178,14 @@ mod tests {
             ]))
             .unwrap();
         let reminder_before = serde_json::to_value(&initial[0]).unwrap();
+        let start_at = super::unix_timestamp() + 24 * 60 * 60;
         let events = ["回归-评审", "回归-取消验证"]
             .into_iter()
             .map(|title| {
                 super::calendar_event_from_input(super::CalendarEventInput {
                     title: title.into(),
-                    start_at: 1792130400,
-                    end_at: 1792134000,
+                    start_at,
+                    end_at: start_at + 3600,
                     location: Some("测试会议室".into()),
                     notes: Some("持久化回归".into()),
                 })

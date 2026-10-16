@@ -1,3 +1,11 @@
+import { useStableEvent } from "../../hooks/useStableEvent";
+import { HtmlFavoriteDialog } from "./HtmlFavoriteDialog";
+import { AgentActivity } from "./AgentActivity";
+import { TaskHistory } from "./TaskHistory";
+import { TaskDiagnostics } from "./TaskDiagnostics";
+import { TaskOutcome } from "./TaskOutcome";
+import type { TaskTerminal } from "./taskOutcomeModel";
+import { CONVERSATION_STORAGE, loadConversation, type AgentEvent, type ToolActivity, type ToolApproval } from "./agentTypes";
 import {
   CollapsibleReply,
   HistoryItem,
@@ -8,7 +16,7 @@ import {
   openModelSettings,
   textForSpeech,
 } from "./ChatPresentation";
-import { ArrowUp, Mic, Paperclip, ScanLine, Square, X } from "lucide-react";
+import { ArrowUp, Mic, Paperclip, ScanLine, Square, Star, X } from "lucide-react";
 import { FormEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -22,7 +30,8 @@ import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } f
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { useToast } from "../../components/feedback/toastStore";
 import { toUserMessage } from "../../lib/errors";
-import { extractHtmlPreviewSource, HtmlPreviewFrame } from "./HtmlPreviewFrame";
+import { extractHtmlPreviewSource, HtmlPreviewFrame, type HtmlPreviewView } from "./HtmlPreviewFrame";
+import { findFavoriteId, useHtmlFavorites } from "./htmlFavorites";
 
 type VoiceTranscriptionOutput = {
   text: string;
@@ -35,6 +44,26 @@ const WHISPER_SAMPLE_RATE = 16000;
 export function BubbleWindow() {
   const toast = useToast();
   const [prompt, setPrompt] = useState("");
+  const [conversation, setConversation] = useState(loadConversation);
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [verificationOf, setVerificationOf] = useState<string>();
+  const [resumeOf, setResumeOf] = useState<string>();
+  const [sendingSteering, setSendingSteering] = useState(false);
+  const steeringPending = useRef(false);
+  const agentBusyRef = useRef(false);
+  const displayedRequestId = useRef<string | undefined>(undefined);
+  const [agentStatus, setAgentStatus] = useState("");
+  const [agentTools, setAgentTools] = useState<ToolActivity[]>([]);
+  const [taskTerminal, setTaskTerminal] = useState<TaskTerminal | null>(null);
+  const [agentApprovals, setAgentApprovals] = useState<ToolApproval[]>([]);
+  const [workspaceRequired, setWorkspaceRequired] = useState(false);
+  const businessAction = useRef(false);
+  const businessCardRef = useRef<HTMLDivElement>(null);
+  const agentReady = useRef<Promise<unknown>>(Promise.resolve());
+  useEffect(() => { try { localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(conversation)); } catch { /* Optional. */ } }, [conversation]);
+
   const [message, setMessage] = useState("");
   const [companionName, setCompanionName] = useState("Piko");
   const [theme, setTheme] = useState<Theme>("sage");
@@ -67,8 +96,13 @@ export function BubbleWindow() {
   // New state for redesign
   const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
+  const [historySourceIds, setHistorySourceIds] = useState<Set<string>>(new Set());
   const [currentPrompt, setCurrentPrompt] = useState("");
   const [copyFeedback, setCopyFeedback] = useState(false);
+  const { favorites, toggle: toggleFavorite, remove: removeFavorite } = useHtmlFavorites();
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
+  const [selectedFavoriteId, setSelectedFavoriteId] = useState<string | null>(null);
+  const favoritesButtonRef = useRef<HTMLButtonElement>(null);
   const hasInputContext = Boolean(attachment || screenshot || isDraggingFile);
   const activeRequestId = useRef<string | undefined>(undefined);
   const lastSequence = useRef(0);
@@ -86,6 +120,11 @@ export function BubbleWindow() {
   const voiceSamplesRef = useRef<Float32Array[]>([]);
   const voiceSampleRateRef = useRef(WHISPER_SAMPLE_RATE);
   const confirmationChoices = pendingAction ? getConfirmationChoices(pendingAction) : [];
+  useEffect(() => {
+    if (!pendingAction) return;
+    const buttons = Array.from(businessCardRef.current?.querySelectorAll("button") || []);
+    (buttons.find((button) => button.textContent?.includes("确认执行")) || buttons[0])?.scrollIntoView?.({ block: "center" });
+  }, [pendingAction]);
   const skeletonLineCount = pendingPromptSummary.length > 80 ? 4 : pendingPromptSummary.length > 24 ? 3 : 2;
   const skeletonLines = Array.from({ length: skeletonLineCount }, (_, index) => {
     if (index === 0) return "bubble-skeleton__line--wide";
@@ -101,18 +140,19 @@ export function BubbleWindow() {
   const topbarStatus = useMemo(() => {
     if (memoryActivity) return { label: memoryActivity, pulse: false };
     if (isSpeaking) return { label: "朗读中", pulse: false };
+    if (agentBusy) return { label: agentStatus || "正在处理…", pulse: true };
     if (isThinking) return { label: "思考中…", pulse: true };
     return { label: "在线", pulse: false };
-  }, [isThinking, isSpeaking, memoryActivity]);
+  }, [isThinking, isSpeaking, memoryActivity, agentBusy, agentStatus]);
 
-  const hasCurrentTurn = Boolean(currentPrompt || message || pendingAction || showReplySkeleton);
+  const hasCurrentTurn = Boolean(currentPrompt || message || pendingAction || showReplySkeleton || agentTools.length || workspaceRequired);
   const showWelcome = !hasCurrentTurn && chatHistory.length === 0;
 
   // 02 §3.3：Esc 收起窗口；Cmd/Ctrl + Enter 发送
   function handleWindowKeyDown(event: React.KeyboardEvent<HTMLElement>) {
     if (event.key === "Escape") {
       event.preventDefault();
-      void runCommand("hide_bubble");
+      if (agentBusyRef.current) cancel(); else void runCommand("hide_bubble");
       return;
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -139,21 +179,36 @@ export function BubbleWindow() {
     }
   }
 
-  function hideSkeletonSoon() {
+  const hideSkeletonSoon = useStableEvent(() => {
     clearSkeletonHideTimer();
     skeletonHideTimer.current = window.setTimeout(() => {
       setShowReplySkeleton(false);
       setIsReplyEntering(false);
       skeletonHideTimer.current = undefined;
     }, 220);
-  }
+  });
 
   function refreshChatHistory() {
     if (!isTauriRuntime) return;
     void runCommand<ChatHistoryEntry[]>("get_bubble_chat_history", undefined, []).then((entries) => {
-      if (entries) setChatHistory(entries);
+      if (entries) { const current = conversationRef.current; setChatHistory((current.importHistory ? entries : entries.filter((entry) => current.turnIds.includes(entry.id))).filter((entry) => entry.id !== displayedRequestId.current)); }
     });
   }
+
+  const stopVoiceRecording = useStableEvent((shouldTranscribe = true) => {
+    const samples = voiceSamplesRef.current;
+    const sampleRate = voiceSampleRateRef.current;
+    voiceSamplesRef.current = [];
+    stopVoiceStream();
+    setIsListening(false);
+    if (!shouldTranscribe) return;
+    if (!samples.length) {
+      toast.info("没有录到语音内容。");
+      return;
+    }
+    const blob = encodeWav(samples, sampleRate);
+    void transcribeVoiceBlob(blob);
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -181,7 +236,7 @@ export function BubbleWindow() {
       if (isTauriRuntime) void runCommand("stop_local_speech");
       clearSkeletonHideTimer();
     };
-  }, []);
+  }, [stopVoiceRecording]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -207,20 +262,19 @@ export function BubbleWindow() {
     const unlisten = listen<ScreenshotPreview>("screenshot-ready", (event) => {
       setScreenshot(event.payload);
     });
+    let focusTimer: number | undefined;
     const unlistenFocus = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (focused) {
-        refreshScreenshot();
-        // 窗口获得焦点后延迟聚焦输入框，避免抢焦导致点击宠物窗口需要多次点击
-        const timer = window.setTimeout(() => {
-          promptInputRef.current?.focus();
-        }, 80);
-        return () => window.clearTimeout(timer);
-      }
+      window.clearTimeout(focusTimer);
+      if (!focused) return;
+      refreshScreenshot();
+      // Cancel delayed composer focus when a detached preview takes focus.
+      focusTimer = window.setTimeout(() => {
+        promptInputRef.current?.focus();
+      }, 80);
     });
     return () => {
-      void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
-      });
+      window.clearTimeout(focusTimer);
+      void unlisten.then((dispose) => dispose());
       void unlistenFocus.then((dispose) => dispose());
     };
   }, []);
@@ -228,7 +282,7 @@ export function BubbleWindow() {
   useEffect(() => {
     if (!isTauriRuntime) return;
 
-    const unlisten = listen<ChatEvent>("chat-event", (event) => {
+    const onChatEvent = (event: { payload: ChatEvent }) => {
       if (event.payload.requestId !== activeRequestId.current) return;
 
       if (event.payload.type === "started") {
@@ -251,6 +305,7 @@ export function BubbleWindow() {
         setMessage((current) => current + text);
       }
       if (event.payload.type === "completed") {
+        setAgentBusy(false); agentBusyRef.current = false;
         setIsThinking(false);
         clearSkeletonHideTimer();
         setShowReplySkeleton(false);
@@ -266,28 +321,86 @@ export function BubbleWindow() {
         setSelectedChoiceIndexes(getConfirmationChoices(event.payload.draft).map((choice) => choice.index));
       }
       if (event.payload.type === "cancelled") {
+        setAgentBusy(false); agentBusyRef.current = false;
         setIsThinking(false);
         clearSkeletonHideTimer();
         setShowReplySkeleton(false);
         setIsReplyEntering(false);
-        setMessage((current) => current || "已停止生成。");
+        setReplyStatus("cancelled");
         refreshChatHistory();
       }
       if (event.payload.type === "failed") {
+        setAgentBusy(false); agentBusyRef.current = false;
         setIsThinking(false);
         clearSkeletonHideTimer();
         setShowReplySkeleton(false);
         setIsReplyEntering(false);
-        setMessage(event.payload.message);
+        setReplyStatus("failed");
+        setReplyError(event.payload.message);
+      }
+    };
+    const unlisten = listen<ChatEvent>("chat-event", onChatEvent);
+    const agentUnlisten = listen<AgentEvent>("agent-event", ({ payload: event }) => {
+      if (event.requestId !== activeRequestId.current) return;
+      if (event.type === "started") { onChatEvent({ payload: { type: "started", requestId: event.requestId, working: false } }); return; }
+      if (event.type === "delta") {
+        onChatEvent({ payload: { type: "delta", requestId: event.requestId, sequence: lastSequence.current + 1, text: event.text || "" } }); return;
+      }
+      if (event.type === "tool-start") {
+        setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false);
+        setAgentStatus(`正在调用 ${event.tool}…`);
+        setAgentTools((tools) => [...tools, { id: event.toolCallId || "", name: event.tool || "工具", arguments: event.arguments || {}, status: "执行中" }]);
+      }
+      if (event.type === "tool-end") {
+        setAgentTools((tools) => tools.map((tool) => tool.id === event.toolCallId ? { ...tool, status: event.isError ? "失败" : "完成", output: event.output, verification: event.verification } : tool));
+        setAgentStatus("正在继续…");
+      }
+      if (event.type === "approval" && event.approvalId) {
+        setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false);
+        setAgentApprovals((items) => [...items, { id: event.approvalId!, tool: event.tool || "操作", arguments: event.arguments || {} }]);
+        setAgentStatus("等待你批准操作");
+      }
+      if (event.type === "steering-accepted") {
+        steeringPending.current = false; setSendingSteering(false);
+        setPrompt((current) => current.trim() === event.text?.trim() ? "" : current);
+        setAgentApprovals([]); setPendingAction(undefined); businessAction.current = false; setWorkspaceRequired(false);
+        setAgentStatus("补充要求已加入；正在执行的操作可能已产生效果");
+        setCurrentPrompt((current) => `${current}\n补充要求：${event.text || ""}`);
+      }
+      if (event.type === "approval-expired") {
+        setAgentApprovals((items) => items.filter((item) => item.id !== event.approvalId));
+        setAgentStatus("操作确认已超时，该操作未获批准");
+      }
+      if (event.type === "workspace-required") {
+        setWorkspaceRequired(true); setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false); setAgentStatus("请选择工作目录");
+      }
+      if (event.type === "action-proposed" && event.draft) {
+        businessAction.current = true;
+        onChatEvent({ payload: { type: "action-proposed", requestId: event.requestId, draft: event.draft } });
+        setAgentStatus("等待你确认操作");
+      }
+      if (event.type === "protocol-error") setReplyError(event.message || "通信失败");
+      if (event.type === "completed" || event.type === "cancelled" || event.type === "failed") {
+        setAgentBusy(false); agentBusyRef.current = false; setAgentStatus(""); setWorkspaceRequired(false); setAgentApprovals([]);
+        setPendingAction(undefined); businessAction.current = false;
+        steeringPending.current = false; setSendingSteering(false);
+        setTaskTerminal({ requestId: event.requestId, status: event.type });
+        setAgentTools((tools) => tools.map((tool) => tool.status === "执行中" ? { ...tool, status: "结果未知" } : tool));
+        if (event.type === "completed") setReplyStatus("done");
+        onChatEvent({ payload: event.type === "failed" ? { type: "failed", requestId: event.requestId, message: event.message || "处理失败" } : { type: event.type, requestId: event.requestId } });
+        activeRequestId.current = undefined; setRequestId(undefined);
       }
     });
+    agentReady.current = agentUnlisten;
 
     return () => {
+      void agentUnlisten.then((dispose) => dispose());
+      if (activeRequestId.current && agentBusyRef.current) void runCommand("agent_cancel", { requestId: activeRequestId.current }).catch(() => {});
       void unlisten.then((dispose) => {
         if (mountedRef.current) dispose();
       });
     };
-  }, []);
+  }, [hideSkeletonSoon]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -339,17 +452,31 @@ export function BubbleWindow() {
 
   // Auto-scroll thread to bottom when new messages arrive
   useEffect(() => {
+    if (agentApprovals.length || workspaceRequired || pendingAction) return;
     const el = threadScrollRef.current;
     if (el) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [message, showReplySkeleton, currentPrompt, chatHistory.length]);
+  }, [message, showReplySkeleton, currentPrompt, chatHistory.length, agentApprovals.length, workspaceRequired, pendingAction]);
 
-  async function sendPrompt(currentPromptValue: string) {
-    if (!currentPromptValue.trim() && !attachment && !screenshot) return;
+  async function sendPrompt(currentPromptValue: string, inspectionTarget: string | null = verificationOf ?? null, resumeTarget: string | null = resumeOf ?? null) {
+    if (agentBusyRef.current || (!currentPromptValue.trim() && !attachment && !screenshot)) return;
 
     const requestPrompt = currentPromptValue.trim();
+    if (displayedRequestId.current && (currentPrompt || message)) {
+      const previous = { id: displayedRequestId.current, prompt: currentPrompt, response: message, createdAt: Math.floor(Date.now() / 1000) };
+      setChatHistory((entries) => [...entries.filter((entry) => entry.id !== previous.id), previous]);
+    }
     const currentRequestId = crypto.randomUUID();
+    displayedRequestId.current = currentRequestId;
+    const currentConversation = conversationRef.current;
+    const nextConversation = { ...currentConversation, id: currentConversation.id || currentRequestId, turnIds: [...currentConversation.turnIds, currentRequestId] };
+    conversationRef.current = nextConversation;
+    setConversation(nextConversation);
+    setTaskTerminal(null);
+    setAgentTools([]); setAgentApprovals([]); setWorkspaceRequired(false); setAgentStatus("");
+    businessAction.current = false;
+
     setCurrentPrompt(requestPrompt);
     setIsThinking(true);
     setPendingAction(undefined);
@@ -390,14 +517,20 @@ export function BubbleWindow() {
       return;
     }
 
-    void runCommand<void>("chat_start", {
+    setAgentBusy(true); agentBusyRef.current = true;
+    void agentReady.current.then(() => runCommand<void>("agent_start", {
       input: {
         requestId: currentRequestId,
+        conversationId: nextConversation.id, cwd: nextConversation.cwd || undefined, unified: true, importHistory: nextConversation.importHistory,
         prompt: requestPrompt,
         attachmentAction: attachment ? attachmentAction : undefined,
         includeScreenshot: Boolean(screenshot),
+        verificationOf: inspectionTarget,
+        resumeOf: resumeTarget,
       },
-    }).catch((error) => {
+    })).catch((error) => {
+      setAgentBusy(false); agentBusyRef.current = false;
+      setPrompt(requestPrompt);
       setIsThinking(false);
       setShowReplySkeleton(false);
       setReplyStatus("failed");
@@ -406,9 +539,15 @@ export function BubbleWindow() {
   }
 
   function submitPrompt() {
+    if (agentBusyRef.current) {
+      const text = prompt.trim();
+      if (!text || steeringPending.current) return;
+      steeringPending.current = true; setSendingSteering(true);
+      void runCommand("agent_steer", { requestId: activeRequestId.current, text }).catch((error) => { steeringPending.current = false; setSendingSteering(false); toast.error(toUserMessage(error, "补充要求未送达，请重试")); });
+      return;
+    }
     if (!prompt.trim() && !attachment && !screenshot) return;
-    const currentPromptValue = prompt.trim();
-    void sendPrompt(currentPromptValue);
+    void sendPrompt(prompt.trim());
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -428,7 +567,52 @@ export function BubbleWindow() {
       setReplyStatus("cancelled");
       return;
     }
-    void runCommand("chat_cancel", { requestId });
+    void runCommand("agent_cancel", { requestId }).catch((error) => toast.error(toUserMessage(error, "停止失败")));
+  }
+
+  async function chooseWorkspace() {
+    try {
+      const path = await open({ directory: true, multiple: false, title: "选择工作目录" });
+      if (typeof path !== "string") return;
+      setConversation((current) => ({ ...current, cwd: path }));
+      if (workspaceRequired) {
+        await runCommand("agent_select_workspace", { requestId: activeRequestId.current, path });
+        setWorkspaceRequired(false); setAgentStatus("目录已选择，正在继续…");
+      }
+    } catch (error) { toast.error(toUserMessage(error, "选择目录失败")); }
+  }
+  async function cancelWorkspace() {
+    try { await runCommand("agent_select_workspace", { requestId: activeRequestId.current, path: null }); setWorkspaceRequired(false); }
+    catch (error) { toast.error(toUserMessage(error, "取消失败")); }
+  }
+  async function approveTool(id: string, allowed: boolean) {
+    try {
+      await runCommand("agent_approve", { requestId: activeRequestId.current, approvalId: id, allowed });
+      setAgentApprovals((items) => items.filter((item) => item.id !== id));
+      setAgentStatus(allowed ? "已批准，正在继续…" : "已拒绝，正在继续…");
+    } catch (error) { toast.error(toUserMessage(error, "确认失败")); }
+  }
+  function inspectTask(requestId: string) {
+    if (agentBusyRef.current) return;
+    setResumeOf(undefined); setVerificationOf(requestId);
+    void sendPrompt(`请只读核对任务 ${requestId} 的实际执行结果。先确认目标和验收标准，按证据说明哪些已完成、哪些未完成、哪些无法确认，不要重新执行修改。`, requestId, null);
+  }
+
+  function resumeTask(record: { requestId: string; conversationId: string }) {
+    if (agentBusyRef.current) return;
+    setVerificationOf(undefined); setResumeOf(record.requestId);
+    const next = { ...conversationRef.current, id: record.conversationId, importHistory: false, turnIds: [] };
+    conversationRef.current = next; setConversation(next); setChatHistory([]);
+    void sendPrompt(`请根据原会话和操作检查点先核对任务 ${record.requestId} 的实际结果，再安全继续未完成的步骤。已完成步骤不能重复执行；无法证明幂等的操作请先说明并等待新的明确指令。`, null, record.requestId);
+  }
+
+  function newConversation() {
+    setVerificationOf(undefined); setResumeOf(undefined);
+    displayedRequestId.current = undefined;
+    const next = { id: "", cwd: conversation.cwd, importHistory: false, turnIds: [] };
+    conversationRef.current = next; setConversation(next); setChatHistory([]); setCurrentPrompt(""); setMessage("");
+    setTaskTerminal(null);
+    setAgentTools([]); setAgentApprovals([]); setReplyStatus(null); setReplyError(""); setPendingAction(undefined);
   }
 
   async function copyResult() {
@@ -442,6 +626,10 @@ export function BubbleWindow() {
     try {
       if (pendingAction.pluginId === "piko.reminders" && isTauriRuntime && !(await isPermissionGranted())) {
         await requestPermission();
+      }
+      if (businessAction.current) {
+        await runCommand("agent_confirm_action", { requestId: activeRequestId.current, id: pendingAction.id, selectedIndexes: confirmationChoices.length ? selectedChoiceIndexes : undefined });
+        setPendingAction(undefined); setSelectedChoiceIndexes([]); businessAction.current = false; setAgentStatus("已确认，正在继续…"); return;
       }
       const execution = await runCommand<ActionExecution>("confirm_chat_action", {
         id: pendingAction.id,
@@ -469,6 +657,10 @@ export function BubbleWindow() {
   async function rejectAction() {
     if (!pendingAction) return;
     try {
+      if (businessAction.current) {
+        await runCommand("agent_reject_action", { requestId: activeRequestId.current, id: pendingAction.id });
+        setPendingAction(undefined); setSelectedChoiceIndexes([]); businessAction.current = false; setAgentStatus("已拒绝，正在继续…"); return;
+      }
       await runCommand("reject_chat_action", { id: pendingAction.id });
       setPendingAction(undefined);
       setSelectedChoiceIndexes([]);
@@ -576,20 +768,7 @@ export function BubbleWindow() {
     voiceStreamRef.current = null;
   }
 
-  function stopVoiceRecording(shouldTranscribe = true) {
-    const samples = voiceSamplesRef.current;
-    const sampleRate = voiceSampleRateRef.current;
-    voiceSamplesRef.current = [];
-    stopVoiceStream();
-    setIsListening(false);
-    if (!shouldTranscribe) return;
-    if (!samples.length) {
-      toast.info("没有录到语音内容。");
-      return;
-    }
-    const blob = encodeWav(samples, sampleRate);
-    void transcribeVoiceBlob(blob);
-  }
+
 
   async function transcribeVoiceBlob(blob: Blob) {
     if (blob.size <= 44) {
@@ -731,11 +910,22 @@ export function BubbleWindow() {
     });
   }
 
+  function setHistoryPreview(id: string, view: HtmlPreviewView) {
+    setHistorySourceIds((prev) => {
+      const next = new Set(prev);
+      if (view === "source") next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
   function collapseAllHistory() {
     setExpandedHistoryIds(new Set());
   }
 
   const htmlPreviewSource = htmlPreviewEnabled ? extractHtmlPreviewSource(message) : null;
+  const currentFavoriteId = htmlPreviewSource ? findFavoriteId(favorites, htmlPreviewSource) : undefined;
+  const selectedFavorite = selectedFavoriteId ? favorites.find((item) => item.id === selectedFavoriteId) : undefined;
 
   return (
     <main
@@ -769,6 +959,13 @@ export function BubbleWindow() {
 
       {/* Layer 2: Thread Area */}
       <section className="bubble-thread" ref={threadScrollRef} aria-label="对话内容">
+        <TaskHistory busy={agentBusy} onInspect={(record) => inspectTask(record.requestId)} onResume={resumeTask} />
+        {verificationOf && <section className="task-history" aria-label="只读核对模式">
+          <strong>正在只读核对结果</strong>
+          <p>后续提问继续核对，不执行命令或修改。需要继续处理时，请先结束核对，再明确提出操作要求。</p>
+          <button type="button" disabled={agentBusy} onClick={() => setVerificationOf(undefined)}>结束核对</button>
+        </section>}
+        {resumeOf && <section className="task-history" aria-label="安全续跑模式"><strong>正在安全续跑</strong><p>文件修改按检查点和读回结果续接；Shell 和未经证明的业务写入不会自动重放。</p><button type="button" disabled={agentBusy} onClick={() => setResumeOf(undefined)}>结束续跑</button></section>}
         {showWelcome && !aiConfigured && (
           <ModelSetupCard onOpenSettings={openModelSettings} />
         )}
@@ -776,14 +973,22 @@ export function BubbleWindow() {
 
         {chatHistory.length > 0 && (
           <div className="bubble-thread__history">
-            {chatHistory.map((entry) => (
-              <HistoryItem
-                key={entry.id}
-                entry={entry}
-                isExpanded={expandedHistoryIds.has(entry.id)}
-                onToggle={() => toggleHistoryItem(entry.id)}
-              />
-            ))}
+            {chatHistory.map((entry) => {
+              const entrySource = extractHtmlPreviewSource(entry.response);
+              return (
+                <HistoryItem
+                  key={entry.id}
+                  entry={entry}
+                  isExpanded={expandedHistoryIds.has(entry.id)}
+                  htmlPreviewEnabled={htmlPreviewEnabled}
+                  previewAsSource={historySourceIds.has(entry.id)}
+                  isFavorited={entrySource ? Boolean(findFavoriteId(favorites, entrySource)) : false}
+                  onToggle={() => toggleHistoryItem(entry.id)}
+                  onPreviewViewChange={(view) => setHistoryPreview(entry.id, view)}
+                  onToggleFavorite={entrySource ? () => void toggleFavorite(entrySource, entry.id).catch((error) => toast.error(toUserMessage(error, "收藏失败，请重试。"))) : undefined}
+                />
+              );
+            })}
             {expandedHistoryIds.size > 0 && (
               <button type="button" className="bubble-thread__collapse-all" onClick={collapseAllHistory}>
                 收起历史记录 · {expandedHistoryIds.size}
@@ -826,7 +1031,7 @@ export function BubbleWindow() {
                 </div>
               </div>
             ) : pendingAction ? (
-              <ActionConfirmationCard
+              <div ref={businessCardRef}><ActionConfirmationCard
                 draft={pendingAction}
                 selectedChoiceIndexes={selectedChoiceIndexes}
                 onChoiceToggle={(choiceIndex) =>
@@ -836,13 +1041,17 @@ export function BubbleWindow() {
                 }
                 onConfirm={() => void confirmAction()}
                 onReject={() => void rejectAction()}
-              />
+              /></div>
             ) : htmlPreviewSource ? (
               <div className="bubble-thread__ai-card">
                 <div className="bubble-thread__ai-sprite">
                   <PetSprite mode="idle" compact />
                 </div>
-                <HtmlPreviewFrame source={htmlPreviewSource} />
+                <HtmlPreviewFrame
+                  source={htmlPreviewSource}
+                  isFavorited={Boolean(currentFavoriteId)}
+                  onToggleFavorite={() => void toggleFavorite(htmlPreviewSource).catch((error) => toast.error(toUserMessage(error, "收藏失败，请重试。")))}
+                />
               </div>
             ) : message.trim() ? (
               <div className={`bubble-thread__ai-card${isReplyEntering ? " bubble-thread__ai-card--entering" : ""}`}>
@@ -869,17 +1078,30 @@ export function BubbleWindow() {
                 onOpenPanel={() => runCommand("open_panel")}
               />
             )}
+            <TaskOutcome key={taskTerminal?.requestId || "pending"} terminal={taskTerminal} tools={agentTools} busy={agentBusy} onInspect={inspectTask} />
+            <TaskDiagnostics key={`diagnostics-${taskTerminal?.requestId || "pending"}`} terminal={taskTerminal} />
+            <AgentActivity tools={agentTools} approvals={agentApprovals} workspaceRequired={workspaceRequired} status={agentStatus}
+              onApprove={(id, allowed) => void approveTool(id, allowed)} onChooseWorkspace={() => void chooseWorkspace()} onCancelWorkspace={() => void cancelWorkspace()} />
             {(replyStatus === "failed" || replyStatus === "cancelled") ? (
               <ReplyStatusCard
                 tone={replyStatus}
                 message={replyError}
-                onRetry={() => void sendPrompt(currentPrompt)}
+                onRetry={() => { setPrompt(currentPrompt); promptInputRef.current?.focus(); }}
                 onOpenSettings={openModelSettings}
               />
             ) : null}
           </div>
         )}
       </section>
+
+      {selectedFavorite && (
+        <HtmlFavoriteDialog
+          favorite={selectedFavorite}
+          returnFocusRef={favoritesButtonRef}
+          onClose={() => setSelectedFavoriteId(null)}
+          onToggleFavorite={() => void toggleFavorite(selectedFavorite.html, selectedFavorite.sourceChatId ?? undefined).catch((error) => toast.error(toUserMessage(error, "收藏失败，请重试。")))}
+        />
+      )}
 
       {/* Layer 3: Input Zone */}
       <div className="bubble-input-zone">
@@ -920,6 +1142,40 @@ export function BubbleWindow() {
             )}
           </div>
         )}
+        <div className="chat-workspace" aria-label="对话上下文">
+          <button type="button" className="chat-workspace__directory" title={conversation.cwd || "需要操作本地文件时再选择文件夹"} disabled={!isTauriRuntime || agentBusy} onClick={() => void chooseWorkspace()}>
+            📁 {conversation.cwd ? (conversation.cwd.split(/[\\/]/).filter(Boolean).pop() || conversation.cwd) : "选择工作目录（可选）"}
+          </button>
+          <button ref={favoritesButtonRef} type="button" className="chat-workspace__directory" title="收藏的 HTML 卡片" onClick={() => setFavoritesOpen((open) => !open)} aria-expanded={favoritesOpen}>
+            <Star size={13} /> 收藏卡片{favorites.length ? ` · ${favorites.length}` : ""}
+          </button>
+          <button type="button" disabled={agentBusy} onClick={newConversation}>新对话</button>
+        </div>
+        {favoritesOpen && (
+          <div className="bubble-favorites" aria-label="收藏的 HTML 卡片">
+            {favorites.length === 0 ? (
+              <p>还没有收藏，在任意 HTML 卡片头部点 ★ 即可收藏</p>
+            ) : favorites.map((favorite) => (
+              <div key={favorite.id} className="bubble-favorites__item">
+                <button
+                  type="button"
+                  className="bubble-favorites__title"
+                  title={favorite.html}
+                  onClick={() => { setSelectedFavoriteId(favorite.id); setFavoritesOpen(false); }}
+                >
+                  {favorite.title}
+                </button>
+                <span className="bubble-favorites__actions">
+                  <button type="button" title="删除" onClick={() => void removeFavorite(favorite.id).then(() => {
+                    if (selectedFavoriteId === favorite.id) setSelectedFavoriteId(null);
+                  }).catch((error) => toast.error(toUserMessage(error, "删除失败，请重试。")))}>
+                    <X size={13} />
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <form className="prompt-form" onSubmit={submit}>
           <div className="prompt-tools" aria-label="输入工具">
             <button type="button" onClick={() => void chooseAttachment()} aria-label="选择文件" title="选择文件">
@@ -946,7 +1202,8 @@ export function BubbleWindow() {
             placeholder={attachment || screenshot ? "可补充处理要求" : "输入问题，或描述一个任务"}
             aria-label="发送给 Piko 的问题"
           />
-          {isThinking ? (
+          {agentBusy && <button type="submit" aria-label="补充要求" disabled={!prompt.trim() || sendingSteering}>补充要求</button>}
+          {(isThinking || agentBusy) ? (
             <button type="button" className="prompt-form__stop" onClick={cancel} title="停止生成" aria-label="停止生成">
               <Square size={15} />
             </button>

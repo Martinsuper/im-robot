@@ -15,6 +15,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run test
+      - run: npm --prefix agent ci
+      - run: npm run test:agent
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
@@ -26,6 +28,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run agent:prepare
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update

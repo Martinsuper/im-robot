@@ -95,10 +95,26 @@
       "title": "待确认操作"
     },
     "preview": {
+      "openWindow": "独立窗口打开",
+      "dragHint": "拖动标题到预览区域外，可在独立窗口打开",
+      "openFailed": "独立窗口打开失败，请重试或允许弹出窗口。",
+      "loadFailed": "HTML 预览加载失败，请重试或重启应用。",
       "ariaLabel": "HTML 预览",
       "frameTitle": "Piko HTML 预览",
       "sandboxNote": "沙箱 iframe",
-      "title": "HTML 预览"
+      "title": "HTML 预览",
+      "viewToggle": "预览 / 源码切换",
+      "previewTab": "预览",
+      "sourceTab": "源码",
+      "showPreview": "返回预览",
+      "showSource": "查看源码",
+      "favorite": "收藏",
+      "unfavorite": "取消收藏",
+      "copySource": "复制源码",
+      "favoritesTitle": "收藏的卡片",
+      "favoritesEmpty": "还没有收藏，在任意 HTML 卡片头部点 ★ 即可收藏",
+      "previewFavorite": "预览",
+      "deleteFavorite": "删除"
     }
   },
   "settings": {
@@ -412,6 +428,19 @@
     "view": {
       "all": "全部",
       "recent": "最近"
+    },
+    "extraction": {
+      "title": "自动提取记忆",
+      "enable": "定期从对话提取记忆",
+      "interval": "提取间隔",
+      "minutes": "分钟",
+      "now": "立即提取",
+      "working": "处理中…",
+      "description": "在本机提取偏好和个人事实；候选经你确认后用于后续对话。应用关闭时暂停，下次启动补扫。",
+      "lastRun": "上次提取：",
+      "notYet": "尚未运行",
+      "desktopOnly": "请在桌面应用中设置自动提取。",
+      "result": "新增 {count} 条候选记忆，请在待确认中审核。"
     }
   },
   "panel": {

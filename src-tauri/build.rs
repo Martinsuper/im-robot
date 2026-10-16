@@ -1,4 +1,9 @@
 fn main() {
+    std::fs::write(
+        std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("agent-target.txt"),
+        std::env::var("TARGET").unwrap(),
+    )
+    .unwrap();
     tauri_build::build();
 
     // Compile the EventKit Objective-C bridge on macOS.

@@ -1,33 +1,19 @@
-import { useState } from "react";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Coffee, Copy, Download, FileText, MessageCircle, MoreHorizontal, RotateCcw, Settings2, Square, Volume2 } from "lucide-react";
-import { runCommand } from "../app/appRuntime";
-import { suggestionsFor } from "./chatSuggestions";
-import { foldReply, foldedRemainder, shouldFoldReply } from "./replyFolding";
-import { isValidElement, type ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { ChatHistoryEntry } from "../../types/appTypes";
-import { PetSprite } from "../app/appShared";
+import "katex/dist/katex.min.css";
+import { AlertTriangle,Check,ChevronDown,ChevronRight,Copy,Download,MessageCircle,MoreHorizontal,RotateCcw,Settings2,Square,Volume2 } from "lucide-react";
+import { useEffect,useRef,useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import "katex/dist/katex.min.css";
+import type { ChatHistoryEntry } from "../../types/appTypes";
+import { PetSprite } from "../app/appShared";
+import { extractMarkdownText,formatTime,SUGGESTION_ICONS,textForSpeech,truncate } from "./ChatPresentationData";
+import { suggestionsFor } from "./chatSuggestions";
+import { extractHtmlPreviewSource,HtmlPreviewFrame,type HtmlPreviewView } from "./HtmlPreviewFrame";
+import { foldedRemainder,foldReply,shouldFoldReply } from "./replyFolding";
 import "./replyStatus.css";
 
-export function extractMarkdownText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(extractMarkdownText).join("");
-  if (isValidElement<{ children?: ReactNode }>(node)) return extractMarkdownText(node.props.children);
-  return "";
-}
-
-export function textForSpeech(text: string) {
-  return text
-    // Why: 朗读前剥掉 emoji。字符类里确实包含 ZWJ / 变体选择符等组合序列，
-    // 这是有意的（要逐个码点剔除），不是漏写 u 标志导致的误解，故关闭该规则。
-    // eslint-disable-next-line no-misleading-character-class
-    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{1F1E6}-\u{1F1FF}\u200D\uFE0E\uFE0F\u20E3]/gu, "");
-}
 
 export function MarkdownContent({ children }: { children: string }) {
   return (
@@ -69,15 +55,6 @@ export function MarkdownContent({ children }: { children: string }) {
   );
 }
 
-export function formatTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-}
-
-export function truncate(text: string, max: number): string {
-  const cleaned = text.replace(/\n+/g, " ").trim();
-  return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
-}
 
 // --- Sub-components ---
 
@@ -104,6 +81,30 @@ export function InlineToolbar({
   onClearContext: () => void;
   onOpenPanel: () => void;
 }) {
+  const menuRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const closeOutside = (event: PointerEvent) => {
+      const menu = menuRef.current;
+      if (menu && !menu.contains(event.target as Node)) menu.open = false;
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && menuRef.current?.open) {
+        event.preventDefault();
+        event.stopPropagation();
+        menuRef.current.open = false;
+        menuRef.current.querySelector("summary")?.focus();
+      }
+    };
+    const closeOnBlur = () => { if (menuRef.current) menuRef.current.open = false; };
+    document.addEventListener("pointerdown", closeOutside, true);
+    document.addEventListener("keydown", closeOnEscape, true);
+    window.addEventListener("blur", closeOnBlur);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside, true);
+      document.removeEventListener("keydown", closeOnEscape, true);
+      window.removeEventListener("blur", closeOnBlur);
+    };
+  }, []);
   if (!message.trim()) return null;
   return (
     <div className="inline-toolbar">
@@ -126,9 +127,9 @@ export function InlineToolbar({
       <button type="button" className="inline-toolbar__btn" onClick={onSave} title="保存回复">
         <Download size={15} />
       </button>
-      <details className="inline-more-menu" data-no-drag>
+      <details ref={menuRef} className="inline-more-menu" data-no-drag>
         <summary className="inline-toolbar__btn" title="更多" aria-label="更多操作"><MoreHorizontal size={16} /></summary>
-        <div>
+        <div onClick={() => { if (menuRef.current) menuRef.current.open = false; }}>
           <button
             type="button"
             className={htmlPreviewEnabled ? "is-active" : ""}
@@ -148,15 +149,28 @@ export function InlineToolbar({
   );
 }
 
+
 export function HistoryItem({
   entry,
   isExpanded,
+  htmlPreviewEnabled,
+  previewAsSource,
+  isFavorited,
   onToggle,
+  onPreviewViewChange,
+  onToggleFavorite,
 }: {
   entry: ChatHistoryEntry;
   isExpanded: boolean;
+  htmlPreviewEnabled: boolean;
+  previewAsSource?: boolean;
+  isFavorited?: boolean;
   onToggle: () => void;
+  onPreviewViewChange?: (view: HtmlPreviewView) => void;
+  onToggleFavorite?: () => void;
 }) {
+  const rawPreviewSource = extractHtmlPreviewSource(entry.response);
+  const htmlPreviewSource = isExpanded && htmlPreviewEnabled && !previewAsSource ? rawPreviewSource : null;
   return (
     <div className={`bubble-thread__history-item${isExpanded ? " bubble-thread__history-item--expanded" : ""}`}>
       <button type="button" className="bubble-thread__history-toggle" onClick={onToggle} aria-expanded={isExpanded}>
@@ -173,9 +187,19 @@ export function HistoryItem({
             <div className="bubble-thread__ai-sprite">
               <PetSprite mode="idle" compact />
             </div>
-            <div className="bubble-thread__ai-content">
-              <MarkdownContent>{entry.response}</MarkdownContent>
-            </div>
+            {htmlPreviewSource || (previewAsSource && rawPreviewSource) ? (
+              <HtmlPreviewFrame
+                source={(htmlPreviewSource ?? rawPreviewSource) as string}
+                view={previewAsSource ? "source" : "preview"}
+                onViewChange={onPreviewViewChange}
+                isFavorited={isFavorited}
+                onToggleFavorite={onToggleFavorite}
+              />
+            ) : (
+              <div className="bubble-thread__ai-content">
+                <MarkdownContent>{entry.response}</MarkdownContent>
+              </div>
+            )}
           </div>
           <div className="inline-toolbar">
             <button
@@ -213,7 +237,6 @@ export function HistoryItem({
   );
 }
 
-const SUGGESTION_ICONS = [Coffee, FileText, MessageCircle];
 
 export function WelcomeState({ companionName, message, onSuggest }: { companionName: string; message: string; onSuggest: (prompt: string) => void }) {
   // 建议随小时变化（02 §11）；点击只填入输入框，不自动发送。
@@ -240,6 +263,7 @@ export function WelcomeState({ companionName, message, onSuggest }: { companionN
   );
 }
 
+
 /**
  * 长回复折叠（02 §7.3）。
  *
@@ -258,6 +282,7 @@ export function CollapsibleReply({ markdown }: { markdown: string }) {
     </>
   );
 }
+
 
 /**
  * 失败 / 停止状态（02 §4、§12）。
@@ -281,7 +306,7 @@ export function ReplyStatusCard({
       <div className="reply-status reply-status--cancelled" role="status">
         <Square size={14} aria-hidden="true" />
         <span>已停止</span>
-        <button type="button" className="text-action" onClick={onRetry}>重新生成</button>
+        <button type="button" className="text-action" onClick={onRetry}>编辑后再发送</button>
       </div>
     );
   }
@@ -291,7 +316,7 @@ export function ReplyStatusCard({
       <div className="reply-status__body">
         <p>{message || "出了点小状况"}</p>
         <div className="reply-status__actions">
-          <button type="button" onClick={onRetry}><RotateCcw size={13} />重试</button>
+          <button type="button" onClick={onRetry}><RotateCcw size={13} />编辑后再发送</button>
           {onOpenSettings ? (
             <button type="button" className="text-action" onClick={onOpenSettings}>
               <Settings2 size={13} />检查设置
@@ -302,6 +327,7 @@ export function ReplyStatusCard({
     </div>
   );
 }
+
 
 /**
  * 未配置模型时的引导卡（02 §10.4）。
@@ -321,9 +347,3 @@ export function ModelSetupCard({ onOpenSettings }: { onOpenSettings: () => void 
     </div>
   );
 }
-
-/** 打开面板并定位到「设置 → 对话与模型」。 */
-export function openModelSettings() {
-  void runCommand("open_panel");
-}
-

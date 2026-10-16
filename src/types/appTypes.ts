@@ -5,6 +5,8 @@ export interface AiSettings {
   speechModel: string;
   temperature: number;
   timeoutSeconds: number;
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 export type QuietMode = "active" | "balanced" | "minimal";
@@ -24,6 +26,7 @@ export interface AppSettings {
   ai: AiSettings;
   hasApiKey: boolean;
   htmlPreviewEnabled: boolean;
+  agentAutoApproveCommands: boolean;
   /** 全局快捷键（打开对话窗口）。格式如 CmdOrCtrl+Shift+Space。 */
   globalShortcut: string;
 }

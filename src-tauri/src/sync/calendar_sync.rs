@@ -21,6 +21,8 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
+static CALENDAR_SYNC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const SYNC_MARKER_PREFIX: &str = "PIKO_SYNC local_id=";
 const IMPORTED_SYSTEM_ID_PREFIX: &str = "system-macos-";
 
@@ -262,52 +264,44 @@ fn description_for_event(event: &CalendarEvent, local_id: &str) -> String {
 #[cfg(target_os = "macos")]
 fn bridge_push(payload: &serde_json::Value) -> Result<serde_json::Value, String> {
     let json_str = serde_json::to_string(payload).map_err(|e| e.to_string())?;
-    let c_input = CString::new(json_str).map_err(|e| e.to_string())?;
-    unsafe {
-        let raw = piko_calendar_push(c_input.as_ptr());
-        if raw.is_null() {
-            return Ok(json!([]));
-        }
-        let result_str = CStr::from_ptr(raw).to_string_lossy().into_owned();
-        extern "C" {
-            fn free(ptr: *mut std::ffi::c_void);
-        }
-        free(raw as *mut _);
-        if result_str.trim().is_empty() {
-            return Ok(json!([]));
-        }
-        serde_json::from_str(&result_str).map_err(|e| e.to_string())
-    }
+    let input = CString::new(json_str).map_err(|e| e.to_string())?;
+    decode_bridge_pointer(unsafe { piko_calendar_push(input.as_ptr()) })
 }
 
 /// Pull events from system calendar via the EventKit bridge.
 #[cfg(target_os = "macos")]
 fn bridge_pull() -> Result<serde_json::Value, String> {
-    unsafe {
-        let raw = piko_calendar_pull();
-        if raw.is_null() {
-            log_debug("bridge_pull: NULL");
-            return Ok(json!([]));
-        }
-        let result_str = CStr::from_ptr(raw).to_string_lossy().into_owned();
+    decode_bridge_pointer(unsafe { piko_calendar_pull() })
+}
+
+#[cfg(target_os = "macos")]
+fn decode_bridge_pointer(raw: *mut c_char) -> Result<serde_json::Value, String> {
+    if raw.is_null() {
+        return Err("系统日历未返回有效数据，请重试".to_string());
+    }
+    // The bridge owns this allocation until returning it; release it after copying.
+    let text = unsafe {
+        let text = CStr::from_ptr(raw).to_string_lossy().into_owned();
         extern "C" {
             fn free(ptr: *mut std::ffi::c_void);
         }
         free(raw as *mut _);
-        log_debug(&format!("bridge_pull: {} bytes", result_str.len()));
-        if result_str.trim().is_empty() {
-            return Ok(json!([]));
-        }
-        // Log the raw JSON for debugging
-        log_debug(&format!(
-            "bridge_pull: raw={}",
-            &result_str[..result_str.len().min(500)]
-        ));
-        serde_json::from_str::<serde_json::Value>(&result_str).map_err(|e| {
-            log_debug(&format!("bridge_pull: parse error: {e}"));
-            e.to_string()
-        })
+        text
+    };
+    decode_bridge_response(&text)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn decode_bridge_response(raw: &str) -> Result<serde_json::Value, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|_| "系统日历返回的数据无效，请重试".to_string())?;
+    if let Some(error) = value.get("error").and_then(serde_json::Value::as_str) {
+        return Err(format!("系统日历同步失败：{error}"));
     }
+    if !value.is_array() {
+        return Err("系统日历返回的数据格式无效".to_string());
+    }
+    Ok(value)
 }
 
 fn log_debug(msg: &str) {
@@ -331,6 +325,7 @@ fn ensure_calendar_access() -> Result<(), String> {
     let status = bridge_auth_status();
     match status.as_str() {
         "authorized" => Ok(()),
+        "unavailable" => Err("系统日历暂时不可用，请稍后重试".to_string()),
         "denied" | "restricted" => Err(
             "日历权限被拒绝。请在 系统设置 → 隐私与安全 → 日历 中允许 Piko 访问日历。".to_string(),
         ),
@@ -348,6 +343,10 @@ fn ensure_calendar_access() -> Result<(), String> {
                 free(raw as *mut _);
                 if result == "authorized" {
                     Ok(())
+                } else if result == "missingUsageDescription" {
+                    Err("应用缺少日历权限声明，请安装修复后的 Piko 版本再导入日程".to_string())
+                } else if result == "exception" {
+                    Err("系统日历授权发生异常，请稍后重试".to_string())
                 } else if result == "timeout" {
                     Err("请求日历权限超时".to_string())
                 } else {
@@ -366,11 +365,14 @@ pub(crate) fn push_to_system_calendar(
     app: &AppHandle,
     events: &[CalendarEvent],
 ) -> Result<PushResult, String> {
-    let _transaction = storage::transaction();
+    let _sync = CALENDAR_SYNC_LOCK
+        .lock()
+        .map_err(|_| "日历同步发生异常，请重启应用后重试".to_string())?;
     if !cfg!(target_os = "macos") {
         return Err("当前平台尚未开放系统日历同步".to_string());
     }
     ensure_calendar_access()?;
+    let _transaction = storage::transaction();
 
     let mut mappings = read_sync_mappings(app);
     let platform = current_platform().to_string();
@@ -442,7 +444,9 @@ pub(crate) fn push_to_system_calendar(
 
 /// Pull events from the system calendar back into local form.
 pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<PullResult, String> {
-    let _transaction = storage::transaction();
+    let _sync = CALENDAR_SYNC_LOCK
+        .lock()
+        .map_err(|_| "日历同步发生异常，请重启应用后重试".to_string())?;
     if !cfg!(target_os = "macos") {
         return Err("当前平台尚未开放系统日历同步".to_string());
     }
@@ -469,6 +473,7 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
         .map(SystemCalendarEvent::to_calendar_event)
         .collect();
 
+    let _transaction = storage::transaction();
     let mut local_events = crate::read_calendar_events(app);
     log_debug(&format!(
         "pull: {} existing local events",
@@ -570,18 +575,9 @@ fn read_system_events(_since: u64) -> Result<Vec<SystemCalendarEvent>, String> {
     for (i, entry) in arr.iter().enumerate() {
         match serde_json::from_value::<SystemCalendarEvent>(entry.clone()) {
             Ok(ev) => {
-                log_debug(&format!("read_system_events: [{}] title='{}' local_id='{}' system_id='{}' resolved='{}'",
-                    i, ev.title, ev.local_id, ev.system_id, ev.resolved_local_id()));
                 system_events.push(ev);
             }
-            Err(e) => {
-                log_debug(&format!(
-                    "read_system_events: [{}] FAIL: {} json={}",
-                    i,
-                    e,
-                    serde_json::to_string(entry).unwrap_or_default()
-                ));
-            }
+            Err(_) => log_debug(&format!("read_system_events: [{i}] invalid event")),
         }
     }
 
@@ -625,9 +621,35 @@ impl SystemCalendarEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::{exclude_deleted_local_events, local_id_for_system_event, SystemCalendarEvent};
+    use super::{
+        decode_bridge_response, exclude_deleted_local_events, local_id_for_system_event,
+        SystemCalendarEvent,
+    };
     use crate::CalendarEvent;
     use std::collections::HashSet;
+
+    #[test]
+    fn imports_long_unicode_payload_without_slicing_inside_a_character() {
+        let title = format!("a{}🙂", "中".repeat(600));
+        let payload = serde_json::to_string(&serde_json::json!([{"title":title}])).unwrap();
+        assert!(
+            !payload.is_char_boundary(500),
+            "Fixture must reproduce the old byte-slice panic"
+        );
+        let decoded = decode_bridge_response(&payload).unwrap();
+        assert_eq!(decoded[0]["title"], title);
+    }
+
+    #[test]
+    fn native_errors_and_invalid_responses_do_not_become_empty_successful_imports() {
+        assert_eq!(decode_bridge_response("[]").unwrap(), serde_json::json!([]));
+        assert!(decode_bridge_response(r#"{"error":"EventKit exception"}"#)
+            .unwrap_err()
+            .contains("EventKit exception"));
+        for invalid in ["", "null", "{}", "broken", r#"{"events":[]}"#] {
+            assert!(decode_bridge_response(invalid).is_err(), "{invalid}");
+        }
+    }
 
     #[test]
     fn excludes_locally_deleted_events_when_pulling_from_system_calendar() {

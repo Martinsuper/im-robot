@@ -19,9 +19,13 @@ vi.mock("../app/appRuntime", () => ({
   runCommandQuiet: (...args: unknown[]) => runCommandMock(...args),
 }));
 
+const focusHandlers = new Set<(event: { payload: boolean }) => void>();
 const getCurrentWindowMock = vi.fn(() => ({
   startDragging: vi.fn(() => Promise.resolve()),
-  onFocusChanged: vi.fn(() => Promise.resolve<UnlistenFn>(() => undefined)),
+  onFocusChanged: vi.fn((handler: (event: { payload: boolean }) => void) => {
+    focusHandlers.add(handler);
+    return Promise.resolve<UnlistenFn>(() => { focusHandlers.delete(handler); });
+  }),
   onDragDropEvent: vi.fn(() => Promise.resolve<UnlistenFn>(() => undefined)),
 }));
 
@@ -111,7 +115,10 @@ function installDefaultCommands() {
     if (command === "get_bubble_chat_history") {
       return Promise.resolve(chatHistory);
     }
-    if (command === "chat_start") {
+    if (command === "list_html_favorites") {
+      return Promise.resolve([]);
+    }
+    if (command === "agent_start") {
       return new Promise<void>(() => undefined); // 挂起不 resolve
     }
     return Promise.resolve(undefined);
@@ -124,7 +131,7 @@ function historyRefreshCount(): number {
 
 function chatStartInputCalls(): Array<{ requestId: string; prompt: string }> {
   return runCommandMock.mock.calls
-    .filter((call) => call[0] === "chat_start")
+    .filter((call) => call[0] === "agent_start")
     .map((call) => {
       const input = (call[1] as { input: { requestId: string; prompt: string } }).input;
       return { requestId: String(input.requestId), prompt: String(input.prompt) };
@@ -142,9 +149,9 @@ function queueUuids(ids: string[]) {
 
 // --- 渲染与输入工具 ---
 
-function submitPrompt(text: string) {
+async function submitPrompt(text: string) {
   const input = screen.getByLabelText("发送给 Piko 的问题") as HTMLInputElement;
-  act(() => {
+  await act(async () => {
     fireEvent.change(input, { target: { value: text } });
     fireEvent.submit(input.closest("form") as HTMLFormElement);
   });
@@ -153,6 +160,7 @@ function submitPrompt(text: string) {
 describe("BubbleWindow 聊天事件流竞态", () => {
   beforeEach(() => {
     handlersByEvent.clear();
+    focusHandlers.clear();
     listenMock.mockReset();
     installListenMock();
     runCommandMock.mockReset();
@@ -172,56 +180,23 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     vi.restoreAllMocks();
   });
 
-  it("并发竞态：旧请求 A 的 started/delta/completed 不会覆盖新请求 B 的显示", async () => {
+  it("执行中禁止重复发送，完成后新请求忽略旧请求事件", async () => {
     queueUuids(["req-a", "req-b"]);
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
-
-    // 请求 A 开始（chat_start 挂起，模拟进行中）
-    submitPrompt("查一下天气");
+    await submitPrompt("查一下天气");
+    await submitPrompt("帮我写周报");
     expect(chatStartInputCalls()).toEqual([{ requestId: "req-a", prompt: "查一下天气" }]);
-    expect(screen.getByText("查一下天气")).toBeTruthy(); // 用户气泡
-    expect(screen.getByText("正在生成回复")).toBeTruthy(); // 骨架
-
-    // 未等 A 返回，直接再次提交 -> 请求 B 接管
-    submitPrompt("帮我写周报");
-    expect(chatStartInputCalls()).toEqual([
-      { requestId: "req-a", prompt: "查一下天气" },
-      { requestId: "req-b", prompt: "帮我写周报" },
-    ]);
-
-    // A 的事件交错到达，必须全部被忽略
+    act(() => emitChat({ type: "completed", requestId: "req-a" }));
+    await submitPrompt("帮我写周报");
+    expect(chatStartInputCalls()).toHaveLength(2);
     act(() => {
-      emitChat({ type: "started", requestId: "req-a", working: true });
-      emitChat({ type: "delta", requestId: "req-a", sequence: 1, text: "旧请求的回答" });
-      emitChat({ type: "completed", requestId: "req-a" });
+      emitChat({ type: "delta", requestId: "req-a", sequence: 1, text: "旧请求回答" });
+      emitChat({ type: "started", requestId: "req-b", working: false });
+      emitChat({ type: "delta", requestId: "req-b", sequence: 1, text: "新的回复" });
     });
-
-    expect(screen.queryByText("旧请求的回答")).toBeNull();
-    expect(screen.getByText("正在生成回复")).toBeTruthy(); // B 仍在生成
-    expect(historyRefreshCount()).toBe(1); // A 的 completed 不触发历史刷新
-
-    // B 的事件正常渲染
-    act(() => {
-      emitChat({ type: "started", requestId: "req-b", working: true });
-      emitChat({ type: "delta", requestId: "req-b", sequence: 1, text: "本周完成了" });
-      emitChat({ type: "delta", requestId: "req-b", sequence: 2, text: "三个需求" });
-    });
-    await screen.findByText("本周完成了三个需求");
-
-    act(() => {
-      emitChat({ type: "completed", requestId: "req-b" });
-    });
-    await waitFor(() => expect(historyRefreshCount()).toBe(2)); // B 的 completed 刷新历史
-    expect(screen.queryByText("正在生成回复")).toBeNull();
-    expect(screen.getByText("本周完成了三个需求")).toBeTruthy();
-
-    // B 完成后 A 的迟到事件仍被忽略
-    act(() => {
-      emitChat({ type: "delta", requestId: "req-a", sequence: 9, text: "迟到的旧回答" });
-    });
-    expect(screen.queryByText("迟到的旧回答")).toBeNull();
-    expect(screen.getByText("本周完成了三个需求")).toBeTruthy();
+    expect(screen.queryByText("旧请求回答")).toBeNull();
+    expect(await screen.findByText("新的回复")).toBeTruthy();
   });
 
   it("同一请求内：乱序与重复 sequence 的 delta 被去重", async () => {
@@ -229,7 +204,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
 
-    submitPrompt("讲个故事");
+    await submitPrompt("讲个故事");
     act(() => {
       emitChat({ type: "started", requestId: "req-seq", working: true });
       emitChat({ type: "delta", requestId: "req-seq", sequence: 2, text: "乙" });
@@ -247,7 +222,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
 
-    submitPrompt("再来一次");
+    await submitPrompt("再来一次");
     act(() => {
       emitChat({ type: "started", requestId: "req-r", working: true });
       emitChat({ type: "delta", requestId: "req-r", sequence: 1, text: "第一版回答" });
@@ -269,7 +244,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
 
-    submitPrompt("会失败的问题");
+    await submitPrompt("会失败的问题");
     act(() => {
       emitChat({ type: "started", requestId: "req-f", working: true });
       emitChat({ type: "failed", requestId: "req-f", message: "模型服务超时" });
@@ -284,7 +259,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
 
-    submitPrompt("被取消的问题");
+    await submitPrompt("被取消的问题");
     act(() => {
       emitChat({ type: "started", requestId: "req-c", working: true });
       emitChat({ type: "delta", requestId: "req-c", sequence: 1, text: "部分内容" });
@@ -318,7 +293,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
 
-    submitPrompt("帮我创建提醒");
+    await submitPrompt("帮我创建提醒");
     act(() => {
       emitChat({ type: "started", requestId: "req-act", working: true });
       emitChat({
@@ -348,6 +323,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
         language: "zh-CN", hasApiKey: true, ai: { baseUrl: "http://127.0.0.1:8317/v1" },
       });
       if (command === "get_bubble_chat_history") return Promise.resolve([]);
+      if (command === "list_html_favorites") return Promise.resolve([]);
       if (command === "confirm_chat_action") return Promise.resolve({
         message: "日程已创建。", followUpPrompt: "系统已经执行，请确认结果。", result: {},
       });
@@ -355,7 +331,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     });
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
-    submitPrompt("创建明早起床日程");
+    await submitPrompt("创建明早起床日程");
     act(() => emitChat({ type: "action-proposed", requestId: "req-confirm", draft: {
       id: "draft-calendar", pluginId: "piko.calendar", toolName: "create_event",
       summary: "创建起床日程", arguments: {}, createdAt: 0,
@@ -382,7 +358,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     });
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
-    submitPrompt("处理测试日程");
+    await submitPrompt("处理测试日程");
     act(() => emitChat({ type: "action-proposed", requestId: "req-batch", draft: {
       id: "draft-batch", pluginId: "piko.calendar", toolName, summary: "批量操作两条测试日程",
       arguments: { events: [{ id: "a", title: "测试 A" }, { id: "b", title: "测试 B" }] }, createdAt: 0,
@@ -401,7 +377,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     queueUuids(["req-cancel-batch"]);
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
-    submitPrompt("删除测试日程");
+    await submitPrompt("删除测试日程");
     act(() => emitChat({ type: "action-proposed", requestId: "req-cancel-batch", draft: {
       id: "draft-cancel-batch", pluginId: "piko.calendar", toolName: "delete_event_batch",
       summary: "删除测试日程", arguments: { events: [{ id: "a", title: "测试 A" }] }, createdAt: 0,
@@ -424,7 +400,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     });
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
-    submitPrompt("删除测试日程");
+    await submitPrompt("删除测试日程");
     act(() => emitChat({ type: "action-proposed", requestId: "req-failed-batch", draft: {
       id: "draft-failed-batch", pluginId: "piko.calendar", toolName: "delete_event_batch",
       summary: "删除测试日程", arguments: { events: [{ id: "a", title: "测试 A" }] }, createdAt: 0,
@@ -452,7 +428,10 @@ describe("BubbleWindow 聊天事件流竞态", () => {
       if (command === "get_bubble_chat_history") {
         return Promise.resolve([] as ChatHistoryEntry[]);
       }
-      if (command === "chat_start") {
+      if (command === "list_html_favorites") {
+        return Promise.resolve([]);
+      }
+      if (command === "agent_start") {
         return Promise.reject(new Error("backend down"));
       }
       return Promise.resolve(undefined);
@@ -461,11 +440,29 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     render(<BubbleWindow />);
     await waitFor(() => expect(historyRefreshCount()).toBe(1));
 
-    submitPrompt("触发失败");
+    await submitPrompt("触发失败");
     // catch 分支执行了 setIsThinking(false)：停止按钮被发送按钮替换
     await waitFor(() => expect(screen.queryByTitle("停止生成")).toBeNull());
     // 骨架隐藏、错误消息可见（chat_start .catch 完整复位生成态）
     expect(screen.queryByText("正在生成回复")).toBeNull();
     expect(screen.getByText(/网络好像不太稳定/)).toBeTruthy();
   });
+  it("does not steal focus from a detached window when chat loses focus", async () => {
+    render(<><button type="button">Detached window</button><BubbleWindow /></>);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    const otherWindow = screen.getByRole("button", { name: "Detached window" });
+    otherWindow.focus();
+    await act(async () => {
+      for (const handler of focusHandlers) handler({ payload: true });
+      for (const handler of focusHandlers) handler({ payload: false });
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+    });
+    expect(document.activeElement).toBe(otherWindow);
+    await act(async () => {
+      for (const handler of focusHandlers) handler({ payload: false });
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+    });
+    expect(document.activeElement).toBe(otherWindow);
+  });
+
 });

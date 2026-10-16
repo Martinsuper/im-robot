@@ -40,7 +40,7 @@ export function PanelWindow() {
   }, []);
 
   useEffect(() => {
-    void refreshOnboarding();
+    void Promise.resolve().then(refreshOnboarding);
     if (!isTauriRuntime) return;
     const pending = listen("onboarding-status-updated", () => void refreshOnboarding());
     return () => {

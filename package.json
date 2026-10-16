@@ -17,7 +17,10 @@
     "test:build:full": "bash scripts/test-build.sh --full",
     "preview": "vite preview",
     "tauri": "tauri",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "agent:prepare": "node scripts/prepare-agent-runtime.mjs",
+    "test:calendar": "node scripts/test-calendar-bridge.mjs",
+    "test:agent": "node --test agent/*.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

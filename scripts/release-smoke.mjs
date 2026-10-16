@@ -86,6 +86,11 @@ async function main() {
 
     run("ditto", [path.join(mountPoint, "Piko.app"), installAppPath]);
 
+    for (const key of ["NSCalendarsUsageDescription", "NSCalendarsFullAccessUsageDescription", "NSCalendarsWriteOnlyAccessUsageDescription"]) {
+      const usage = runWithOutput("plutil", ["-extract", key, "raw", "-o", "-", path.join(installAppPath, "Contents", "Info.plist")]);
+      if (!usage.trim()) throw new Error(`Installed app bundle is missing calendar permission text: ${key}`);
+    }
+
     const plistExecutable = runWithOutput("plutil", [
       "-extract",
       "CFBundleExecutable",

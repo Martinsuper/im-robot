@@ -95,10 +95,26 @@
       "title": "Actions Awaiting Confirmation"
     },
     "preview": {
+      "openWindow": "Open in separate window",
+      "dragHint": "Drag the title outside the preview to open a separate window",
+      "openFailed": "Could not open the preview window. Try again or allow pop-ups.",
+      "loadFailed": "Could not load the HTML preview. Try again or restart the app.",
       "ariaLabel": "HTML Preview",
       "frameTitle": "Piko HTML Preview",
       "sandboxNote": "Sandboxed iframe",
-      "title": "HTML Preview"
+      "title": "HTML Preview",
+      "viewToggle": "Preview / source toggle",
+      "previewTab": "Preview",
+      "sourceTab": "Source",
+      "showPreview": "Back to preview",
+      "showSource": "View source",
+      "favorite": "Favorite",
+      "unfavorite": "Unfavorite",
+      "copySource": "Copy source",
+      "favoritesTitle": "Favorite cards",
+      "favoritesEmpty": "No favorites yet. Tap ★ on any HTML card header to save it.",
+      "previewFavorite": "Preview",
+      "deleteFavorite": "Delete"
     }
   },
   "settings": {
@@ -412,6 +428,19 @@
     "view": {
       "all": "All",
       "recent": "Recent"
+    },
+    "extraction": {
+      "title": "Automatic memory extraction",
+      "enable": "Extract memories from conversations regularly",
+      "interval": "Extraction interval",
+      "minutes": "minutes",
+      "now": "Extract now",
+      "working": "Working…",
+      "description": "Extract preferences and personal facts locally. Review candidates before they inform future conversations. Extraction pauses when the app is closed and catches up on launch.",
+      "lastRun": "Last extraction: ",
+      "notYet": "Not run yet",
+      "desktopOnly": "Configure automatic extraction in the desktop app.",
+      "result": "Added {count} memory candidates. Review them in Pending."
     }
   },
   "panel": {

@@ -1,0 +1,10 @@
+.task-outcome { min-width: 0; margin: 10px 0; padding: 12px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 12px; background: var(--piko-soft, #edf5ef); font-size: 12px; overflow-wrap: anywhere; }
+.task-outcome p { margin: 6px 0; color: var(--piko-muted, #62736a); line-height: 1.5; }
+.task-outcome h4 { margin: 10px 0 4px; font-size: 12px; }
+.task-outcome ul { margin: 6px 0; padding-left: 18px; }
+.task-outcome li { margin: 6px 0; }
+.task-outcome code { white-space: pre-wrap; }
+.task-outcome button { margin: 5px 4px 0 0; }
+.task-outcome summary { cursor: pointer; margin: 8px 0; }
+.task-outcome__evidence { margin: 8px 0; }
+.task-outcome pre { max-height: 120px; margin: 4px 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }

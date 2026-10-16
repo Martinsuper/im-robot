@@ -1,23 +1,23 @@
-import { CSSProperties, useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+import { emit,listen } from "@tauri-apps/api/event";
+import { useEffect,useState } from "react";
+import type {
+AiSettings,
+AppSettings,
+AttachmentAction,
+CalendarEvent,
+FocusSnapshot,
+PanelTab,
+QuietMode,
+ReminderRepeat,
+TypingStatsToday,
+WorkRhythmState,
+} from "../../types/appTypes";
 import { disposeAsyncSubscriptions } from "../pet/hooks/eventSubscription";
 
-const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-import type {
-  AiSettings,
-  AppSettings,
-  AttachmentAction,
-  CalendarEvent,
-  FocusSnapshot,
-  PanelTab,
-  QuietMode,
-  ReminderRepeat,
-  TypingStatsToday,
-  WorkRhythmState,
-} from "../../types/appTypes";
+export const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-const petSpriteStates = {
+export const petSpriteStates = {
   idle: { row: 0, frames: 6, duration: 5500 },
   listening: { row: 3, frames: 4, duration: 700 },
   thinking: { row: 8, frames: 6, duration: 1030 },
@@ -29,7 +29,7 @@ const petSpriteStates = {
   error: { row: 5, frames: 8, duration: 1220 },
 };
 
-const robotCatFrameByMode = {
+export const robotCatFrameByMode = {
   idle: 1,
   listening: 4,
   thinking: 2,
@@ -41,17 +41,23 @@ const robotCatFrameByMode = {
   error: 0,
 } satisfies Record<keyof typeof petSpriteStates, number>;
 
+
 export type PetVisualStyle = "lumi" | "custom" | "classic";
 
+
 export const petVisualStyleStorageKey = "piko-pet-visual-style";
+
 export const customPetImageStorageKey = "piko-custom-pet-image-path";
+
 export const defaultPetVisualStyle: PetVisualStyle = "classic";
+
 
 export const petVisualStyleOptions: Array<{ label: string; labelKey: string; value: PetVisualStyle }> = [
   { label: "机甲猫", labelKey: "app.petStyle.lumi", value: "lumi" },
   { label: "自定义图片", labelKey: "app.petStyle.custom", value: "custom" },
   { label: "经典 Piko", labelKey: "app.petStyle.classic", value: "classic" },
 ];
+
 
 export function resolvePetVisualStyle(value: unknown, hasCustomImage = Boolean(getCustomPetImagePath())): PetVisualStyle {
   if (value === "custom" && !hasCustomImage) return defaultPetVisualStyle;
@@ -60,6 +66,7 @@ export function resolvePetVisualStyle(value: unknown, hasCustomImage = Boolean(g
     : defaultPetVisualStyle;
 }
 
+
 export function getPetVisualStyle(): PetVisualStyle {
   if (typeof window === "undefined") return defaultPetVisualStyle;
   const stored = window.localStorage.getItem(petVisualStyleStorageKey);
@@ -67,6 +74,7 @@ export function getPetVisualStyle(): PetVisualStyle {
   if (stored !== style) window.localStorage.setItem(petVisualStyleStorageKey, style);
   return style;
 }
+
 
 export function setPetVisualStyle(value: PetVisualStyle) {
   const style = resolvePetVisualStyle(value);
@@ -77,10 +85,12 @@ export function setPetVisualStyle(value: PetVisualStyle) {
   }
 }
 
+
 export function getCustomPetImagePath() {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem(customPetImageStorageKey) ?? "";
 }
+
 
 export function setCustomPetImagePath(path: string) {
   window.localStorage.setItem(customPetImageStorageKey, path);
@@ -89,6 +99,7 @@ export function setCustomPetImagePath(path: string) {
     void emit("piko-custom-pet-image-changed", path);
   }
 }
+
 
 export function clearCustomPetImagePath() {
   window.localStorage.removeItem(customPetImageStorageKey);
@@ -101,9 +112,11 @@ export function clearCustomPetImagePath() {
   }
 }
 
+
 export function getAvailablePetVisualStyleOptions(hasCustomImage = Boolean(getCustomPetImagePath())) {
   return petVisualStyleOptions.filter((option) => option.value !== "custom" || hasCustomImage);
 }
+
 
 export function getNextPetVisualStyle(
   style = getPetVisualStyle(),
@@ -113,6 +126,7 @@ export function getNextPetVisualStyle(
   const index = options.findIndex((option) => option.value === style);
   return options[(index + 1) % options.length].value;
 }
+
 
 export function usePetVisualStyle() {
   const [style, setStyle] = useState<PetVisualStyle>(getPetVisualStyle);
@@ -143,6 +157,7 @@ export function usePetVisualStyle() {
   return style;
 }
 
+
 export function useCustomPetImagePath() {
   const [path, setPath] = useState(getCustomPetImagePath);
 
@@ -172,12 +187,13 @@ export function useCustomPetImagePath() {
   return path;
 }
 
+
 export function useCustomPetImageUrl() {
   const path = useCustomPetImagePath();
   return path ? (isTauriRuntime ? convertFileSrc(path) : path) : "";
 }
 
-function formatCurrentTime() {
+export function formatCurrentTime() {
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
     minute: "2-digit",
@@ -185,6 +201,7 @@ function formatCurrentTime() {
     hour12: false,
   }).format(new Date());
 }
+
 
 export function useCurrentTime() {
   const [currentTime, setCurrentTime] = useState(formatCurrentTime);
@@ -206,7 +223,7 @@ export function useCurrentTime() {
   return currentTime;
 }
 
-function getRobotCatFrame(mode: keyof typeof petSpriteStates, emotion: string, reaction: string) {
+export function getRobotCatFrame(mode: keyof typeof petSpriteStates, emotion: string, reaction: string) {
   if (reaction === "celebrate" || mode === "success") return 7;
   if (reaction === "greet") return 6;
   if (mode === "resting" || emotion === "sleepy") return 3;
@@ -219,92 +236,11 @@ function getRobotCatFrame(mode: keyof typeof petSpriteStates, emotion: string, r
   return robotCatFrameByMode[mode];
 }
 
-export function PetSprite({
-  mode = "idle",
-  emotion = "neutral",
-  reaction = "none",
-  compact = false,
-  mouseDelta,
-}: {
-  mode?: keyof typeof petSpriteStates;
-  emotion?: string;
-  reaction?: string;
-  compact?: boolean;
-  mouseDelta?: { x: number; y: number };
-}) {
-  const sprite = petSpriteStates[mode];
-  const visualStyle = usePetVisualStyle();
-  const customPetImageUrl = useCustomPetImageUrl();
-  const effectiveVisualStyle = visualStyle === "custom" && !customPetImageUrl ? "classic" : visualStyle;
-  const robotCatFrame = getRobotCatFrame(mode, emotion, reaction);
-  const style = {
-    "--sprite-row": sprite.row,
-    "--sprite-frames": sprite.frames,
-    "--sprite-duration": `${sprite.duration}ms`,
-    "--robot-cat-col": robotCatFrame % 4,
-    "--robot-cat-row": Math.floor(robotCatFrame / 4),
-    "--look-x": mouseDelta ? `${mouseDelta.x * 6}px` : "0px",
-    "--look-y": mouseDelta ? `${mouseDelta.y * 4}px` : "0px",
-    "--eye-x": mouseDelta ? `${mouseDelta.x * 5}px` : "0px",
-    "--eye-y": mouseDelta ? `${mouseDelta.y * 4}px` : "0px",
-    "--pet-tilt": mouseDelta ? `${mouseDelta.x * 3}deg` : "0deg",
-    "--custom-pet-image": customPetImageUrl ? `url("${customPetImageUrl}")` : "none",
-  } as CSSProperties;
-
-  if (effectiveVisualStyle === "classic") {
-    return (
-      <span className={`pet-sprite-frame pet-sprite-frame--classic${compact ? " pet-sprite-frame--compact" : ""}`}>
-        <span className="pet-sprite" style={style} />
-      </span>
-    );
-  }
-
-  if (effectiveVisualStyle === "lumi") {
-    return (
-      <span
-        className={`pet-sprite-frame pet-sprite-frame--robot-cat${compact ? " pet-sprite-frame--compact" : ""}`}
-        style={style}
-      >
-        <span
-          className={`robot-cat-sprite robot-cat-sprite--${mode} robot-cat-sprite--emotion-${emotion} robot-cat-sprite--reaction-${reaction}`}
-          aria-hidden="true"
-        >
-          <span className="robot-cat-glow" />
-          <span className="robot-cat-image" />
-          <span className="robot-cat-shadow" />
-        </span>
-      </span>
-    );
-  }
-
-  if (effectiveVisualStyle === "custom" && customPetImageUrl) {
-    return (
-      <span
-        className={`pet-sprite-frame pet-sprite-frame--custom${compact ? " pet-sprite-frame--compact" : ""}`}
-        style={style}
-      >
-        <span
-          className={`custom-pet-sprite custom-pet-sprite--${mode} custom-pet-sprite--emotion-${emotion} custom-pet-sprite--reaction-${reaction}`}
-          aria-hidden="true"
-        >
-          <span className="custom-pet-glow" />
-          <span className="custom-pet-image" />
-          <span className="custom-pet-shadow" />
-        </span>
-      </span>
-    );
-  }
-
-  return (
-    <span className={`pet-sprite-frame pet-sprite-frame--classic${compact ? " pet-sprite-frame--compact" : ""}`}>
-      <span className="pet-sprite" style={style} />
-    </span>
-  );
-}
 
 export function countCalendarConflicts(events: CalendarEvent[], startAt: number, endAt: number) {
   return events.filter((event) => event.startAt < endAt && startAt < event.endAt).length;
 }
+
 
 export const defaultAiSettings: AiSettings = {
   provider: "ollama",
@@ -314,6 +250,7 @@ export const defaultAiSettings: AiSettings = {
   temperature: 0.7,
   timeoutSeconds: 120,
 };
+
 
 export const defaultAppSettings: AppSettings = {
   quietMode: "balanced",
@@ -330,8 +267,10 @@ export const defaultAppSettings: AppSettings = {
   ai: defaultAiSettings,
   hasApiKey: false,
   htmlPreviewEnabled: false,
+  agentAutoApproveCommands: false,
   globalShortcut: "CmdOrCtrl+Shift+Space",
 };
+
 
 export const defaultFocusSnapshot: FocusSnapshot = {
   status: "idle",
@@ -340,12 +279,14 @@ export const defaultFocusSnapshot: FocusSnapshot = {
   todayMinutes: 0,
 };
 
+
 export const defaultTypingStatsToday: TypingStatsToday = {
   date: "",
   typedCharacters: 0,
   typingSeconds: 0,
   updatedAt: 0,
 };
+
 
 export const defaultWorkRhythmState: WorkRhythmState = {
   date: "",
@@ -359,13 +300,15 @@ export const defaultWorkRhythmState: WorkRhythmState = {
   focusRemainingSeconds: 0,
 };
 
+
 // provider 预设已收敛到 ./providerPresets（唯一来源，引导页与设置页共用）。
 // 这里保留同名导出，避免一次性改动所有调用点。
 export {
-  findProviderPreset,
-  providerPresets as providerOptions,
-  type ProviderPreset,
+findProviderPreset,
+providerPresets as providerOptions,
+type ProviderPreset
 } from "./providerPresets";
+
 
 export const quietModeOptions: Array<{ label: string; labelKey: string; value: QuietMode }> = [
   { label: "活泼", labelKey: "app.quietMode.active", value: "active" },
@@ -373,11 +316,13 @@ export const quietModeOptions: Array<{ label: string; labelKey: string; value: Q
   { label: "极简", labelKey: "app.quietMode.minimal", value: "minimal" },
 ];
 
+
 export const panelTabOptions: Array<{ label: string; value: PanelTab }> = [
   { label: "今天", value: "today" },
   { label: "记录", value: "records" },
   { label: "设置", value: "settings" },
 ];
+
 
 export const reminderRepeatOptions: Array<{ label: string; labelKey: string; value: ReminderRepeat }> = [
   { label: "仅一次", labelKey: "app.repeat.none", value: "none" },
@@ -386,11 +331,13 @@ export const reminderRepeatOptions: Array<{ label: string; labelKey: string; val
   { label: "工作日", labelKey: "app.repeat.weekdays", value: "weekdays" },
 ];
 
+
 export function reminderRepeatLabel(repeat: ReminderRepeat, translate?: (key: string, fallback?: string) => string) {
   const option = reminderRepeatOptions.find((item) => item.value === repeat);
   if (!option) return translate ? translate("app.repeat.none", "仅一次") : "仅一次";
   return translate ? translate(option.labelKey, option.label) : option.label;
 }
+
 
 export const attachmentActionOptions: Array<{ label: string; value: AttachmentAction }> = [
   { label: "总结", value: "summarize" },
@@ -398,9 +345,11 @@ export const attachmentActionOptions: Array<{ label: string; value: AttachmentAc
   { label: "解释", value: "explain" },
 ];
 
+
 export function formatBytes(bytes: number) {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KiB`;
 }
+
 
 export function defaultReminderTime() {
   const date = new Date(Date.now() + 10 * 60 * 1000);
@@ -409,11 +358,13 @@ export function defaultReminderTime() {
   return local.toISOString().slice(0, 16);
 }
 
+
 export function defaultCalendarStartTime() {
   const date = new Date(Date.now() + 60 * 60 * 1000);
   date.setMinutes(0, 0, 0);
   return formatLocalDateTimeInput(date);
 }
+
 
 export function defaultCalendarEndTime() {
   const date = new Date(Date.now() + 2 * 60 * 60 * 1000);
@@ -421,10 +372,12 @@ export function defaultCalendarEndTime() {
   return formatLocalDateTimeInput(date);
 }
 
+
 export function formatLocalDateTimeInput(date: Date) {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
   return local.toISOString().slice(0, 16);
 }
+
 
 export function formatReminderTime(timestamp: number) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -435,15 +388,18 @@ export function formatReminderTime(timestamp: number) {
   }).format(timestamp * 1000);
 }
 
+
 export function formatCalendarRange(startAt: number, endAt: number) {
   return `${formatReminderTime(startAt)} - ${formatReminderTime(endAt)}`;
 }
+
 
 export function formatFocusRemaining(seconds: number) {
   const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
   const remainder = (seconds % 60).toString().padStart(2, "0");
   return `${minutes}:${remainder}`;
 }
+
 
 export function formatDuration(seconds: number) {
   const hours = Math.floor(seconds / 3600);
@@ -453,6 +409,7 @@ export function formatDuration(seconds: number) {
   parts.push(`${minutes} 分`);
   return parts.join(" ");
 }
+
 
 export function normalizeCaptureSelection(startX: number, startY: number, endX: number, endY: number) {
   return {

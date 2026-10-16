@@ -8,6 +8,8 @@
   <string>Piko uses speech recognition to turn your voice into text for chat input.</string>
   <key>NSCalendarsUsageDescription</key>
   <string>Piko needs calendar access to sync your events with the system Calendar app.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Piko needs full calendar access to import your system events and sync changes you confirm.</string>
   <key>NSCalendarsWriteOnlyAccessUsageDescription</key>
   <string>Piko needs calendar write access to sync events to the system Calendar app.</string>
 </dict>

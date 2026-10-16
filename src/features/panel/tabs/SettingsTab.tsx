@@ -75,7 +75,7 @@ function toneFromStatus(text: string, fallback: ToastTone = "info"): ToastTone {
  */
 export function SettingsTab() {
   const toast = useToast();
-  const { settings } = useAppSettings();
+  const { settings, applyServer } = useAppSettings();
   const autoSave = useAutoSave();
 
   // 偏好与休息提醒改为「草稿 + 已保存基线」两个来源：
@@ -98,6 +98,8 @@ export function SettingsTab() {
 
   const [quietMode, setQuietMode] = useState<QuietMode>(settings.quietMode);
   const [aiSettings, setAiSettings] = useState<AiSettings>(settings.ai);
+  const [agentAutoApproveCommands, setAgentAutoApproveCommands] = useState(settings.agentAutoApproveCommands ?? false);
+  const [savingCommandPermission, setSavingCommandPermission] = useState(false);
   const [htmlPreviewEnabled, setHtmlPreviewEnabled] = useState(settings.htmlPreviewEnabled);
 
   const [apiKey, setApiKey] = useState("");
@@ -155,6 +157,7 @@ export function SettingsTab() {
     }
     setQuietMode(settings.quietMode);
     setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
+    setAgentAutoApproveCommands(settings.agentAutoApproveCommands ?? false);
     // AI 参数是显式保存，服务端回包之外只在首次加载同步。
     if (isFirstLoad) {
       setAiSettings(settings.ai);
@@ -519,6 +522,23 @@ export function SettingsTab() {
     }
   }
 
+  async function updateAgentAutoApproveCommands(enabled: boolean) {
+    setAgentAutoApproveCommands(enabled);
+    setSavingCommandPermission(true);
+    try {
+      const next = await runCommand<AppSettings>("update_agent_auto_approve_commands", { enabled }, {
+        ...settings, agentAutoApproveCommands: enabled,
+      });
+      applyServer(next);
+      toast.success(enabled ? "已开启命令自动批准，下次任务起生效" : "已恢复逐次确认，下次任务起生效");
+    } catch (error) {
+      setAgentAutoApproveCommands(settings.agentAutoApproveCommands ?? false);
+      toast.error(toUserMessage(error, "命令权限设置保存失败"));
+    } finally {
+      setSavingCommandPermission(false);
+    }
+  }
+
   async function updateHtmlPreviewEnabled(enabled: boolean) {
     try {
       const next = await runCommand<AppSettings>(
@@ -834,6 +854,9 @@ export function SettingsTab() {
                   onChange={(event) => updateAiField("timeoutSeconds", Number(event.currentTarget.value))}
                 />
               </label>
+              <label><span>上下文窗口（0 自动）</span><input type="number" min="0" max="2000000" value={aiSettings.contextWindow ?? 0} onChange={(event) => updateAiField("contextWindow", Number(event.currentTarget.value))} /></label>
+              <label><span>最大输出 Token（0 自动）</span><input type="number" min="0" max="200000" value={aiSettings.maxOutputTokens ?? 0} onChange={(event) => updateAiField("maxOutputTokens", Number(event.currentTarget.value))} /></label>
+              <p>自动模式按模型目录确定限制；未知模型使用保守默认值，本地服务可按实际配置填写。</p>
             </div>
           </details>
           <div className="model-provider-form__actions" aria-label="模型设置操作">
@@ -953,6 +976,20 @@ export function SettingsTab() {
         icon={<ShieldCheck size={15} />}
         title="系统与隐私"
       >
+        <section className="panel-card">
+          <h2>命令执行权限</h2>
+          <label className="setting-toggle">
+            <input
+              type="checkbox"
+              checked={agentAutoApproveCommands}
+              disabled={savingCommandPermission}
+              onChange={(event) => void updateAgentAutoApproveCommands(event.currentTarget.checked)}
+            />
+            <span>始终自动批准命令执行</span>
+          </label>
+          <p className="settings-note">开启后，Shell 命令直接执行，无需逐次确认，下次任务起生效，重启后仍保留。执行详情与停止按钮仍可用；文件读写、备忘录、日历和提醒保留原有确认规则。</p>
+        </section>
+
         <section className="panel-card">
           <h2>开机与驻留</h2>
           <div className="settings-form">

@@ -8,7 +8,7 @@ import "./App.css";
 import "./features/app/design-system.css";
 import "./features/chat/bubble.css";
 
-type WindowLabel = "pet" | "bubble" | "panel" | "capture";
+type WindowLabel = "pet" | "bubble" | "panel" | "capture" | "html-preview";
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 const BubbleWindow = lazy(() => import("./features/chat/BubbleWindow").then((module) => ({ default: module.BubbleWindow })));
@@ -16,8 +16,11 @@ const CaptureWindow = lazy(() => import("./features/capture/CaptureWindow").then
 const PanelWindow = lazy(() => import("./features/panel/PanelWindow").then((module) => ({ default: module.PanelWindow })));
 const PetWindow = lazy(() => import("./features/pet/PetWindow").then((module) => ({ default: module.PetWindow })));
 
+const HtmlPreviewWindow = lazy(() => import("./features/chat/HtmlPreviewFrame").then((module) => ({ default: module.HtmlPreviewWindow })));
+
 function detectWindowLabel(): WindowLabel {
   const preview = new URLSearchParams(window.location.search).get("view");
+  if (preview === "html-preview") return "html-preview";
   if (preview === "bubble" || preview === "panel" || preview === "capture" || preview === "pet") return preview;
 
   if (isTauriRuntime) {
@@ -37,6 +40,7 @@ function App() {
     <ToastProvider>
       <I18nProvider>
         <Suspense fallback={<main className="app-loading">加载中…</main>}>
+          {windowLabel === "html-preview" ? <HtmlPreviewWindow /> : null}
           {windowLabel === "bubble" ? <BubbleWindow /> : null}
           {windowLabel === "panel" ? <PanelWindow /> : null}
           {windowLabel === "capture" ? <CaptureWindow /> : null}

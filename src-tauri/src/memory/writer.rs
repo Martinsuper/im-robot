@@ -106,14 +106,18 @@ pub fn apply_candidate(
     let idx = candidates.iter().position(|c| c.id == input.candidate_id);
 
     let candidate = match idx {
-        Some(i) => candidates.remove(i),
+        Some(i) => candidates[i].clone(),
         None => return Ok(None),
     };
 
     if !input.confirmed.unwrap_or(true) {
+        candidates.retain(|c| c.id != input.candidate_id);
         return Ok(None);
     }
 
+    if super::policy::contains_sensitive_content(&candidate.content) {
+        return Err("记忆内容包含敏感信息，已拦截".into());
+    }
     let now = now_unix();
     let item = MemoryItem {
         id: format!("memory-{}", candidate.id),
@@ -140,6 +144,7 @@ pub fn apply_candidate(
     };
 
     db.create(&item)?;
+    candidates.retain(|c| c.id != input.candidate_id);
     Ok(Some(item))
 }
 

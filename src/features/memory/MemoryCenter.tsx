@@ -1,3 +1,4 @@
+import { useStableEvent } from "../../hooks/useStableEvent";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -12,6 +13,7 @@ import {
   MemoryExport,
   MEMORY_TYPE_OPTIONS,
 } from "./memoryTypes";
+import { MemoryExtractionControls } from "./MemoryExtractionControls";
 import { MemoryCard } from "./MemoryCard";
 import { MemoryDetail } from "./MemoryDetail";
 import { runCommandAndRefresh } from "../app/appRuntime";
@@ -55,7 +57,7 @@ export function MemoryCenter() {
   const toast = useToast();
   const { t } = useTranslation();
 
-  async function loadMemories() {
+  const loadMemories = useStableEvent(async () => {
     const input: ListMemoriesInput = {
       status: "active",
       limit: 100,
@@ -69,7 +71,7 @@ export function MemoryCenter() {
       // 不清空列表：读取失败要让用户看到「加载失败」，而不是伪装成「没有记录」。
       setListError(toUserMessage(error, "记录加载失败，请重试。"));
     }
-  }
+  });
 
   async function loadRecent() {
     try {
@@ -120,7 +122,7 @@ export function MemoryCenter() {
     await loadMemories();
   }
 
-  async function searchMemories(query: string) {
+  const searchMemories = useStableEvent(async (query: string) => {
     if (!query.trim()) {
       setView("list");
       void loadMemories();
@@ -143,7 +145,7 @@ export function MemoryCenter() {
     } finally {
       setIsSearching(false);
     }
-  }
+  });
 
   const debouncedSearch = useCallback(
     (query: string) => {
@@ -152,22 +154,23 @@ export function MemoryCenter() {
         void searchMemories(query);
       }, 300);
     },
-    [filterType],
+    [searchMemories],
   );
 
   useEffect(() => {
     if (!isTauriRuntime) return;
-    void loadMemories();
-    void loadPending();
-    void loadSummaries();
+    let disposed = false;
+    void Promise.resolve().then(() => { if (!disposed) { void loadMemories(); void loadPending(); void loadSummaries(); } });
     const unlisten = listen("memories-updated", () => {
       void loadMemories();
       void loadPending();
     });
     return () => {
+      disposed = true;
+      if (searchTimer.current) clearTimeout(searchTimer.current);
       void unlisten.then((dispose) => dispose());
     };
-  }, [filterType]);
+  }, [filterType, loadMemories]);
 
   async function handleDelete(id: string) {
     try {
@@ -308,6 +311,7 @@ export function MemoryCenter() {
       </div>
 
       {/* Sub-view tabs */}
+      <MemoryExtractionControls />
       <nav className="memory-sub-tabs">
         <button
           type="button"

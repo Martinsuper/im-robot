@@ -95,10 +95,26 @@
       "title": "確認待ちの操作"
     },
     "preview": {
+      "openWindow": "別ウィンドウで開く",
+      "dragHint": "タイトルをプレビューの外へドラッグすると別ウィンドウで開きます",
+      "openFailed": "ウィンドウを開けませんでした。再試行するかポップアップを許可してください。",
+      "loadFailed": "HTML プレビューを読み込めませんでした。再試行するかアプリを再起動してください。",
       "ariaLabel": "HTML プレビュー",
       "frameTitle": "Piko HTML プレビュー",
       "sandboxNote": "サンドボックス iframe",
-      "title": "HTML プレビュー"
+      "title": "HTML プレビュー",
+      "viewToggle": "プレビュー / ソース切替",
+      "previewTab": "プレビュー",
+      "sourceTab": "ソース",
+      "showPreview": "プレビューに戻る",
+      "showSource": "ソースを見る",
+      "favorite": "お気に入り",
+      "unfavorite": "お気に入り解除",
+      "copySource": "ソースをコピー",
+      "favoritesTitle": "お気に入りカード",
+      "favoritesEmpty": "まだお気に入りがありません。HTML カードの ★ で保存できます",
+      "previewFavorite": "プレビュー",
+      "deleteFavorite": "削除"
     }
   },
   "settings": {
@@ -412,6 +428,19 @@
     "view": {
       "all": "すべて",
       "recent": "最近"
+    },
+    "extraction": {
+      "title": "記憶の自動抽出",
+      "enable": "会話から定期的に記憶を抽出",
+      "interval": "抽出間隔",
+      "minutes": "分",
+      "now": "今すぐ抽出",
+      "working": "処理中…",
+      "description": "好みや個人情報を端末内で抽出します。候補を確認すると今後の会話に使用されます。アプリ終了中は停止し、次回起動時に再開します。",
+      "lastRun": "前回の抽出：",
+      "notYet": "未実行",
+      "desktopOnly": "デスクトップアプリで自動抽出を設定してください。",
+      "result": "記憶候補を {count} 件追加しました。確認待ちで確認してください。"
     }
   },
   "panel": {

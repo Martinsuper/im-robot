@@ -216,7 +216,7 @@ pub fn get_memory_relations(
 
 #[tauri::command]
 pub fn capture_memory_candidates(
-    cache: State<'_, Arc<CandidateCache>>,
+    cache: State<'_, CandidateCache>,
     input: CaptureCandidateInput,
 ) -> Result<Vec<MemoryCandidate>, String> {
     let candidates = extract_candidates(&input);
@@ -227,40 +227,55 @@ pub fn capture_memory_candidates(
 
 #[tauri::command]
 pub fn get_pending_candidates(
-    cache: State<'_, Arc<CandidateCache>>,
+    db: State<'_, Arc<MemoryDb>>,
+    cache: State<'_, CandidateCache>,
 ) -> Result<Vec<MemoryCandidate>, String> {
-    let cached = cache.lock()?;
-    Ok(cached
-        .iter()
-        .filter(|c| c.requires_confirmation)
-        .cloned()
-        .collect())
+    let mut candidates = super::extraction::pending(&db)?;
+    candidates.extend(
+        cache
+            .lock()?
+            .iter()
+            .filter(|c| c.requires_confirmation)
+            .cloned(),
+    );
+    Ok(candidates)
 }
 
 #[tauri::command]
 pub fn apply_memory_candidates(
     app: AppHandle,
     db: State<'_, Arc<MemoryDb>>,
-    cache: State<'_, Arc<CandidateCache>>,
+    cache: State<'_, CandidateCache>,
     input: ApplyCandidateInput,
 ) -> Result<Option<MemoryItem>, String> {
-    let item = {
-        let mut locked = cache.lock()?;
-        apply_candidate(&db, &input, &mut locked)?
+    let mut pending = super::extraction::pending(&db)?;
+    let item = if pending.iter().any(|c| c.id == input.candidate_id) {
+        // A previous approval may have saved successfully before cleanup failed.
+        let existing = db.get(&format!("memory-{}", input.candidate_id))?;
+        let item = if existing.is_some() && input.confirmed.unwrap_or(true) {
+            existing
+        } else {
+            apply_candidate(&db, &input, &mut pending)?
+        };
+        super::extraction::remove_candidate(&db, &input.candidate_id)?;
+        item
+    } else {
+        apply_candidate(&db, &input, &mut *cache.lock()?)?
     };
-    if item.is_some() {
-        let _ = app.emit_to("panel", "memories-updated", ());
-    }
+    let _ = app.emit_to("panel", "memories-updated", ());
     Ok(item)
 }
 
 #[tauri::command]
 pub fn reject_memory_candidate(
-    cache: State<'_, Arc<CandidateCache>>,
+    app: AppHandle,
+    db: State<'_, Arc<MemoryDb>>,
+    cache: State<'_, CandidateCache>,
     candidate_id: String,
 ) -> Result<(), String> {
-    let mut cached = cache.lock()?;
-    cached.retain(|c| c.id != candidate_id);
+    super::extraction::remove_candidate(&db, &candidate_id)?;
+    cache.lock()?.retain(|c| c.id != candidate_id);
+    let _ = app.emit_to("panel", "memories-updated", ());
     Ok(())
 }
 

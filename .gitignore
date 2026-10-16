@@ -34,3 +34,8 @@ preview/
 test-results
 playwright-report
 .understand-anything
+
+# Generated Pi runtime and native Node sidecar
+/agent/node_modules/
+/src-tauri/agent-runtime/
+/src-tauri/binaries/piko-agent-node-*

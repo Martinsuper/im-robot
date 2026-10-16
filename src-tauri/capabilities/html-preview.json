@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "html-preview",
+  "description": "Core events for the trusted HTML preview window shell; preview content stays sandboxed in an iframe",
+  "windows": ["html-preview-*"],
+  "permissions": ["core:default"]
+}

@@ -10,6 +10,23 @@ use super::model::{
     SearchRelatedInput, UpdateMemoryInput,
 };
 
+fn context_terms(query: &str) -> Vec<String> {
+    let lower = query.to_lowercase();
+    let mut terms: Vec<String> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 2)
+        .map(str::to_string)
+        .collect();
+    for word in lower.split(|c: char| c.is_ascii() || !c.is_alphanumeric()) {
+        let chars: Vec<char> = word.chars().collect();
+        terms.extend(chars.windows(2).map(|pair| pair.iter().collect()));
+    }
+    terms.sort();
+    terms.dedup();
+    terms.truncate(32);
+    terms
+}
+
 pub struct MemoryDb(pub Mutex<Connection>);
 
 pub fn memory_db_path(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -619,83 +636,79 @@ impl MemoryDb {
     pub fn build_context(&self, input: BuildContextInput) -> Result<Vec<MemoryItem>, String> {
         let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
-        let limit = input.limit.unwrap_or(15);
+        let limit = input.limit.unwrap_or(15).min(100) as usize;
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-
-        // Priority order:
-        // 1. Pinned memories first
-        // 2. Profile memories (user preferences)
-        // 3. Memories matching query (via FTS5)
-        // 4. Recent memories sorted by recency score
-        let query = input.current_query.as_deref().map(str::trim).unwrap_or("");
+        let query = input.current_query.as_deref().unwrap_or("").trim();
+        let terms = context_terms(query);
         let active_status = enum_sql_literal(&MemoryStatus::Active)?;
         let public_privacy = enum_sql_literal(&PrivacyLevel::PublicToUser)?;
         let profile_type = enum_sql_literal(&MemoryType::Profile)?;
-
-        let mut stmt = if query.is_empty() {
-            db.prepare(&format!(
-                "{SELECT_COLS} FROM memory_items \
-                 WHERE status = {active_status} \
-                 AND privacy_level = {public_privacy} \
-                 ORDER BY \
-                    is_pinned DESC, \
-                    CASE WHEN memory_type = {profile_type} THEN 1 ELSE 0 END DESC, \
-                    (confidence * recency_score * importance) DESC \
-                 LIMIT ?1"
-            ))
-            .map_err(|e| e.to_string())?
+        let score = if terms.is_empty() {
+            "0".into()
         } else {
-            let query_sql = format!(
-                "{SELECT_COLS} FROM memory_items \
-                 WHERE status = {active_status} \
-                 AND privacy_level = {public_privacy} \
-                 ORDER BY \
-                    is_pinned DESC, \
-                    CASE WHEN memory_type = {profile_type} THEN 1 ELSE 0 END DESC, \
-                    CASE WHEN rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?1) THEN 1 ELSE 0 END DESC, \
-                    (confidence * recency_score * importance) DESC \
-                 LIMIT ?2"
-            );
-
-            let fts_attempt = (|| -> Result<Vec<MemoryItem>, String> {
-                let mut stmt = db.prepare(&query_sql).map_err(|e| e.to_string())?;
-                let rows = stmt
-                    .query_map(params![query, limit], row_to_memory_item)
-                    .map_err(|e| e.to_string())?;
-
-                rows.collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())
-            })();
-
-            if let Ok(results) = fts_attempt {
-                if !results.is_empty() {
-                    return Ok(results);
-                }
-            }
-
-            db.prepare(&format!(
-                "{SELECT_COLS} FROM memory_items \
-                 WHERE status = {active_status} \
-                 AND privacy_level = {public_privacy} \
-                 ORDER BY \
-                    is_pinned DESC, \
-                    CASE WHEN memory_type = {profile_type} THEN 1 ELSE 0 END DESC, \
-                    (confidence * recency_score * importance) DESC \
-                 LIMIT ?1"
-            ))
-            .map_err(|e| e.to_string())?
+            (1..=terms.len()).map(|index| format!("(CASE WHEN title LIKE ?{index} ESCAPE '\\' THEN 2 ELSE 0 END + CASE WHEN content LIKE ?{index} ESCAPE '\\' THEN 1 ELSE 0 END)")).collect::<Vec<_>>().join(" + ")
         };
-
+        let sql = format!("{SELECT_COLS}, ({score}) AS context_match FROM memory_items WHERE status = {active_status} AND privacy_level = {public_privacy} ORDER BY context_match DESC, is_pinned DESC, CASE WHEN memory_type = {profile_type} THEN 1 ELSE 0 END DESC, (confidence * recency_score * importance) DESC LIMIT {}", (limit * 8).clamp(64, 800));
+        let patterns: Vec<String> = terms
+            .iter()
+            .map(|term| {
+                format!(
+                    "%{}%",
+                    term.replace('\\', "\\\\")
+                        .replace('%', "\\%")
+                        .replace('_', "\\_")
+                )
+            })
+            .collect();
+        let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![limit], row_to_memory_item)
+            .query_map(rusqlite::params_from_iter(patterns.iter()), |row| {
+                Ok((
+                    row_to_memory_item(row)?,
+                    row.get::<_, i64>("context_match")?,
+                ))
+            })
             .map_err(|e| e.to_string())?;
-
-        let mut results = rows
+        let candidates = rows
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
+        let mut results: Vec<MemoryItem> = Vec::new();
+        let profile_budget = if terms.is_empty() {
+            0
+        } else {
+            (limit / 4).min(2)
+        };
+        for (item, relevance) in &candidates {
+            if *relevance > 0 && results.len() < limit - profile_budget {
+                results.push(item.clone());
+            }
+        }
+        if profile_budget > 0 {
+            let mut profiles = db.prepare(&format!("{SELECT_COLS} FROM memory_items WHERE status = {active_status} AND privacy_level = {public_privacy} AND memory_type = {profile_type} ORDER BY is_pinned DESC, importance DESC, updated_at DESC LIMIT {profile_budget}")).map_err(|e| e.to_string())?;
+            let rows = profiles
+                .query_map([], row_to_memory_item)
+                .map_err(|e| e.to_string())?;
+            for item in rows {
+                let item = item.map_err(|e| e.to_string())?;
+                if !results.iter().any(|old| old.id == item.id) {
+                    results.push(item);
+                }
+            }
+        }
+        for (item, _) in candidates {
+            if results.len() >= limit {
+                break;
+            }
+            if !results.iter().any(|old| old.id == item.id) {
+                results.push(item);
+            }
+        }
 
         // Update recency scores
         for item in &mut results {
@@ -1181,6 +1194,40 @@ mod tests {
             embedding_id: None,
             is_pinned: false,
         }
+    }
+
+    #[test]
+    fn task_relevance_has_a_budget_separate_from_pinned_profiles() {
+        let db = test_db();
+        for n in 0..12 {
+            let mut item =
+                memory_item(&format!("profile-{n}"), MemoryType::Profile, "我喜欢喝咖啡");
+            item.is_pinned = true;
+            db.create(&item).unwrap();
+        }
+        db.create(&memory_item(
+            "project",
+            MemoryType::Semantic,
+            "火星项目的部署端口为 7321",
+        ))
+        .unwrap();
+        let result = db
+            .build_context(BuildContextInput {
+                current_query: Some("火星项目如何部署？".into()),
+                window_type: None,
+                limit: Some(4),
+            })
+            .unwrap();
+        assert_eq!(result[0].id, "project");
+        assert!(result.len() <= 4);
+        let result = db
+            .build_context(BuildContextInput {
+                current_query: Some("火星项目".into()),
+                window_type: None,
+                limit: Some(1),
+            })
+            .unwrap();
+        assert_eq!(result[0].id, "project");
     }
 
     #[test]

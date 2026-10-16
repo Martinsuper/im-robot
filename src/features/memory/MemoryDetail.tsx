@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toUserMessage } from "../../lib/errors";
@@ -29,7 +30,7 @@ function formatTimeAgo(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString("zh-CN");
 }
 
-export function MemoryDetail({
+function MemoryDetailEditor({
   memory,
   onClose,
   onDeleted,
@@ -47,9 +48,6 @@ export function MemoryDetail({
   const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
-    setEditTitle(memory.title);
-    setEditContent(memory.content);
-    setIsEditing(false);
     void runCommand<MemoryRelation[]>("get_memory_relations", {
       memoryId: memory.id,
     })
@@ -232,4 +230,8 @@ export function MemoryDetail({
       </div>
     </div>
   );
+}
+
+export function MemoryDetail(props: ComponentProps<typeof MemoryDetailEditor>) {
+  return <MemoryDetailEditor {...props} key={JSON.stringify([props.memory.id, props.memory.title, props.memory.content])} />;
 }

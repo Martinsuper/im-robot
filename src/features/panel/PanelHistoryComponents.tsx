@@ -1,31 +1,9 @@
-import { useMemo, useState } from "react";
-import type { ChatHistoryEntry } from "../../types/appTypes";
+import { useMemo,useState } from "react";
 import { EmptyState } from "../../components/feedback/States";
-import { chatTimeBucket, containsKeyword, summarizeText, type ChatTimeRange } from "./recordsSearch";
+import { chatTimeRangeOptions,formatChatHistoryTime,PanelHistoryProps } from "./PanelHistoryData";
+import { chatTimeBucket,containsKeyword,summarizeText,type ChatTimeRange } from "./recordsSearch";
 import { nowSeconds } from "./time";
 
-/** 时间筛选：今天 / 本周 / 更早 / 全部。 */
-const chatTimeRangeOptions: Array<{ label: string; value: ChatTimeRange | "all" }> = [
-  { label: "全部", value: "all" },
-  { label: "今天", value: "today" },
-  { label: "本周", value: "week" },
-  { label: "更早", value: "earlier" },
-];
-
-export function formatChatHistoryTime(timestamp: number) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(timestamp * 1000);
-}
-
-export interface PanelHistoryProps {
-  chatHistory: ChatHistoryEntry[];
-  /** 清除全部历史。仍由调用方持有命令与刷新逻辑，这里只负责触发。 */
-  onClear: () => Promise<void>;
-}
 
 /**
  * 对话历史（04 §3.4）。

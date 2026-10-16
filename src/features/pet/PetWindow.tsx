@@ -1,3 +1,4 @@
+import { useStableEvent } from "../../hooks/useStableEvent";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { AppSettings, PetVisualEvent, QuietMode, Theme } from "../../types/appTypes";
 import {
@@ -76,7 +77,9 @@ function PetWindowContent() {
   const [isDragOver, setIsDragOver] = useState(false);
   const petRef = useRef<HTMLDivElement>(null);
   const [attentionPulse, setAttentionPulse] = useState(false);
-  const idleStartRef = useRef(Date.now());
+  const idleStartRef = useRef(0);
+  const [pulseMode, setPulseMode] = useState(petState.mode);
+  if (pulseMode !== petState.mode) { setPulseMode(petState.mode); setAttentionPulse(false); }
   const petVisualStyle = usePetVisualStyle();
   const noticeTimer = useRef<number>(0);
   const behaviorNoticeTimer = useRef<number>(0);
@@ -96,26 +99,10 @@ function PetWindowContent() {
 
   const idleRhythm = useMemo(() => getIdleRhythmProfile(motionStyle), [motionStyle]);
 
-  const { isDragging, isLongPressing, handlers: dragHandlers } = usePetDrag({
-    onDragEnd: (distance) => {
-      handleHumanInteraction({
-        type: "drag_end",
-        timestamp: Date.now(),
-        payload: { distancePx: distance },
-      });
-    },
-    onStroke: (distance, duration) => {
-      handleHumanInteraction({
-        type: "pet_stroke",
-        timestamp: Date.now(),
-        intensity: Math.min(1, distance / 120),
-        payload: { durationMs: duration, distancePx: distance },
-      });
-    },
-    onClick: () => {
-      handleHumanInteraction({ type: "click", timestamp: Date.now() });
-    },
-  });
+  const handleDragEnd = useStableEvent((distance: number) => handleHumanInteraction({ type: "drag_end", timestamp: Date.now(), payload: { distancePx: distance } }));
+  const handleStroke = useStableEvent((distance: number, duration: number) => handleHumanInteraction({ type: "pet_stroke", timestamp: Date.now(), intensity: Math.min(1, distance / 120), payload: { durationMs: duration, distancePx: distance } }));
+  const handleClick = useStableEvent(() => handleHumanInteraction({ type: "click", timestamp: Date.now() }));
+  const { isDragging, isLongPressing, handlers: dragHandlers } = usePetDrag({ onDragEnd: handleDragEnd, onStroke: handleStroke, onClick: handleClick });
 
   function handleHumanInteraction(event: HumanInteractionEvent) {
     const result = interactionManager.handle(event, {
@@ -206,35 +193,24 @@ function PetWindowContent() {
     });
   }
 
-  function scheduleFidget() {
+  const scheduleFidget = useStableEvent(() => {
     const delay = idleRhythm.fidgetDelayMin + Math.random() * (idleRhythm.fidgetDelayMax - idleRhythm.fidgetDelayMin);
-    const fidgetTimer = window.setTimeout(() => {
-      if (petState.mode === "idle") {
-        dispatch({
-          type: "FIDGET",
-          intensity: motionStyle === "soft" ? "soft" : "normal",
-        });
-        const fidgetResetTimer = window.setTimeout(() => {
-          if (petState.mode === "idle") dispatch({ type: "RESET" });
-        }, idleRhythm.fidgetResetDelay);
-        return () => window.clearTimeout(fidgetResetTimer);
-      }
-      scheduleFidget();
+    let reset: number | undefined;
+    const timer = window.setTimeout(() => {
+      dispatch({ type: "FIDGET", intensity: motionStyle === "soft" ? "soft" : "normal" });
+      reset = window.setTimeout(() => { dispatch({ type: "RESET" }); }, idleRhythm.fidgetResetDelay);
     }, delay);
-    return () => window.clearTimeout(fidgetTimer);
-  }
+    return () => { window.clearTimeout(timer); window.clearTimeout(reset); };
+  });
 
   useEffect(() => {
     if (petState.mode === "idle") {
       idleStartRef.current = Date.now();
-    } else {
-      setAttentionPulse(false);
     }
   }, [petState.mode, quietMode, motionStyle]);
 
   useEffect(() => {
     if (petState.mode !== "idle" || quietMode === "minimal") {
-      setAttentionPulse(false);
       return;
     }
     const interval = window.setInterval(() => {
@@ -379,7 +355,7 @@ function PetWindowContent() {
       window.removeEventListener("piko-interaction-stats-changed", refreshProfile);
       window.removeEventListener("piko-growth-state-changed", refreshProfile);
     };
-  }, []);
+  }, [personalityManager]);
 
   useEffect(() => () => {
     if (resetTimer.current) window.clearTimeout(resetTimer.current);
@@ -391,7 +367,7 @@ function PetWindowContent() {
     if (petState.mode === "idle" && quietMode !== "minimal") {
       return scheduleFidget();
     }
-  }, [petState.mode, quietMode, idleRhythm]);
+  }, [petState.mode, quietMode, idleRhythm, scheduleFidget]);
 
   const prevReaction = useRef(petState.reaction);
   const prevEmotion = useRef(petState.emotion);
@@ -456,7 +432,7 @@ function PetWindowContent() {
       )}
       <div
         ref={petRef}
-        className={`pet pet--${petVisualStyle} pet--${petState.mode} pet--bond-${bondTier} pet-reaction--${petState.reaction}${isDragOver ? " is-drag-over" : ""}${isDragging ? " is-dragging" : ""}${isLongPressing ? " is-long-pressing" : ""}${attentionPulse ? " is-attention-pulse" : ""}`}
+        className={`pet pet--${petVisualStyle} pet--${petState.mode} pet--bond-${bondTier} pet-reaction--${petState.reaction}${isDragOver ? " is-drag-over" : ""}${isDragging ? " is-dragging" : ""}${isLongPressing ? " is-long-pressing" : ""}${attentionPulse && petState.mode === "idle" && quietMode !== "minimal" ? " is-attention-pulse" : ""}`}
         aria-label="拖动 Piko"
         onMouseEnter={() => {
           handleHumanInteraction({

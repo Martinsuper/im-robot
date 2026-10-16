@@ -550,7 +550,6 @@ async fn stream_chat(
     registry: &PluginRegistry,
     drafts: &ActionDrafts,
     memory_db: &memory::MemoryDb,
-    cache: &memory::CandidateCache,
     input: StreamChatInput<'_>,
 ) -> Result<StreamChatOutcome, String> {
     let StreamChatInput {
@@ -777,29 +776,6 @@ async fn stream_chat(
             request_id: request_id.to_string(),
         },
     );
-    let (confirmed_count, pending_count) = match memory::auto_capture_from_chat(
-        memory_db,
-        cache,
-        &history_entry.prompt,
-        &history_entry.response,
-    ) {
-        Ok(counts) => counts,
-        Err(error) => {
-            eprintln!("memory capture failed: {error}");
-            (0, 0)
-        }
-    };
-
-    if confirmed_count > 0 || pending_count > 0 {
-        let _ = app.emit(
-            "memory-captured",
-            &MemoryCapturedEvent {
-                confirmed: confirmed_count,
-                pending: pending_count,
-            },
-        );
-    }
-
     Ok(StreamChatOutcome::Completed)
 }
 
@@ -859,7 +835,6 @@ pub(super) async fn chat_start(
     attachments: State<'_, TextAttachmentStore>,
     captures: State<'_, ScreenCaptureStore>,
     memory_db: State<'_, Arc<memory::MemoryDb>>,
-    cache: State<'_, memory::CandidateCache>,
     input: ChatStartInput,
 ) -> Result<(), String> {
     let attachment = attachments
@@ -908,7 +883,6 @@ pub(super) async fn chat_start(
         &registry,
         &drafts,
         &memory_db,
-        &cache,
         StreamChatInput {
             request_id: &input.request_id,
             prompt: &model_prompt,

@@ -15,18 +15,37 @@
 static NSString *const PikoCalendarName = @"Piko";
 static NSString *const MarkerPrefix = @"PIKO_SYNC local_id=";
 
+// Never let Objective-C exceptions unwind across the C ABI into Rust.
+static char *piko_calendar_error(NSString *message) {
+    NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"error": message ?: @"EventKit error"} options:0 error:nil];
+    NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+    return strdup(text.UTF8String ?: "{\"error\":\"EventKit error\"}");
+}
+
+static char *piko_calendar_json(id value) {
+    NSError *error = nil;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:value options:0 error:&error];
+    NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+    if (!text) return piko_calendar_error(error.localizedDescription ?: @"Calendar serialization failed");
+    return strdup(text.UTF8String);
+}
+
 /// Returns the EventKit calendar authorization status as a C string.
 /// Possible values: "authorized", "denied", "restricted", "notDetermined".
 /// The returned pointer is to a string literal and must NOT be freed.
 const char *piko_calendar_auth_status(void) {
-    EKAuthorizationStatus status =
-        [EKEventStore authorizationStatusForEntityType:EKEntityTypeEvent];
-    // 3 covers both EKAuthorizationStatusAuthorized (deprecated) and
-    // EKAuthorizationStatusFullAccess — they share the same underlying value.
-    if (status == 3) return "authorized";
-    if (status == 2) return "denied";
-    if (status == 1) return "restricted";
-    return "notDetermined";
+    @try {
+        EKAuthorizationStatus status =
+            [EKEventStore authorizationStatusForEntityType:EKEntityTypeEvent];
+        // 3 covers both EKAuthorizationStatusAuthorized (deprecated) and
+        // EKAuthorizationStatusFullAccess — they share the same underlying value.
+        if (status == 3) return "authorized";
+        if (status == 2) return "denied";
+        if (status == 1) return "restricted";
+        return "notDetermined";
+    } @catch (NSException *exception) {
+        return "unavailable";
+    }
 }
 
 /// Request EventKit calendar access. This triggers the macOS permission dialog
@@ -34,31 +53,42 @@ const char *piko_calendar_auth_status(void) {
 /// Returns "authorized" or "denied" after the user responds.
 /// This function blocks until the user responds (up to 60 seconds).
 char *piko_calendar_request_access(void) {
-    EKEventStore *store = [[EKEventStore alloc] init];
+    @autoreleasepool {
+        @try {
+            NSString *usageKey;
+            if (@available(macOS 14.0, *)) usageKey = @"NSCalendarsFullAccessUsageDescription";
+            else usageKey = @"NSCalendarsUsageDescription";
+            id usage = [[NSBundle mainBundle] objectForInfoDictionaryKey:usageKey];
+            if (![usage isKindOfClass:[NSString class]] || [usage length] == 0) return strdup("missingUsageDescription");
+            EKEventStore *store = [[EKEventStore alloc] init];
 
-    // Use the modern API for macOS 14+ and fall back for older versions
-    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
-    __block BOOL granted = NO;
+            // Use the modern API for macOS 14+ and fall back for older versions
+            dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+            __block BOOL granted = NO;
 
-    if (@available(macOS 14.0, *)) {
-        [store requestFullAccessToEventsWithCompletion:^(BOOL accessGranted, NSError *error) {
-            granted = accessGranted;
-            dispatch_semaphore_signal(sema);
-        }];
-    } else {
-        [store requestAccessToEntityType:EKEntityTypeEvent completion:^(BOOL accessGranted, NSError *error) {
-            granted = accessGranted;
-            dispatch_semaphore_signal(sema);
-        }];
+            if (@available(macOS 14.0, *)) {
+                [store requestFullAccessToEventsWithCompletion:^(BOOL accessGranted, NSError *error) {
+                    granted = accessGranted;
+                    dispatch_semaphore_signal(sema);
+                }];
+            } else {
+                [store requestAccessToEntityType:EKEntityTypeEvent completion:^(BOOL accessGranted, NSError *error) {
+                    granted = accessGranted;
+                    dispatch_semaphore_signal(sema);
+                }];
+            }
+
+            // Wait up to 60 seconds for the user to respond
+            long result = dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC));
+            if (result != 0) {
+                return strdup("timeout");
+            }
+
+            return strdup(granted ? "authorized" : "denied");
+        } @catch (NSException *exception) {
+            return strdup("exception");
+        }
     }
-
-    // Wait up to 60 seconds for the user to respond
-    long result = dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC));
-    if (result != 0) {
-        return strdup("timeout");
-    }
-
-    return strdup(granted ? "authorized" : "denied");
 }
 
 /// Parse the PIKO_SYNC marker from an event's notes.
@@ -84,10 +114,25 @@ static char *parse_marker(const char *notes) {
     return strdup([localId UTF8String]);
 }
 
+// EventKit truncates predicates longer than four years. Query one year at a time.
+static NSArray<NSArray<NSDate *> *> *piko_calendar_windows(NSDate *start, NSDate *end) {
+    NSMutableArray *windows = [NSMutableArray array];
+    NSDate *cursor = start;
+    while ([cursor compare:end] == NSOrderedAscending) {
+        NSDate *next = [[NSCalendar currentCalendar] dateByAddingUnit:NSCalendarUnitYear value:1 toDate:cursor options:0];
+        if (!next || [next compare:cursor] != NSOrderedDescending) break;
+        if ([next compare:end] == NSOrderedDescending) next = end;
+        [windows addObject:@[cursor, next]];
+        cursor = next;
+    }
+    return windows;
+}
+
 /// Pull all events from all calendars, returning a JSON string.
 /// The caller must free() the returned string.
 char *piko_calendar_pull(void) {
     @autoreleasepool {
+        @try {
         EKEventStore *store = [[EKEventStore alloc] init];
         NSArray<EKCalendar *> *calendars =
             [store calendarsForEntityType:EKEntityTypeEvent];
@@ -108,13 +153,19 @@ char *piko_calendar_pull(void) {
 
         NSMutableArray *result = [NSMutableArray array];
 
+        NSMutableSet *seen = [NSMutableSet set];
         for (EKCalendar *cal in calendars) {
+          for (NSArray<NSDate *> *window in piko_calendar_windows(startDate, endDate)) {
             NSPredicate *predicate = [store predicateForEventsWithStartDate:startDate
                                                                    endDate:endDate
                                                                  calendars:@[cal]];
             NSArray<EKEvent *> *events = [store eventsMatchingPredicate:predicate];
 
             for (EKEvent *event in events) {
+                if (!event.startDate || !event.endDate) continue;
+                NSString *key = [NSString stringWithFormat:@"%@|%@|%.0f", cal.calendarIdentifier ?: @"", event.eventIdentifier ?: @"", event.startDate.timeIntervalSince1970];
+                if ([seen containsObject:key]) continue;
+                [seen addObject:key];
                 NSMutableDictionary *entry = [NSMutableDictionary dictionary];
 
                 // Parse sync marker from notes
@@ -169,10 +220,11 @@ char *piko_calendar_pull(void) {
             }
         }
 
-        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
-        NSString *jsonString = [[NSString alloc] initWithData:jsonData
-                                                    encoding:NSUTF8StringEncoding];
-        return strdup([jsonString UTF8String]);
+          }
+        return piko_calendar_json(result);
+        } @catch (NSException *exception) {
+            return piko_calendar_error(exception.reason ?: exception.name);
+        }
     }
 }
 
@@ -181,6 +233,7 @@ char *piko_calendar_pull(void) {
 /// The caller must free() the returned string.
 char *piko_calendar_push(const char *json) {
     @autoreleasepool {
+        @try {
         if (!json) return strdup("[]");
 
         EKEventStore *store = [[EKEventStore alloc] init];
@@ -270,8 +323,9 @@ char *piko_calendar_push(const char *json) {
             }
         }
 
-        NSData *outData = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
-        NSString *outStr = [[NSString alloc] initWithData:outData encoding:NSUTF8StringEncoding];
-        return strdup([outStr UTF8String]);
+        return piko_calendar_json(result);
+        } @catch (NSException *exception) {
+            return piko_calendar_error(exception.reason ?: exception.name);
+        }
     }
 }

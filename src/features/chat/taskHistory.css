@@ -1,0 +1,6 @@
+.task-history { margin: 8px 0; padding: 10px; border: 1px solid var(--piko-line); border-radius: 10px; font-size: 12px; overflow-wrap: anywhere; }
+.task-history summary { cursor: pointer; font-weight: 600; }
+.task-history p { margin: 8px 0; color: var(--piko-muted); }
+.task-history section { border-top: 1px solid var(--piko-line); margin-top: 10px; padding-top: 8px; }
+.task-history ol { margin: 6px 0; padding-left: 20px; }
+.task-history button { margin: 4px 0; }
