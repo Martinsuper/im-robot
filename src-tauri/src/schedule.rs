@@ -28,6 +28,11 @@
 //! - **损坏即中止**：旧文件读不出来时报错中止，**不会**把「读失败」当成
 //!   「没有数据」导入 0 条然后写下完成标记——那等于永久丢失用户的提醒。
 
+pub(crate) mod repository;
+pub(crate) mod commands;
+
+use crate::calendar_service::{CalendarEvent};
+use crate::reminder_service::Reminder;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -35,7 +40,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{storage, unix_timestamp, CalendarEvent, Reminder};
+use crate::storage;
+use crate::common::unix_timestamp;
 
 /// 当前 ScheduleItem 架构版本。上升它即表示需要重新迁移。
 pub(crate) const SCHEMA_VERSION: u32 = 1;

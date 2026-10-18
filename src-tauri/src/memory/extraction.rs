@@ -133,14 +133,22 @@ fn conversation_candidates(prompt: &str) -> Vec<MemoryCandidate> {
 }
 
 /// Commit candidates and source IDs together: crash/retry cannot re-extract rejected facts.
-fn extract(
+#[cfg(test)]
+fn extract(db: &MemoryDb, entries: &[crate::chat_session::ChatHistoryEntry], now: u64, force: bool) -> Result<usize, String> {
+    extract_with_topics(db, entries, now, force, None)
+}
+
+fn extract_with_topics(
     db: &MemoryDb,
-    entries: &[crate::ChatHistoryEntry],
+    entries: &[crate::chat_session::ChatHistoryEntry],
     now: u64,
     force: bool,
+    topic_timezone: Option<&str>,
 ) -> Result<usize, String> {
     let mut conn = db.0.lock().map_err(|e| e.to_string())?;
     initialize(&conn)?;
+    // A failed/unsupported soul migration must not disable ordinary extraction.
+    let topic_timezone = topic_timezone.filter(|_| super::soul::store::ensure_available(&conn).is_ok());
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let (enabled, interval, last): (bool, u64, u64) = tx.query_row(
         "SELECT enabled, interval_minutes, last_run_at FROM memory_extraction_settings WHERE id=1",
@@ -189,6 +197,14 @@ fn extract(
             .map_err(|e| e.to_string())?;
             count += 1;
         }
+        // Manual memory extraction may bypass its timer, but must never bypass
+        // the user's disabled setting for generating new open-topic candidates.
+        if enabled {
+            if let Some(timezone) = topic_timezone {
+                let topic_now = i64::try_from(now).map_err(|_| "invalid_extraction_time")?;
+                count += super::soul::open_loops::enqueue(&tx, entry, topic_now, timezone)?;
+            }
+        }
         tx.execute(
             "INSERT INTO memory_extraction_processed(entry_id) VALUES(?1)",
             [&entry.id],
@@ -214,18 +230,21 @@ fn extract(
 
 fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
     // Preserve load failures as errors; an empty history must not advance the schedule on failure.
-    let sessions = crate::load_chat_sessions(app, true)?;
+    let sessions = crate::chat_session::repository::load_chat_sessions(app, true)?;
     let entries = crate::chat_session::entries_view(&sessions);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let db = app.state::<Arc<MemoryDb>>();
-    let count = extract(&db, &entries, now, force)?;
+    let soul_ready = app.try_state::<super::soul::model::SoulBootStatus>()
+        .is_some_and(|state| state.0);
+    let timezone = if soul_ready { iana_time_zone::get_timezone().ok() } else { None };
+    let count = extract_with_topics(&db, &entries, now, force, timezone.as_deref())?;
     if count > 0 {
         let _ = app.emit(
             "memory-captured",
-            crate::MemoryCapturedEvent {
+            crate::runtime_types::MemoryCapturedEvent {
                 confirmed: 0,
                 pending: count,
             },
@@ -287,8 +306,8 @@ pub async fn extract_memories_now(app: AppHandle) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn entry(id: &str, prompt: &str) -> crate::ChatHistoryEntry {
-        crate::ChatHistoryEntry {
+    fn entry(id: &str, prompt: &str) -> crate::chat_session::ChatHistoryEntry {
+        crate::chat_session::ChatHistoryEntry {
             id: id.into(),
             prompt: prompt.into(),
             response: "已完成支付".into(),
@@ -358,6 +377,36 @@ mod tests {
         assert_eq!(
             extract(&db, &[entry("f", "我不喜欢喝咖啡。")], 200, true).unwrap(),
             0
+        );
+    }
+
+    #[test]
+    fn disabled_extraction_stops_new_topic_candidates() {
+        let db = super::super::open_in_memory_db().unwrap();
+        {
+            let mut conn = db.0.lock().unwrap();
+            initialize(&conn).unwrap();
+            super::super::soul::store::migrate(&mut conn).unwrap();
+            conn.execute("UPDATE memory_extraction_settings SET enabled=0", [])
+                .unwrap();
+        }
+        let entries = vec![entry("a", "我打算整理仓库。"), entry("b", "我打算每周整理一次仓库。")];
+        assert_eq!(
+            extract_with_topics(&db, &entries[..1], 100, true, Some("Asia/Shanghai")).unwrap(),
+            0
+        );
+        {
+            let conn = db.0.lock().unwrap();
+            assert!(super::super::soul::open_loops::pending(&conn).unwrap().candidates.is_empty());
+        }
+        {
+            let mut conn = db.0.lock().unwrap();
+            conn.execute("UPDATE memory_extraction_settings SET enabled=1", [])
+                .unwrap();
+        }
+        assert_eq!(
+            extract_with_topics(&db, &entries[1..], 200, true, Some("Asia/Shanghai")).unwrap(),
+            1
         );
     }
 

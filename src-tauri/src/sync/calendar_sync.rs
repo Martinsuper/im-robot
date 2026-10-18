@@ -8,7 +8,7 @@ use crate::storage;
 /// On macOS we use a native EventKit bridge (compiled from calendar_bridge.m)
 /// linked directly into the binary. This avoids the osascript / AppleEvents
 /// path which requires a separate TCC permission that is easy to deny.
-use crate::CalendarEvent;
+use crate::calendar_service::CalendarEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -474,7 +474,7 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
         .collect();
 
     let _transaction = storage::transaction();
-    let mut local_events = crate::read_calendar_events(app);
+    let mut local_events = crate::calendar_service::read_calendar_events(app);
     log_debug(&format!(
         "pull: {} existing local events",
         local_events.len()
@@ -502,7 +502,7 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
     cleanup_deleted_ids(app, &reimported_ids);
 
     local_events.sort_by_key(|a| a.start_at);
-    crate::persist_calendar_events(app, &local_events)?;
+    crate::calendar_service::persist_calendar_events(app, &local_events)?;
     log_debug(&format!(
         "pull: DONE imported={}, total={}",
         imported,
@@ -625,7 +625,7 @@ mod tests {
         decode_bridge_response, exclude_deleted_local_events, local_id_for_system_event,
         SystemCalendarEvent,
     };
-    use crate::CalendarEvent;
+    use crate::calendar_service::CalendarEvent;
     use std::collections::HashSet;
 
     #[test]

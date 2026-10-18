@@ -36,7 +36,7 @@ impl TypingActivityState {
             stats: Mutex::new(stats),
             session: Mutex::new(TypingSession::default()),
             dirty: Mutex::new(false),
-            last_flush_at: Mutex::new(crate::unix_timestamp()),
+            last_flush_at: Mutex::new(crate::common::unix_timestamp()),
         }
     }
 
@@ -69,7 +69,7 @@ impl TypingActivityState {
             return Ok(None);
         }
 
-        let now = crate::unix_timestamp();
+        let now = crate::common::unix_timestamp();
         self.roll_day_if_needed(app, now)?;
 
         {
@@ -238,7 +238,7 @@ fn persist_typing_stats(app: &AppHandle, stats: &TypingStatsToday) -> Result<(),
 }
 
 fn default_typing_stats_today() -> TypingStatsToday {
-    let now = crate::unix_timestamp();
+    let now = crate::common::unix_timestamp();
     TypingStatsToday {
         date: current_day_key(now),
         typed_characters: 0,
@@ -608,7 +608,7 @@ pub fn watch_typing_rollover(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || loop {
         let state = app.state::<TypingActivityState>();
-        let now = crate::unix_timestamp();
+        let now = crate::common::unix_timestamp();
         let _ = state.finalize_stale_session(&app, now);
         let _ = state.flush_snapshot_if_needed(&app, now);
         thread::sleep(Duration::from_secs(2));
@@ -617,7 +617,7 @@ pub fn watch_typing_rollover(app: &AppHandle) {
 
 pub fn get_typing_stats_today(app: &AppHandle) -> Result<TypingStatsToday, String> {
     let state = app.state::<TypingActivityState>();
-    state.snapshot(crate::unix_timestamp())
+    state.snapshot(crate::common::unix_timestamp())
 }
 
 #[cfg(all(test, target_os = "macos"))]

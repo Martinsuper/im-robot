@@ -2,8 +2,14 @@ import type { ActionDraft } from "./chatTypes";
 
 export type AgentEvent = {
   requestId: string;
-  type: "started" | "delta" | "tool-start" | "tool-end" | "approval" | "approval-expired" | "action-proposed" | "workspace-required" | "completed" | "cancelled" | "failed" | "protocol-error" | "steering-accepted";
+  eventSequence?: number;
+  conversationId?: string;
+  prompt?: string;
+  response?: string;
+  type: "started" | "delta" | "tool-start" | "tool-end" | "approval" | "approval-expired" | "action-proposed" | "workspace-required" | "completed" | "cancelled" | "failed" | "protocol-error" | "steering-accepted" | "approval-resolved" | "action-resolved" | "workspace-resolved";
   text?: string;
+  allowed?: boolean;
+  cwd?: string | null;
   tool?: string;
   arguments?: Record<string, unknown>;
   approvalId?: string;
@@ -33,3 +39,14 @@ export function loadConversation(): Conversation {
   } catch { /* Older task sessions are optional. */ }
   return { id: "", cwd: "", importHistory: true, turnIds: [] };
 }
+
+/** Rust-owned in-memory projection. Reading it never resumes or replays tools. */
+export type AgentTaskSnapshot = {
+  requestId: string;
+  conversationId: string;
+  cwd: string | null;
+  prompt: string;
+  response: string;
+  eventSequence: number;
+  events: AgentEvent[];
+};

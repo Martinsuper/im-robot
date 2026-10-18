@@ -7,7 +7,9 @@ import {
   usePetVisualStyle,
 } from "../app/appShared";
 import { runCommand } from "../app/appRuntime";
+import { reportSoulActivity, currentActivitySnapshot, ACTIVITY_HEARTBEAT_SECONDS } from "../soul/proactiveBridge";
 import { initialPetState, reducePetState } from "./petState";
+import { moodExpression, type SoulMood } from "../soul/moodPresentation";
 import { setBubbleCompanionMessage } from "../chat/bubbleMessage";
 import type { ChatEvent } from "../chat/chatTypes";
 import * as audio from "./petAudio";
@@ -66,7 +68,26 @@ function getIdleRhythmProfile(style: PetMotionStyle): IdleRhythmProfile {
 }
 
 function PetWindowContent() {
+  useEffect(()=>{
+    reportSoulActivity(currentActivitySnapshot(false));
+    const timer=window.setInterval(()=>reportSoulActivity(currentActivitySnapshot(false)),ACTIVITY_HEARTBEAT_SECONDS*1000);
+    return ()=>window.clearInterval(timer);
+  },[]);
   const [petState, dispatch] = useReducer(reducePetState, initialPetState);
+  const [soulMood, setSoulMood] = useState<SoulMood>("calm");
+  useEffect(() => {
+    let disposed = false;
+    const refresh = () => void runCommand<SoulMood>("soul_get_mood").then((mood) => {
+      if (!disposed) setSoulMood(mood);
+    }).catch(() => { if (!disposed) setSoulMood("calm"); });
+    refresh();
+    const timer = window.setInterval(refresh, 10000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, []);
+  useTauriEventSubscription("soul:changed", () => {
+    void runCommand<SoulMood>("soul_get_mood").then(setSoulMood).catch(() => setSoulMood("calm"));
+  });
+
   const [companionName, setCompanionName] = useState("Piko");
   const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
   const [sensingPaused, setSensingPaused] = useState(false);
@@ -500,7 +521,7 @@ function PetWindowContent() {
       >
         <PetSprite
           mode={petState.mode}
-          emotion={petState.emotion}
+          emotion={moodExpression(soulMood, petState.mode, petState.reaction, petState.emotion)}
           reaction={petState.reaction}
           mouseDelta={mouseDelta}
         />

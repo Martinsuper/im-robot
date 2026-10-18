@@ -33,6 +33,10 @@ fn terminal(status: &str) -> bool {
 }
 
 impl TaskJournal {
+    /// Read-only view for consumers that must not alter terminal states.
+    pub fn all(&self) -> Result<Vec<TaskRecord>, String> {
+        crate::storage::read(&self.0)
+    }
     pub fn new(agent_dir: &Path) -> Self {
         Self(agent_dir.join("tasks.json"))
     }

@@ -4,8 +4,9 @@ import { AgentActivity } from "./AgentActivity";
 import { TaskHistory } from "./TaskHistory";
 import { TaskDiagnostics } from "./TaskDiagnostics";
 import { TaskOutcome } from "./TaskOutcome";
-import type { TaskTerminal } from "./taskOutcomeModel";
-import { CONVERSATION_STORAGE, loadConversation, type AgentEvent, type ToolActivity, type ToolApproval } from "./agentTypes";
+import { useAgentTask } from "./useAgentTask";
+import { connectAgentTask } from "./agentTaskRecovery";
+import { CONVERSATION_STORAGE, loadConversation, type AgentEvent, type AgentTaskSnapshot } from "./agentTypes";
 import {
   CollapsibleReply,
   HistoryItem,
@@ -16,7 +17,7 @@ import {
   openModelSettings,
   textForSpeech,
 } from "./ChatPresentation";
-import { ArrowUp, Mic, Paperclip, ScanLine, Square, Star, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, FolderOpen, Mic, PanelRight, Paperclip, Plus, ScanLine, Square, Star, X } from "lucide-react";
 import { FormEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -27,6 +28,17 @@ import { getBubbleCompanionMessage } from "./bubbleMessage";
 import type { ActionDraft, ActionExecution, ChatEvent } from "./chatTypes";
 import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry, ScreenshotPreview, Theme } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
+import {
+  ACTIVITY_HEARTBEAT_SECONDS,
+  ackDismissed,
+  ackHidden,
+  ackResponded,
+  ackShown,
+  currentActivitySnapshot,
+  reportSoulActivity,
+  SOUL_CATEGORY_LABELS,
+  type SoulProactiveMessage,
+} from "../soul/proactiveBridge";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { useToast } from "../../components/feedback/toastStore";
 import { toUserMessage } from "../../lib/errors";
@@ -44,21 +56,18 @@ const WHISPER_SAMPLE_RATE = 16000;
 export function BubbleWindow() {
   const toast = useToast();
   const [prompt, setPrompt] = useState("");
+  const lastTypingAt = useRef(0);
   const [conversation, setConversation] = useState(loadConversation);
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
-  const [agentBusy, setAgentBusy] = useState(false);
+  const { agentBusy, agentStatus, agentTools, taskTerminal, agentApprovals, workspaceRequired,
+    setAgentBusy, beginAgentTask, resetAgentTask, restoreAgentTask, applyAgentEvent } = useAgentTask();
   const [verificationOf, setVerificationOf] = useState<string>();
   const [resumeOf, setResumeOf] = useState<string>();
   const [sendingSteering, setSendingSteering] = useState(false);
   const steeringPending = useRef(false);
   const agentBusyRef = useRef(false);
   const displayedRequestId = useRef<string | undefined>(undefined);
-  const [agentStatus, setAgentStatus] = useState("");
-  const [agentTools, setAgentTools] = useState<ToolActivity[]>([]);
-  const [taskTerminal, setTaskTerminal] = useState<TaskTerminal | null>(null);
-  const [agentApprovals, setAgentApprovals] = useState<ToolApproval[]>([]);
-  const [workspaceRequired, setWorkspaceRequired] = useState(false);
   const businessAction = useRef(false);
   const businessCardRef = useRef<HTMLDivElement>(null);
   const agentReady = useRef<Promise<unknown>>(Promise.resolve());
@@ -81,6 +90,9 @@ export function BubbleWindow() {
   const [attachmentAction, setAttachmentAction] = useState<AttachmentAction>("summarize");
   const [screenshot, setScreenshot] = useState<ScreenshotPreview>();
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  // S08 灵魂主动消息：气泡与通知共用同一消息身份；回应只进入普通聊天。
+  const [soulMessage, setSoulMessage] = useState<SoulProactiveMessage | null>(null);
+  const [soulReplyId, setSoulReplyId] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
@@ -101,6 +113,9 @@ export function BubbleWindow() {
   const [copyFeedback, setCopyFeedback] = useState(false);
   const { favorites, toggle: toggleFavorite, remove: removeFavorite } = useHtmlFavorites();
   const [favoritesOpen, setFavoritesOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const followThreadRef = useRef(true);
   const [selectedFavoriteId, setSelectedFavoriteId] = useState<string | null>(null);
   const favoritesButtonRef = useRef<HTMLButtonElement>(null);
   const hasInputContext = Boolean(attachment || screenshot || isDraggingFile);
@@ -112,7 +127,7 @@ export function BubbleWindow() {
   const skeletonHideTimer = useRef<number | undefined>(undefined);
   const receivedFirstDelta = useRef(false);
   const threadScrollRef = useRef<HTMLDivElement>(null);
-  const promptInputRef = useRef<HTMLInputElement>(null);
+  const promptInputRef = useRef<HTMLTextAreaElement>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const voiceAudioContextRef = useRef<AudioContext | null>(null);
   const voiceProcessorRef = useRef<ScriptProcessorNode | null>(null);
@@ -138,21 +153,31 @@ export function BubbleWindow() {
       : "正在生成回复";
 
   const topbarStatus = useMemo(() => {
+    if (agentApprovals.length || pendingAction) return { label: "等待你确认", pulse: false };
+    if (workspaceRequired) return { label: "等待选择文件夹", pulse: false };
     if (memoryActivity) return { label: memoryActivity, pulse: false };
     if (isSpeaking) return { label: "朗读中", pulse: false };
     if (agentBusy) return { label: agentStatus || "正在处理…", pulse: true };
     if (isThinking) return { label: "思考中…", pulse: true };
     return { label: "在线", pulse: false };
-  }, [isThinking, isSpeaking, memoryActivity, agentBusy, agentStatus]);
+  }, [isThinking, isSpeaking, memoryActivity, agentBusy, agentStatus, agentApprovals.length, pendingAction, workspaceRequired]);
 
   const hasCurrentTurn = Boolean(currentPrompt || message || pendingAction || showReplySkeleton || agentTools.length || workspaceRequired);
   const showWelcome = !hasCurrentTurn && chatHistory.length === 0;
 
   // 02 §3.3：Esc 收起窗口；Cmd/Ctrl + Enter 发送
   function handleWindowKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Escape" && selectedFavoriteId) return;
+    if (event.key === "Escape" && (contextOpen || favoritesOpen)) {
+      event.preventDefault();
+      setContextOpen(false);
+      setFavoritesOpen(false);
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
-      if (agentBusyRef.current) cancel(); else void runCommand("hide_bubble");
+      void runCommand("hide_bubble");
       return;
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -252,6 +277,56 @@ export function BubbleWindow() {
     };
   }, []);
 
+  // S07：输入活动以最近按键为准，保留草稿不会永久阻止提醒。
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    reportSoulActivity(currentActivitySnapshot(Date.now() - lastTypingAt.current < 5000));
+    const timer = window.setInterval(
+      () => reportSoulActivity(currentActivitySnapshot(Date.now() - lastTypingAt.current < 5000)),
+      ACTIVITY_HEARTBEAT_SECONDS * 1000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    let disposed = false;
+    let receivedLiveState = false;
+    let activeIds: string[] | null = null;
+    const unlisten = listen<SoulProactiveMessage>("soul:message", (event) => {
+      receivedLiveState = true;
+      setSoulMessage(event.payload);
+    });
+    const reconcile=listen<string[]>("soul:active",(event)=>{
+      activeIds = event.payload;
+      setSoulMessage((current)=>current && !event.payload.includes(current.id) ? null : current);
+    });
+    // Subscribe first, then recover a delivery emitted during WebView startup.
+    // A newer event/revocation always wins over an in-flight recovery read.
+    void Promise.all([unlisten, reconcile]).then(async () => {
+      const message = await runCommand<SoulProactiveMessage | null>("soul_current_message", undefined, null);
+      if (!disposed && !receivedLiveState && message && (activeIds === null || activeIds.includes(message.id))) setSoulMessage(message);
+    });
+    return () => {
+      disposed = true;
+      void unlisten.then((dispose) => dispose());
+      void reconcile.then((dispose) => dispose());
+    };
+  }, []);
+
+  // S08 回执生命周期：真实显示和隐藏都上报，避免隐藏被当成已展示。
+  useEffect(() => {
+    if (!soulMessage) return;
+    const report=()=>{
+      if (document.visibilityState === "visible") ackShown(soulMessage.id);
+      else ackHidden(soulMessage.id);
+    };
+    report();
+    document.addEventListener("visibilitychange",report);
+    return () => {document.removeEventListener("visibilitychange",report);ackHidden(soulMessage.id);};
+  }, [soulMessage]);
+
+
   useEffect(() => {
     if (!isTauriRuntime) return;
     const refreshScreenshot = () => {
@@ -340,67 +415,104 @@ export function BubbleWindow() {
       }
     };
     const unlisten = listen<ChatEvent>("chat-event", onChatEvent);
-    const agentUnlisten = listen<AgentEvent>("agent-event", ({ payload: event }) => {
+    const restoreSnapshot = (snapshot: AgentTaskSnapshot) => {
+      const terminal = snapshot.events.find((event) => ["completed", "failed", "cancelled"].includes(event.type));
+      const current = conversationRef.current;
+      if (terminal && snapshot.conversationId !== current.id) return;
+      const sameConversation = current.id === snapshot.conversationId;
+      const turnIds = sameConversation ? current.turnIds : [];
+      const next = { id: snapshot.conversationId, cwd: snapshot.cwd || "", importHistory: sameConversation && current.importHistory,
+        turnIds: turnIds.includes(snapshot.requestId) ? turnIds : [...turnIds, snapshot.requestId] };
+      conversationRef.current = next;
+      setConversation(next);
+      restoreAgentTask(snapshot);
+      displayedRequestId.current = snapshot.requestId;
+      activeRequestId.current = terminal ? undefined : snapshot.requestId;
+      agentBusyRef.current = !terminal;
+      setRequestId(terminal ? undefined : snapshot.requestId);
+      setCurrentPrompt(snapshot.prompt);
+      setMessage(snapshot.response);
+      lastSequence.current = 0;
+      receivedFirstDelta.current = Boolean(snapshot.response);
+      const proposed = snapshot.events.find((event) => event.type === "action-proposed")?.draft;
+      businessAction.current = Boolean(proposed);
+      setPendingAction(proposed);
+      setSelectedChoiceIndexes(proposed ? getConfirmationChoices(proposed).map((choice) => choice.index) : []);
+      const waiting = snapshot.events.some((event) => event.type === "approval" || event.type === "workspace-required") || Boolean(proposed);
+      const thinking = !terminal && !snapshot.response && !waiting;
+      setIsThinking(thinking);
+      clearSkeletonHideTimer();
+      setShowReplySkeleton(thinking);
+      setIsReplyEntering(false);
+      setReplyStatus(terminal?.type === "completed" ? "done" : terminal?.type === "failed" ? "failed" : terminal?.type === "cancelled" ? "cancelled" : null);
+      setReplyError(terminal?.type === "failed" ? terminal.message || "处理失败" : "");
+      setChatHistory((entries) => entries.filter((entry) => entry.id !== snapshot.requestId));
+    };
+    const connection = connectAgentTask({
+      subscribe: (onEvent) => listen<AgentEvent>("agent-event", ({ payload }) => onEvent(payload)),
+      getSnapshot: () => runCommand<AgentTaskSnapshot | null>("agent_get_task_snapshot", undefined, null),
+      restore: restoreSnapshot,
+      onEvent: (event) => {
+        if (event.requestId !== activeRequestId.current && event.conversationId && event.prompt !== undefined
+          && ["started", "completed", "failed", "cancelled"].includes(event.type)) {
+          restoreSnapshot({ requestId: event.requestId, conversationId: event.conversationId, cwd: event.cwd || null,
+            prompt: event.prompt, response: event.response || "", eventSequence: event.eventSequence || 0,
+            events: event.type === "started" ? [] : [event] });
+        }
       if (event.requestId !== activeRequestId.current) return;
+      applyAgentEvent(event);
       if (event.type === "started") { onChatEvent({ payload: { type: "started", requestId: event.requestId, working: false } }); return; }
       if (event.type === "delta") {
         onChatEvent({ payload: { type: "delta", requestId: event.requestId, sequence: lastSequence.current + 1, text: event.text || "" } }); return;
       }
       if (event.type === "tool-start") {
         setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false);
-        setAgentStatus(`正在调用 ${event.tool}…`);
-        setAgentTools((tools) => [...tools, { id: event.toolCallId || "", name: event.tool || "工具", arguments: event.arguments || {}, status: "执行中" }]);
-      }
-      if (event.type === "tool-end") {
-        setAgentTools((tools) => tools.map((tool) => tool.id === event.toolCallId ? { ...tool, status: event.isError ? "失败" : "完成", output: event.output, verification: event.verification } : tool));
-        setAgentStatus("正在继续…");
       }
       if (event.type === "approval" && event.approvalId) {
         setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false);
-        setAgentApprovals((items) => [...items, { id: event.approvalId!, tool: event.tool || "操作", arguments: event.arguments || {} }]);
-        setAgentStatus("等待你批准操作");
       }
       if (event.type === "steering-accepted") {
         steeringPending.current = false; setSendingSteering(false);
         setPrompt((current) => current.trim() === event.text?.trim() ? "" : current);
-        setAgentApprovals([]); setPendingAction(undefined); businessAction.current = false; setWorkspaceRequired(false);
-        setAgentStatus("补充要求已加入；正在执行的操作可能已产生效果");
+        setPendingAction(undefined); businessAction.current = false;
         setCurrentPrompt((current) => `${current}\n补充要求：${event.text || ""}`);
       }
-      if (event.type === "approval-expired") {
-        setAgentApprovals((items) => items.filter((item) => item.id !== event.approvalId));
-        setAgentStatus("操作确认已超时，该操作未获批准");
-      }
       if (event.type === "workspace-required") {
-        setWorkspaceRequired(true); setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false); setAgentStatus("请选择工作目录");
+        setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false);
       }
       if (event.type === "action-proposed" && event.draft) {
         businessAction.current = true;
         onChatEvent({ payload: { type: "action-proposed", requestId: event.requestId, draft: event.draft } });
-        setAgentStatus("等待你确认操作");
+      }
+      if (event.type === "action-resolved") {
+        setPendingAction(undefined); setSelectedChoiceIndexes([]); businessAction.current = false;
+      }
+      if (event.type === "workspace-resolved" && event.cwd) {
+        setConversation((current) => ({ ...current, cwd: event.cwd! }));
       }
       if (event.type === "protocol-error") setReplyError(event.message || "通信失败");
       if (event.type === "completed" || event.type === "cancelled" || event.type === "failed") {
-        setAgentBusy(false); agentBusyRef.current = false; setAgentStatus(""); setWorkspaceRequired(false); setAgentApprovals([]);
+        agentBusyRef.current = false;
         setPendingAction(undefined); businessAction.current = false;
         steeringPending.current = false; setSendingSteering(false);
-        setTaskTerminal({ requestId: event.requestId, status: event.type });
-        setAgentTools((tools) => tools.map((tool) => tool.status === "执行中" ? { ...tool, status: "结果未知" } : tool));
         if (event.type === "completed") setReplyStatus("done");
         onChatEvent({ payload: event.type === "failed" ? { type: "failed", requestId: event.requestId, message: event.message || "处理失败" } : { type: event.type, requestId: event.requestId } });
         activeRequestId.current = undefined; setRequestId(undefined);
       }
+      },
     });
-    agentReady.current = agentUnlisten;
+    agentReady.current = connection.ready;
+    let disposed = false;
+    void connection.ready.catch((error) => {
+      if (!disposed) setContextNotice(toUserMessage(error, "任务状态恢复失败，请重新打开聊天窗口。"));
+    });
 
     return () => {
-      void agentUnlisten.then((dispose) => dispose());
-      if (activeRequestId.current && agentBusyRef.current) void runCommand("agent_cancel", { requestId: activeRequestId.current }).catch(() => {});
-      void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
-      });
+      disposed = true;
+      connection.dispose();
+      void unlisten.then((dispose) => dispose());
     };
-  }, [hideSkeletonSoon]);
+  }, [hideSkeletonSoon, applyAgentEvent, restoreAgentTask, setAgentBusy]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -454,15 +566,19 @@ export function BubbleWindow() {
   useEffect(() => {
     if (agentApprovals.length || workspaceRequired || pendingAction) return;
     const el = threadScrollRef.current;
-    if (el) {
+    if (el && followThreadRef.current) {
       el.scrollTop = el.scrollHeight;
     }
   }, [message, showReplySkeleton, currentPrompt, chatHistory.length, agentApprovals.length, workspaceRequired, pendingAction]);
 
   async function sendPrompt(currentPromptValue: string, inspectionTarget: string | null = verificationOf ?? null, resumeTarget: string | null = resumeOf ?? null) {
+    try { await agentReady.current; }
+    catch (error) { toast.error(toUserMessage(error, "任务状态恢复失败，请重新打开聊天窗口。")); return; }
     if (agentBusyRef.current || (!currentPromptValue.trim() && !attachment && !screenshot)) return;
 
     const requestPrompt = currentPromptValue.trim();
+    const replyingTo=soulReplyId;
+    setSoulReplyId(null);
     if (displayedRequestId.current && (currentPrompt || message)) {
       const previous = { id: displayedRequestId.current, prompt: currentPrompt, response: message, createdAt: Math.floor(Date.now() / 1000) };
       setChatHistory((entries) => [...entries.filter((entry) => entry.id !== previous.id), previous]);
@@ -473,8 +589,7 @@ export function BubbleWindow() {
     const nextConversation = { ...currentConversation, id: currentConversation.id || currentRequestId, turnIds: [...currentConversation.turnIds, currentRequestId] };
     conversationRef.current = nextConversation;
     setConversation(nextConversation);
-    setTaskTerminal(null);
-    setAgentTools([]); setAgentApprovals([]); setWorkspaceRequired(false); setAgentStatus("");
+    resetAgentTask();
     businessAction.current = false;
 
     setCurrentPrompt(requestPrompt);
@@ -517,7 +632,7 @@ export function BubbleWindow() {
       return;
     }
 
-    setAgentBusy(true); agentBusyRef.current = true;
+    beginAgentTask(currentRequestId); agentBusyRef.current = true;
     void agentReady.current.then(() => runCommand<void>("agent_start", {
       input: {
         requestId: currentRequestId,
@@ -525,11 +640,13 @@ export function BubbleWindow() {
         prompt: requestPrompt,
         attachmentAction: attachment ? attachmentAction : undefined,
         includeScreenshot: Boolean(screenshot),
-        verificationOf: inspectionTarget,
-        resumeOf: resumeTarget,
+        verificationOf: inspectionTarget || undefined,
+        resumeOf: resumeTarget || undefined,
+        proactiveMessageId: replyingTo || undefined,
       },
     })).catch((error) => {
-      setAgentBusy(false); agentBusyRef.current = false;
+      applyAgentEvent({ type: "failed", requestId: currentRequestId });
+      agentBusyRef.current = false;
       setPrompt(requestPrompt);
       setIsThinking(false);
       setShowReplySkeleton(false);
@@ -547,6 +664,8 @@ export function BubbleWindow() {
       return;
     }
     if (!prompt.trim() && !attachment && !screenshot) return;
+    followThreadRef.current = true;
+    setAwayFromBottom(false);
     void sendPrompt(prompt.trim());
   }
 
@@ -577,19 +696,16 @@ export function BubbleWindow() {
       setConversation((current) => ({ ...current, cwd: path }));
       if (workspaceRequired) {
         await runCommand("agent_select_workspace", { requestId: activeRequestId.current, path });
-        setWorkspaceRequired(false); setAgentStatus("目录已选择，正在继续…");
       }
     } catch (error) { toast.error(toUserMessage(error, "选择目录失败")); }
   }
   async function cancelWorkspace() {
-    try { await runCommand("agent_select_workspace", { requestId: activeRequestId.current, path: null }); setWorkspaceRequired(false); }
+    try { await runCommand("agent_select_workspace", { requestId: activeRequestId.current, path: null }); }
     catch (error) { toast.error(toUserMessage(error, "取消失败")); }
   }
   async function approveTool(id: string, allowed: boolean) {
     try {
       await runCommand("agent_approve", { requestId: activeRequestId.current, approvalId: id, allowed });
-      setAgentApprovals((items) => items.filter((item) => item.id !== id));
-      setAgentStatus(allowed ? "已批准，正在继续…" : "已拒绝，正在继续…");
     } catch (error) { toast.error(toUserMessage(error, "确认失败")); }
   }
   function inspectTask(requestId: string) {
@@ -607,12 +723,14 @@ export function BubbleWindow() {
   }
 
   function newConversation() {
+    followThreadRef.current = true;
+    setAwayFromBottom(false);
     setVerificationOf(undefined); setResumeOf(undefined);
     displayedRequestId.current = undefined;
     const next = { id: "", cwd: conversation.cwd, importHistory: false, turnIds: [] };
     conversationRef.current = next; setConversation(next); setChatHistory([]); setCurrentPrompt(""); setMessage("");
-    setTaskTerminal(null);
-    setAgentTools([]); setAgentApprovals([]); setReplyStatus(null); setReplyError(""); setPendingAction(undefined);
+    resetAgentTask();
+    setReplyStatus(null); setReplyError(""); setPendingAction(undefined);
   }
 
   async function copyResult() {
@@ -629,7 +747,7 @@ export function BubbleWindow() {
       }
       if (businessAction.current) {
         await runCommand("agent_confirm_action", { requestId: activeRequestId.current, id: pendingAction.id, selectedIndexes: confirmationChoices.length ? selectedChoiceIndexes : undefined });
-        setPendingAction(undefined); setSelectedChoiceIndexes([]); businessAction.current = false; setAgentStatus("已确认，正在继续…"); return;
+        return;
       }
       const execution = await runCommand<ActionExecution>("confirm_chat_action", {
         id: pendingAction.id,
@@ -659,7 +777,7 @@ export function BubbleWindow() {
     try {
       if (businessAction.current) {
         await runCommand("agent_reject_action", { requestId: activeRequestId.current, id: pendingAction.id });
-        setPendingAction(undefined); setSelectedChoiceIndexes([]); businessAction.current = false; setAgentStatus("已拒绝，正在继续…"); return;
+        return;
       }
       await runCommand("reject_chat_action", { id: pendingAction.id });
       setPendingAction(undefined);
@@ -923,6 +1041,14 @@ export function BubbleWindow() {
     setExpandedHistoryIds(new Set());
   }
 
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    const pending = listen("bubble-capture-requested", () => {
+      void runCommand("begin_screen_capture").catch((error) => toast.error(toUserMessage(error, "截图失败，请重试。")));
+    });
+    return () => { void pending.then((unlisten) => unlisten()); };
+  }, [toast]);
+
   const htmlPreviewSource = htmlPreviewEnabled ? extractHtmlPreviewSource(message) : null;
   const currentFavoriteId = htmlPreviewSource ? findFavoriteId(favorites, htmlPreviewSource) : undefined;
   const selectedFavorite = selectedFavoriteId ? favorites.find((item) => item.id === selectedFavoriteId) : undefined;
@@ -937,20 +1063,23 @@ export function BubbleWindow() {
       <header className="bubble-topbar" onPointerDown={startBubbleDrag}>
         <div className="bubble-topbar__left">
           <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
-          <span className="bubble-topbar__name">{companionName}</span>
+          <div className="bubble-topbar__identity"><span className="bubble-topbar__name">{companionName}</span><span className="bubble-topbar__subtitle">随时聊聊，一起做事</span></div>
         </div>
         <div className="bubble-topbar__center">
-          <span className={`bubble-topbar__status${topbarStatus.pulse ? " bubble-topbar__status--pulse" : ""}`}>
+          <span role="status" aria-live="polite" className={`bubble-topbar__status${topbarStatus.pulse ? " bubble-topbar__status--pulse" : ""}`}>
             <span className="bubble-topbar__dot" />
             {topbarStatus.label}
           </span>
         </div>
         <div className="bubble-topbar__right">
+          <button type="button" className="bubble-topbar__btn" disabled={isThinking || agentBusy} onClick={newConversation} aria-label="新对话" title="新对话"><Plus size={17} /></button>
+          <button type="button" className="bubble-topbar__btn" onClick={() => void runCommand("open_panel")} aria-label="打开主面板" title="打开主面板"><PanelRight size={17} /></button>
           <button
             className="bubble-topbar__btn"
             type="button"
             onClick={() => runCommand("hide_bubble")}
             aria-label="关闭"
+            title="收起对话 · Esc（任务继续运行）"
           >
             <X size={17} />
           </button>
@@ -958,7 +1087,12 @@ export function BubbleWindow() {
       </header>
 
       {/* Layer 2: Thread Area */}
-      <section className="bubble-thread" ref={threadScrollRef} aria-label="对话内容">
+      <section className="bubble-thread" ref={threadScrollRef} aria-label="对话内容" onScroll={(event) => {
+        const el = event.currentTarget;
+        const away = el.scrollHeight - el.scrollTop - el.clientHeight > 64;
+        followThreadRef.current = !away;
+        setAwayFromBottom(away);
+      }}>
         <TaskHistory busy={agentBusy} onInspect={(record) => inspectTask(record.requestId)} onResume={resumeTask} />
         {verificationOf && <section className="task-history" aria-label="只读核对模式">
           <strong>正在只读核对结果</strong>
@@ -1048,9 +1182,10 @@ export function BubbleWindow() {
                   <PetSprite mode="idle" compact />
                 </div>
                 <HtmlPreviewFrame
+                    sourceChatId={requestId ?? conversation.id}
                   source={htmlPreviewSource}
                   isFavorited={Boolean(currentFavoriteId)}
-                  onToggleFavorite={() => void toggleFavorite(htmlPreviewSource).catch((error) => toast.error(toUserMessage(error, "收藏失败，请重试。")))}
+                  onToggleFavorite={() => void toggleFavorite(htmlPreviewSource, requestId ?? conversation.id).catch((error) => toast.error(toUserMessage(error, "收藏失败，请重试。")))}
                 />
               </div>
             ) : message.trim() ? (
@@ -1105,6 +1240,12 @@ export function BubbleWindow() {
 
       {/* Layer 3: Input Zone */}
       <div className="bubble-input-zone">
+        {awayFromBottom && <button type="button" className="bubble-jump-latest" onClick={() => {
+          const el = threadScrollRef.current;
+          if (el) el.scrollTop = el.scrollHeight;
+          followThreadRef.current = true;
+          setAwayFromBottom(false);
+        }}><ArrowDown size={13} />回到最新消息</button>}
         {hasInputContext && (
           <div className="bubble-input-zone__chips">
             {attachment && (
@@ -1142,16 +1283,22 @@ export function BubbleWindow() {
             )}
           </div>
         )}
-        <div className="chat-workspace" aria-label="对话上下文">
+        <div className="bubble-context-bar">
+          <button type="button" className="bubble-context-toggle" aria-expanded={contextOpen} aria-controls="bubble-context-options" onClick={() => setContextOpen(!contextOpen)}>
+            <FolderOpen size={13} /><span>{conversation.cwd ? conversation.cwd.split(/[\\/]/).filter(Boolean).pop() : "工作空间与收藏"}</span><ChevronDown size={12} />
+          </button>
+          <span className="bubble-input-hint">Enter 发送 · Shift+Enter 换行</span>
+        </div>
+        <div id="bubble-context-options" className="chat-workspace" aria-label="对话上下文" hidden={!contextOpen}>
           <button type="button" className="chat-workspace__directory" title={conversation.cwd || "需要操作本地文件时再选择文件夹"} disabled={!isTauriRuntime || agentBusy} onClick={() => void chooseWorkspace()}>
-            📁 {conversation.cwd ? (conversation.cwd.split(/[\\/]/).filter(Boolean).pop() || conversation.cwd) : "选择工作目录（可选）"}
+            <FolderOpen size={13} /> {conversation.cwd ? (conversation.cwd.split(/[\\/]/).filter(Boolean).pop() || conversation.cwd) : "选择工作目录（可选）"}
           </button>
           <button ref={favoritesButtonRef} type="button" className="chat-workspace__directory" title="收藏的 HTML 卡片" onClick={() => setFavoritesOpen((open) => !open)} aria-expanded={favoritesOpen}>
             <Star size={13} /> 收藏卡片{favorites.length ? ` · ${favorites.length}` : ""}
           </button>
-          <button type="button" disabled={agentBusy} onClick={newConversation}>新对话</button>
+
         </div>
-        {favoritesOpen && (
+        {contextOpen && favoritesOpen && (
           <div className="bubble-favorites" aria-label="收藏的 HTML 卡片">
             {favorites.length === 0 ? (
               <p>还没有收藏，在任意 HTML 卡片头部点 ★ 即可收藏</p>
@@ -1176,13 +1323,42 @@ export function BubbleWindow() {
             ))}
           </div>
         )}
-        <form className="prompt-form" onSubmit={submit}>
+        {soulMessage && (
+          <div className="bubble-soul-note" role="status" data-soul-id={soulMessage.id}>
+            <div className="bubble-soul-note__body">
+              <p>{soulMessage.text || SOUL_CATEGORY_LABELS[soulMessage.category]}</p>
+              <div className="bubble-soul-note__actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    ackResponded(soulMessage.id);
+                    setSoulReplyId(soulMessage.id);
+                    setSoulMessage(null);
+                    promptInputRef.current?.focus();
+                  }}
+                >
+                  回应
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    ackDismissed(soulMessage.id);
+                    setSoulMessage(null);
+                  }}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        <form className={`prompt-form${isDraggingFile ? " prompt-form--dragging" : ""}`} onSubmit={submit}>
           <div className="prompt-tools" aria-label="输入工具">
             <button type="button" onClick={() => void chooseAttachment()} aria-label="选择文件" title="选择文件">
-              <Paperclip size={17} />
+              <Paperclip size={16} /><span>文件</span>
             </button>
-            <button type="button" onClick={() => runCommand("begin_screen_capture")} aria-label="截图提问" title="截图提问">
-              <ScanLine size={17} />
+            <button type="button" onClick={() => void runCommand("begin_screen_capture").catch((error) => toast.error(toUserMessage(error, "截图失败，请重试。")))} aria-label="截图提问" title="截图提问">
+              <ScanLine size={16} /><span>截图</span>
             </button>
             <button
               type="button"
@@ -1194,15 +1370,27 @@ export function BubbleWindow() {
             >
               {isListening ? <Square size={14} /> : <Mic size={17} />}
             </button>
+            {agentBusy && <button type="submit" aria-label="补充要求" title="补充当前任务要求" disabled={!prompt.trim() || sendingSteering}><ArrowUp size={17} /></button>}
           </div>
-          <input
+          <textarea
+            rows={2}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                event.preventDefault();
+                submitPrompt();
+              }
+            }}
             ref={promptInputRef}
             value={prompt}
-            onChange={(event) => setPrompt(event.currentTarget.value)}
-            placeholder={attachment || screenshot ? "可补充处理要求" : "输入问题，或描述一个任务"}
+            onChange={(event) => {
+                lastTypingAt.current = Date.now();
+                reportSoulActivity(currentActivitySnapshot(true));
+                setPrompt(event.currentTarget.value);
+              }}
+            placeholder={agentBusy ? "补充要求，让 Piko 接着处理…" : attachment || screenshot ? "想怎么处理？补充一些要求…" : "发消息，或交给 Piko 一件事…"}
             aria-label="发送给 Piko 的问题"
           />
-          {agentBusy && <button type="submit" aria-label="补充要求" disabled={!prompt.trim() || sendingSteering}>补充要求</button>}
           {(isThinking || agentBusy) ? (
             <button type="button" className="prompt-form__stop" onClick={cancel} title="停止生成" aria-label="停止生成">
               <Square size={15} />

@@ -40,11 +40,22 @@ pub fn local_preview_navigation(url: &tauri::Url) -> bool {
 
 #[tauri::command]
 pub fn create_html_preview_frame(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    source_chat_id: Option<String>,
     store: tauri::State<'_, HtmlPreviewStore>,
     html: String,
     allow_network: Option<bool>,
 ) -> Result<String, String> {
-    store.insert_with_policy(html, allow_network.unwrap_or(false))
+    let token=store.insert_with_policy(html, allow_network.unwrap_or(false))?;
+    if let Some(source)=source_chat_id {
+        if matches!(window.label(),"bubble"|"panel") {
+            if let Some(db)=app.try_state::<std::sync::Arc<crate::memory::MemoryDb>>() {
+                if let Ok(mut conn)=db.0.lock(){let _=crate::memory::soul::observations::register_preview(&mut conn,&token,window.label(),&source,crate::common::unix_timestamp() as i64);}
+            }
+        }
+    }
+    Ok(token)
 }
 
 #[tauri::command]
@@ -60,6 +71,7 @@ pub fn remove_html_preview_frame(
 pub async fn open_html_preview_window(
     app: tauri::AppHandle,
     html: String,
+    source_chat_id: Option<String>,
     allow_network: Option<bool>,
     x: Option<f64>,
     y: Option<f64>,
@@ -79,6 +91,11 @@ pub async fn open_html_preview_window(
     if let (Some(x), Some(y)) = (x, y) {
         if x.is_finite() && y.is_finite() {
             builder = builder.position(x, y);
+        }
+    }
+    if let Some(source)=source_chat_id {
+        if let Some(db)=app.try_state::<std::sync::Arc<crate::memory::MemoryDb>>() {
+            if let Ok(mut conn)=db.0.lock(){let _=crate::memory::soul::observations::register_preview(&mut conn,&token,&label,&source,crate::common::unix_timestamp() as i64);}
         }
     }
     let window = match builder.build() {

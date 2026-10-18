@@ -618,5 +618,163 @@
       "todayTyping": "Typing Today",
       "typingDuration": "Typing Duration"
     }
+  },
+  "soul": {
+    "title": "Piko personality",
+    "diagnosticsTitle": "Local storage status",
+    "loading": "Checking…",
+    "refresh": "Check again",
+    "loadFailed": "Could not read storage status. Please try again.",
+    "preview": "Local storage diagnostics are available in the desktop app.",
+    "available": "Storage available",
+    "unavailable": "Storage unavailable",
+    "volatile": "Using temporary storage only",
+    "profileHealthy": "Role profile is valid",
+    "profileFallback": "Role profile is invalid; using the default role",
+    "ledgerHealthy": "Proactive ledger is readable",
+    "ledgerBlocked": "Proactive ledger is invalid; delivery is blocked",
+    "rolloutPending": "Proactive messages remain disabled until P0 integration acceptance passes.",
+    "defaultRole": {
+      "background": "A small desk companion born on a city windowsill, helping you turn ideas into concrete steps.",
+      "values": [
+        "Careful and dependable",
+        "Honest about disagreements",
+        "Playful without being unkind",
+        "Respectful of your choices and boundaries"
+      ],
+      "tone": "Prefer short, clear sentences with occasional self-deprecating humor. State uncertainty plainly.",
+      "catchphrases": [],
+      "forbidden_phrases": [
+        "As an AI assistant",
+        "Is there anything else I can help you with"
+      ],
+      "care": "Care about specific commitments you explicitly made, without inferring health or mental states.",
+      "stance": "Gently flag factual mistakes, concrete risks, and limitations of an output, with reasons and practical suggestions.",
+      "extra": ""
+    },
+    "settings": {
+      "title": "Personality & proactive messages",
+      "loadFailed": "Could not read soul settings.",
+      "saved": "Personality saved.",
+      "conflict": "Save failed, please retry.",
+      "globalSwitch": "Enable proactive messages",
+      "pause": "Do not talk for now",
+      "notShipped": "Not available yet (P1/P2)",
+      "readOnlyRole": "Personality data is invalid; showing defaults only.",
+      "save": "Save",
+      "reset": "Reset to defaults",
+      "resetDone": "Reset to default personality.",
+      "clear": "Clear soul data",
+      "clearConfirm": "Clear all soul data (personality, topics, proactive, mood, history)? This cannot be undone.",
+      "cleared": "Cleared.",
+      "clearFailed": "Clear failed, please retry.",
+      "background": "Background",
+      "tone": "Tone",
+      "care": "Cares about",
+      "stance": "Stance",
+      "values": "Values (comma separated)",
+      "catchphrases": "Catchphrases (comma separated)",
+      "forbidden": "Forbidden phrases (comma separated)",
+      "extra": "Additional preferences",
+      "resetConfirm": "Restore defaults? Current overrides and evolution will be cleared; history follows your selection.",
+      "resolveTask": "Mark this issue resolved",
+      "resolveConfirm": "Have you checked the result and resolved the issue? This only withdraws reminders; it will not run any task.",
+      "rolloutNotice": "Proactive messages are off by default. New installs preselect task followups only; other categories, mood, evolution and shared history are opt-in. Existing choices are preserved.",
+      "clearRoleHistory": "Also clear role version history when restoring defaults",
+      "tonePreset": "Style preset",
+      "choosePreset": "Choose a style or edit freely below",
+      "toneLabel": {
+        "concise": "Concise",
+        "warm": "Warm",
+        "direct": "Direct"
+      },
+      "toneStyle": {
+        "concise": "Use short sentences and key points, without repetition or unnecessary greetings.",
+        "warm": "Respond warmly and naturally, addressing the user’s concern before offering suggestions.",
+        "direct": "State facts, judgments and reasons directly, and make uncertainty explicit."
+      },
+      "mood": "Mood expression",
+      "moodHint": "Explicit interactions affect tone and idle expressions only. Turning this off clears scores; enabling starts fresh.",
+      "clearCategory": "Clear category messages",
+      "clearCategoryConfirm": "Clear this category’s messages? Daily quota remains consumed, and tasks and topics are kept.",
+      "notificationPermission": "Allow task system notifications",
+      "notificationGranted": "System notifications are authorized; proactive settings and limits still apply.",
+      "notificationDenied": "System notifications are unavailable. Bubbles remain available, and permission is never retried in the background."
+    },
+    "category": {
+      "task_unresolved": "Unfinished task follow-up",
+      "open_loop": "Topic revisit",
+      "greeting": "Startup greeting",
+      "milestone": "Shared milestones",
+      "pattern": "Pattern observations",
+      "small_talk": "Small talk",
+      "output_feedback": "Output feedback"
+    },
+    "review": {
+      "title": "Open topics",
+      "loadFailed": "Could not read topics.",
+      "done": "Done.",
+      "conflict": "Conflicting change, refresh and retry.",
+      "capacity": "Active {count}/{limit}",
+      "close": "Close as done",
+      "cancel": "Cancel",
+      "editDate": "Enter a date (YYYY-MM-DD)",
+      "editDateButton": "Reschedule",
+      "invalidDate": "Invalid date.",
+      "similar": "Similar candidates exist: merge manually, never auto-merged.",
+      "approve": "Approve",
+      "reject": "Reject",
+      "candidateContent": "Topic content",
+      "responseProposal": "Review topic response",
+      "proposal": {
+        "closed": "Complete",
+        "cancelled": "Cancel",
+        "tracking": "Reschedule"
+      }
+    },
+    "messages": {
+      "task_failed": "A previous task failed. You can review its record; external results may still need checking.",
+      "task_interrupted": "A previous task was interrupted. Its results need checking. Reply to start a read-only check; nothing will rerun automatically.",
+      "greeting": "Welcome back. What would you like to start with?",
+      "open_loop_followup": "How did that plan go? Not yet is fine; any rescheduling or closure needs your confirmation.",
+      "milestone_first_task": "The first task run has ended, with a record available to check. A small milestone.",
+      "milestone_first_reply": "A proactive message received its first reply. A small milestone recorded.",
+      "milestone_first_thanks": "An explicit thank-you received. This interaction is now a small shared milestone.",
+      "small_talk_a": "When you have a moment, we can talk through a small idea.",
+      "small_talk_b": "If useful, I can help make the next step smaller.",
+      "pattern_confirmed_plans": "Three of your confirmed plans on different dates fall on the same weekday. Want to review their timing?",
+      "output_html_viewed": "This HTML preview has been continuously visible for a minute. You can ask to adjust its structure or copy.",
+      "output_html_favorited": "This HTML output has been saved to favorites. You can continue adjusting its layout or content.",
+      "milestone_first_favorite": "An output was explicitly saved to favorites for the first time. A small milestone.",
+      "milestone_shared_week": "Shared records have reached a week. This is a keepsake, with no effect on capabilities."
+    },
+    "continuity": {
+      "title": "Shared history and forms of address",
+      "enabled": "Record new shared events",
+      "days": "Day {days} of shared records",
+      "nickname": "How Piko addresses you",
+      "noNickname": "No special form of address",
+      "nicknameHint": "Milestones unlock choices only. They never change your name automatically or restrict capabilities.",
+      "milestones": {
+        "first_task": "First completed task run",
+        "first_reply": "First proactive response",
+        "first_thanks": "First explicit thank-you",
+        "first_favorite": "First saved output",
+        "shared_week": "A week of shared records"
+      },
+      "names": {
+        "partner": "Partner",
+        "friend": "Friend"
+      },
+      "evolution": "Allow personality change proposals",
+      "evolutionHint": "Off by default. Three separate conversations must express the same preference. Changes require approval, and your edits always take priority.",
+      "proposals": "Proposed expression changes",
+      "evidence": "Explicit evidence from {count} separate conversations",
+      "versions": "Confirmed versions",
+      "version": "Version {revision}",
+      "rollback": "Restore this version",
+      "rollbackHint": "Restoring creates a new version and pauses new proposals. Turn evolution off and on to resume proposals.",
+      "rollbackConfirm": "Restore this expression version? Your manual personality overrides will remain."
+    }
   }
 }

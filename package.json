@@ -1,7 +1,7 @@
 {
   "name": "im-robot",
   "private": true,
-  "version": "1.2.10",
+  "version": "1.2.11",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,7 +20,11 @@
     "lint": "eslint src",
     "agent:prepare": "node scripts/prepare-agent-runtime.mjs",
     "test:calendar": "node scripts/test-calendar-bridge.mjs",
-    "test:agent": "node --test agent/*.test.mjs"
+    "test:agent": "node --test agent/*.test.mjs",
+    "check:architecture": "node scripts/check-runtime-boundaries.mjs",
+    "test:ui": "npm run build && playwright test",
+    "test:ui:report": "playwright show-report --host 127.0.0.1",
+    "test:notifications-native": "node scripts/test-notification-bridge.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

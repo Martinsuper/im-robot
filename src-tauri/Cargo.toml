@@ -1,6 +1,6 @@
 [package]
 name = "im-robot"
-version = "1.2.10"
+version = "1.2.11"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -40,6 +40,8 @@ base64 = "0.22"
 tauri-plugin-dialog = "^2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = "0.4"
+chrono-tz = "0.10"
+iana-time-zone = "0.1"
 wasmtime = "45"
 wasmtime-wasi = "45"
 

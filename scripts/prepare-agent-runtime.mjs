@@ -1,3 +1,4 @@
+import { agentRuntimeFiles } from "./agent-runtime-files.mjs";
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -17,7 +18,7 @@ if (requestedTarget && requestedTarget !== host) {
 const source = path.join(root, "agent");
 const destination = path.join(root, "src-tauri", "agent-runtime");
 mkdirSync(destination, { recursive: true });
-for (const file of ["package.json", "package-lock.json", "sidecar.mjs", "permissions.mjs", "execution.mjs", "app-tools.mjs"]) {
+for (const file of agentRuntimeFiles) {
   cpSync(path.join(source, file), path.join(destination, file));
 }
 const lock = readFileSync(path.join(source, "package-lock.json"), "utf8");

@@ -1,3 +1,4 @@
+import { parseCommand, eventEnvelope } from "./protocol.mjs";
 import { randomUUID } from "node:crypto";
 import { FileOperations } from "./file-operations.mjs";
 import { resolveModelLimits } from "./model-limits.mjs";
@@ -15,19 +16,20 @@ import { AppToolBridge, applicationTools } from "./app-tools.mjs";
 
 // stdout is exclusively JSONL; dependencies must never write diagnostics there.
 console.log = (...args) => console.error(...args);
-const emit = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
+const emit = (event) => process.stdout.write(`${JSON.stringify(eventEnvelope(event, activeInput?.requestId))}\n`);
 const gate = new ApprovalGate(emit);
 const bridge = new AppToolBridge(emit);
 let session;
 let running = false;
 let activeFileOperations;
+let activeInput;
 let steeringJobs = [];
 let cancelled = false;
 let unsubscribe;
 
 async function start(input) {
   if (running) throw new Error("已有任务正在运行");
-  running = true;
+  running = true; activeInput = input;
   cancelled = false; steeringJobs = [];
   try {
     const cwd = await realpath(input.cwd);
@@ -142,7 +144,7 @@ async function start(input) {
       }
       if (event.type === "tool_execution_start") { toolInvocations += 1; emit({ type: "tool-start", tool: event.toolName, toolCallId: event.toolCallId, arguments: event.args }); }
       if (event.type === "tool_execution_end") emit({ type: "tool-end", tool: event.toolName, toolCallId: event.toolCallId, isError: event.isError,
-        verification: event.result?.details?.verification, output: (event.result?.content || []).filter((part) => part.type === "text").map((part) => part.text).join("\n").slice(0, 16000) });
+        verification: event.result?.details?.verification, output: Array.from((event.result?.content || []).filter((part) => part.type === "text").map((part) => part.text).join("\n")).slice(0, 16000).join("") });
     });
     if (cancelled) { emit({ type: "cancelled" }); return; }
     emit({ type: "started", sessionId: session.sessionId });
@@ -175,12 +177,16 @@ async function start(input) {
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 lines.on("line", (line) => {
   try {
-    const input = JSON.parse(line);
-    if (input.type === "start") void start(input);
+    const input = parseCommand(line, activeInput?.requestId);
+    if (input.type === "start") void start(input).catch((error) => emit({ type: "protocol-error", message: error.message }));
     else if (input.type === "steer") {
       if (!session || !running) throw new Error("当前没有可补充的任务");
-      activeFileOperations?.revokeAuthorization(); gate.cancel(); bridge.cancel();
-      const job = session.steer(input.text).then(() => emit({ type: "steering-accepted", text: input.text })).catch((error) => emit({ type: "protocol-error", message: error.message }));
+      if (activeInput) activeInput.autoApproveCommands = false;
+      // Queue the correction and revoke old approvals before the next mutation can run.
+      const revocation = activeFileOperations?.revokeAuthorization();
+      const delivery = session.steer(input.text);
+      gate.cancel(); bridge.cancel();
+      const job = Promise.all([revocation, delivery]).then(() => emit({ type: "steering-accepted", text: input.text })).catch((error) => emit({ type: "protocol-error", message: error.message }));
       steeringJobs.push(job);
     }
     else if (input.type === "approval") {

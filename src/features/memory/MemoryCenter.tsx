@@ -14,6 +14,7 @@ import {
   MEMORY_TYPE_OPTIONS,
 } from "./memoryTypes";
 import { MemoryExtractionControls } from "./MemoryExtractionControls";
+import { OpenLoopReview } from "../soul/OpenLoopReview";
 import { MemoryCard } from "./MemoryCard";
 import { MemoryDetail } from "./MemoryDetail";
 import { runCommandAndRefresh } from "../app/appRuntime";
@@ -312,6 +313,7 @@ export function MemoryCenter() {
 
       {/* Sub-view tabs */}
       <MemoryExtractionControls />
+      <OpenLoopReview />
       <nav className="memory-sub-tabs">
         <button
           type="button"

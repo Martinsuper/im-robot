@@ -48,6 +48,14 @@ export function PanelWindow() {
     };
   }, [refreshOnboarding]);
 
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    const pending = listen<PanelTab>("panel-navigate", ({ payload }) => {
+      if (["today", "records", "settings"].includes(payload)) setTab(payload);
+    });
+    return () => { void pending.then((unlisten) => unlisten()); };
+  }, []);
+
   if (onboarding.required) {
     return (
       <OnboardingWindow

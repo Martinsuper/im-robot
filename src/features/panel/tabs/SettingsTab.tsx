@@ -1,9 +1,11 @@
 import "./settings.css";
+import { SoulDiagnostics } from "../../soul/SoulDiagnostics";
+import { SoulSettings } from "../../soul/SoulSettings";
 import { useEffect, useRef, useState } from "react";
 import { BellRing, Info, MessageCircle, PawPrint, ShieldCheck, SlidersHorizontal, Volume2 } from "lucide-react";
 import { version as appVersion } from "../../../../package.json";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
-import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
+import { notificationPermissionLabel, type NotificationStatus } from "../notificationStatus";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -115,7 +117,10 @@ export function SettingsTab() {
   /** 两段式确认：第一次点击只变成「确认清空」，再点才执行（00 §5.9 可逆原则）。 */
   const [confirmClear, setConfirmClear] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
-  const [notificationPermission, setNotificationPermission] = useState("按需申请");
+  const [notificationPermission, setNotificationPermission] = useState("尚未授权");
+  const [notificationDetails, setNotificationDetails] = useState<NotificationStatus>();
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationQueryError, setNotificationQueryError] = useState("");
   const [screenCapturePermission, setScreenCapturePermission] = useState("截图时按需申请");
   const [preferencesStatus, setPreferencesStatus] = useState("");
   const [updateStatus, setUpdateStatus] = useState("");
@@ -188,15 +193,17 @@ export function SettingsTab() {
   // 本 Tab 自己持有的两段数据：语音模型（高级 → 语音）与外部插件（高级 → 插件）。
   useEffect(() => {
     void loadSpeechModels();
-    void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, []).then(setExternalPlugins);
-    void runCommand<string>("screen_capture_permission_status", undefined, "截图时按需申请").then(
-      setScreenCapturePermission,
-    );
+    void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, [])
+      .then(setExternalPlugins)
+      .catch((error) => toast.error(toUserMessage(error, "无法读取插件列表，请重试。")));
+    void runCommand<string>("screen_capture_permission_status", undefined, "截图时按需申请")
+      .then(setScreenCapturePermission)
+      .catch(() => setScreenCapturePermission("读取失败"));
     if (isTauriRuntime) {
-      void isEnabled().then(setAutostartEnabled);
-      void isPermissionGranted().then((granted) => {
-        setNotificationPermission(granted ? "已授权" : "按需申请");
+      void isEnabled().then(setAutostartEnabled).catch((error) => {
+        setPreferencesStatus(`开机启动状态读取失败：${toUserMessage(error)}`);
       });
+      void refreshNotificationStatus();
     }
 
     if (!isTauriRuntime) return;
@@ -221,9 +228,9 @@ export function SettingsTab() {
     const unlistenGrowth = listen("piko-growth-state-changed", refreshInteraction);
     window.addEventListener("storage", refreshInteraction);
     return () => {
-      void unlistenSpeechModelProgress.then((dispose) => dispose());
-      void unlistenInteraction.then((dispose) => dispose());
-      void unlistenGrowth.then((dispose) => dispose());
+      void unlistenSpeechModelProgress.then((dispose) => dispose()).catch(() => undefined);
+      void unlistenInteraction.then((dispose) => dispose()).catch(() => undefined);
+      void unlistenGrowth.then((dispose) => dispose()).catch(() => undefined);
       window.removeEventListener("storage", refreshInteraction);
     };
   }, []);
@@ -508,17 +515,39 @@ export function SettingsTab() {
     }
   }
 
-  async function enableNotifications() {
-    if (!isTauriRuntime) return;
+  async function refreshNotificationStatus() {
     try {
-      if (await isPermissionGranted()) {
-        setNotificationPermission("已授权");
-        return;
-      }
-      const permission = await requestPermission();
-      setNotificationPermission(permission === "granted" ? "已授权" : "按需申请");
+      const status = await runCommand<NotificationStatus>("get_notification_status");
+      setNotificationDetails(status);
+      setNotificationPermission(notificationPermissionLabel(status));
+      setNotificationQueryError("");
     } catch (error) {
-      setPreferencesStatus(`通知权限申请失败：${toUserMessage(error)}`);
+      setNotificationPermission("读取失败");
+      setNotificationQueryError(toUserMessage(error, "无法读取系统通知权限。"));
+    }
+  }
+
+  async function enableNotifications() {
+    setNotificationBusy(true);
+    try {
+      const status = await runCommand<NotificationStatus>("request_notification_permission");
+      setNotificationDetails(status);
+      setNotificationPermission(notificationPermissionLabel(status));
+    } catch (error) {
+      toast.error(toUserMessage(error, "通知权限申请失败，请重试。"));
+    } finally { setNotificationBusy(false); }
+  }
+
+  async function testNotification() {
+    setNotificationBusy(true);
+    try {
+      await runCommand("send_test_notification");
+      toast.success("测试通知已提交，请检查屏幕右上角或通知中心。");
+    } catch (error) {
+      toast.error(toUserMessage(error, "测试通知发送失败，请重试。"));
+    } finally {
+      await refreshNotificationStatus();
+      setNotificationBusy(false);
     }
   }
 
@@ -963,10 +992,18 @@ export function SettingsTab() {
               <strong>{notificationPermission}</strong>
             </div>
             {notificationPermission === "已授权" ? null : (
-              <button type="button" onClick={() => void enableNotifications()}>
+              <button type="button" disabled={notificationBusy || !isTauriRuntime} onClick={() => void enableNotifications()}>
                 去开启
               </button>
             )}
+            <div className="settings-actions">
+              <button type="button" disabled={notificationBusy || !isTauriRuntime} onClick={() => void testNotification()}>发送测试通知</button>
+              <button type="button" disabled={notificationBusy || !isTauriRuntime} onClick={() => void refreshNotificationStatus()}>重新检查权限</button>
+              <button type="button" disabled={!isTauriRuntime} onClick={() => void runCommand("open_notification_settings").catch(error => toast.error(toUserMessage(error)))}>打开系统通知设置</button>
+            </div>
+            {notificationQueryError ? <p role="alert" className="settings-note">{notificationQueryError}</p> : null}
+            {notificationDetails?.lastError ? <p role="alert" className="settings-note">最近发送失败：{notificationDetails.lastError}</p> : null}
+            <p className="settings-note">若已授权但未出现横幅，请在系统通知设置中为 Piko 开启横幅，并检查专注模式与通知摘要。</p>
           </div>
         </section>
       </SettingsGroup>
@@ -1066,6 +1103,9 @@ export function SettingsTab() {
           </div>
         </section>
       </SettingsGroup>
+
+      <SoulSettings />
+      <SoulDiagnostics />
 
       <SettingsGroup id="about" icon={<Info size={15} />} title="关于">
         <section className="panel-card">

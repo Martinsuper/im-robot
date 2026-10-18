@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+vi.mock("../i18n/I18nProvider", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 import { TaskHistory, type TaskRecord } from "./TaskHistory";
 
 const { command } = vi.hoisted(() => ({ command: vi.fn() }));

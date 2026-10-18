@@ -1,7 +1,9 @@
+import { TaskDiagnostics } from "./TaskDiagnostics";
 import { useEffect, useState } from "react";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { toUserMessage } from "../../lib/errors";
 import "./taskHistory.css";
+import { useTranslation } from "../i18n/I18nProvider";
 import { summarizeSteps } from "./taskOutcomeModel";
 
 type TaskStep = { id: string; tool: string; status: string };
@@ -15,6 +17,8 @@ const labels: Record<string, string> = {
 };
 
 export function TaskHistory({ busy, onInspect, onResume }: { busy: boolean; onInspect?: (record: TaskRecord) => void; onResume?: (record: TaskRecord) => void }) {
+  const { t }=useTranslation();
+  const [resolved,setResolved]=useState<string[]>([]);
   const [records, setRecords] = useState<TaskRecord[]>([]);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -42,11 +46,16 @@ export function TaskHistory({ busy, onInspect, onResume }: { busy: boolean; onIn
       <span> · {new Date(record.startedAt * 1000).toLocaleString()} · {record.requestId.slice(0, 8)}</span>
       {["interrupted", "failed", "cancelled"].includes(record.status) && <p>可能已有部分操作完成。请先检查实际结果，再决定如何继续。</p>}
       {onInspect && (["interrupted", "failed", "cancelled"].includes(record.status) || (record.status === "completed" && record.steps.length > 0)) && <button type="button" disabled={busy} onClick={() => onInspect(record)}>只读核对结果</button>}
-      {onResume && ["interrupted", "failed", "cancelled"].includes(record.status) && <button type="button" disabled={busy} onClick={() => onResume(record)}>安全续跑</button>}
+      {onResume && (["interrupted", "failed", "cancelled"].includes(record.status) || record.steps.some((step) => ["failed", "unknown"].includes(step.status))) && <button type="button" disabled={busy} onClick={() => onResume(record)}>安全续跑</button>}
+      {["failed","interrupted"].includes(record.status) && !resolved.includes(record.requestId) && <button type="button" disabled={busy} onClick={()=>{
+        if (!window.confirm(t("soul.settings.resolveConfirm"))) return;
+        void runCommand("soul_resolve_task",{taskId:record.requestId}).then(()=>setResolved((items)=>[...items,record.requestId])).catch((cause)=>setError(toUserMessage(cause,t("soul.settings.conflict"))));
+      }}>{t("soul.settings.resolveTask")}</button>}
       {record.steps.length > 0 && <p>{counts.returned} 项工具返回成功 · {counts.failed} 项报告失败 · {counts.unknown} 项结果未知</p>}
       {record.steps.length ? <ol>{record.steps.map((step) => <li key={step.id}>
         {step.tool} · {step.status === "completed" ? "工具已返回" : labels[step.status] || step.status}
       </li>)}</ol> : <p>没有已记录的工具步骤；这不代表操作一定未发生。</p>}
+      {["interrupted", "failed", "cancelled"].includes(record.status) && <TaskDiagnostics terminal={{ requestId: record.requestId, status: record.status === "cancelled" ? "cancelled" : "failed" }} />}
     </section>;
     })}
   </details>;

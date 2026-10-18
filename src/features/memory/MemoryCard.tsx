@@ -63,7 +63,7 @@ export function MemoryCard({
           ))}
         </div>
       )}
-      <div className="memory-card__actions">
+      <div className="memory-card__actions" onClick={(event) => event.stopPropagation()}>
         <div className="memory-feedback">
           <button
             type="button"

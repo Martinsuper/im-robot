@@ -21,6 +21,18 @@
 //!
 //! 数据安全与 `schedule` 模块对齐：迁移前备份、幂等、旧文件保留一版、损坏即中止。
 
+pub(crate) mod repository;
+pub(crate) mod commands;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChatHistoryEntry {
+    pub(crate) id: String,
+    pub(crate) prompt: String,
+    pub(crate) response: String,
+    pub(crate) created_at: u64,
+}
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -28,7 +40,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{storage, unix_timestamp, ChatHistoryEntry};
+use crate::storage;
+use crate::common::unix_timestamp;
 
 /// 会话切分的间隔阈值：相邻两轮超过这个间隔就算新会话。
 pub(crate) const SESSION_GAP_SECONDS: u64 = 30 * 60;

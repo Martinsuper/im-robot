@@ -1,0 +1,15 @@
+/* S10：灵魂设置与话题审核的最小样式，跟随现有面板卡片观感。 */
+.soul-settings__switches { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 8px 0; align-items: center; }
+.soul-settings__switches label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.soul-settings__pending { opacity: 0.6; font-size: 11px; }
+.soul-settings__pending { opacity: 0.6; font-size: 11px; }
+.soul-settings__role { display: grid; gap: 10px; margin-top: 10px; }
+.soul-settings__role label { display: grid; gap: 4px; font-size: 12px; }
+.soul-settings__role textarea, .soul-settings__role input { resize: vertical; min-height: 28px; }
+.soul-settings__actions { display: flex; gap: 8px; }
+.soul-review__list, .soul-review__topics { list-style: none; padding: 0; display: grid; gap: 6px; }
+.soul-review__list li, .soul-review__topics li { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.soul-review__window { opacity: 0.7; font-size: 11px; }
+.soul-review__similar { width: 100%; margin: 0; font-size: 11px; opacity: 0.8; }
+.soul-review__capacity { width: 100%; margin: 0; font-size: 11px; opacity: 0.7; }
+.soul-review__topics span { min-width: 0; }

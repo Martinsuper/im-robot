@@ -209,3 +209,31 @@ test("resuming an applied file operation verifies it without executing or approv
   assert.ok(!f.requests[2].tools.some((tool) => ["bash", "powershell"].includes(tool.function.name)));
   assert.equal(await readFile(path.join(f.cwd, args.path), "utf8"), args.content);
 });
+
+test("restored conversations use the current role for chat, verification, and tool continuation", async (t) => {
+  let toolsRequested = false;
+  const f = await fixture(t, (_req, res) => {
+    if (!toolsRequested) {
+      toolsRequested = true;
+      toolResponse(res, "read", { path: "role.txt" });
+    } else say(res);
+  });
+  await writeFile(path.join(f.cwd, "role.txt"), "ROLE_TOOL_RESULT");
+  const first = await f.run({ unified: true, systemPrompt: "FROZEN_ROLE_REVISION_1" });
+  assert.equal(first.at(-1).type, "completed", JSON.stringify(first));
+  assert.ok(f.requests.length >= 2);
+  for (const request of f.requests) {
+    const system = request.messages.filter((message) => message.role === "system");
+    assert.match(JSON.stringify(system), /FROZEN_ROLE_REVISION_1/);
+  }
+  const offset = f.requests.length;
+  const second = await f.run({ unified: true, readOnly: true, systemPrompt: "FROZEN_ROLE_REVISION_2" });
+  assert.equal(second.at(-1).type, "completed", JSON.stringify(second));
+  for (const request of f.requests.slice(offset)) {
+    const system = JSON.stringify(request.messages.filter((message) => message.role === "system"));
+    assert.match(system, /FROZEN_ROLE_REVISION_2/);
+    assert.doesNotMatch(system, /FROZEN_ROLE_REVISION_1/);
+    assert.match(system, /只读/);
+    assert.ok(request.tools.every((tool) => !["write", "edit", "bash", "powershell"].includes(tool.function.name)));
+  }
+});

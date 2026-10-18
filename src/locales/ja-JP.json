@@ -618,5 +618,163 @@
       "todayTyping": "今日の入力",
       "typingDuration": "入力時間"
     }
+  },
+  "soul": {
+    "title": "Piko の人格",
+    "diagnosticsTitle": "ローカル保存の状態",
+    "loading": "確認中…",
+    "refresh": "再確認",
+    "loadFailed": "状態を読み取れませんでした。もう一度お試しください。",
+    "preview": "ローカル保存の診断はデスクトップアプリで確認できます。",
+    "available": "保存領域は利用可能です",
+    "unavailable": "保存領域を利用できません",
+    "volatile": "一時保存のみを使用しています",
+    "profileHealthy": "役割設定は正常です",
+    "profileFallback": "役割設定に問題があるため既定の人格を使用します",
+    "ledgerHealthy": "能動メッセージの台帳は読み取り可能です",
+    "ledgerBlocked": "台帳に問題があるため配信を停止しています",
+    "rolloutPending": "能動メッセージは P0 の統合検証が完了するまで無効です。",
+    "defaultRole": {
+      "background": "街の窓辺で生まれた小さなデスクの相棒。思いつきを具体的な一歩にするお手伝いをします。",
+      "values": [
+        "丁寧で頼れる",
+        "異なる意見も率直に伝える",
+        "遊び心はあっても意地悪はしない",
+        "ユーザーの選択と境界を尊重する"
+      ],
+      "tone": "短く分かりやすい文を基本に、ときどき軽い自虐を交える。不確かなことは率直に伝える。",
+      "catchphrases": [],
+      "forbidden_phrases": [
+        "AIアシスタントとして",
+        "ほかに何かお手伝いできますか"
+      ],
+      "care": "ユーザーが明確に約束した具体的なことを大切にし、健康状態や心理状態を推測しない。",
+      "stance": "事実の誤り、具体的なリスク、成果物の限界には、理由と実行できる提案を添えて穏やかに伝える。",
+      "extra": ""
+    },
+    "settings": {
+      "title": "人格と能動メッセージ",
+      "loadFailed": "魂の設定を読み取れませんでした。",
+      "saved": "人格を保存しました。",
+      "conflict": "保存に失敗しました。もう一度お試しください。",
+      "globalSwitch": "能動メッセージを有効化",
+      "pause": "今は話さない",
+      "notShipped": "未提供（P1/P2）",
+      "readOnlyRole": "人格データに問題があるため既定のみ表示します。",
+      "save": "保存",
+      "reset": "既定に戻す",
+      "resetDone": "既定の人格に戻しました。",
+      "clear": "魂のデータを消去",
+      "clearConfirm": "魂のデータ（人格・話題・能動メッセージ・感情・履歴）をすべて消去しますか？元に戻せません。",
+      "cleared": "消去しました。",
+      "clearFailed": "消去に失敗しました。",
+      "background": "背景",
+      "tone": "口調",
+      "care": "気にしていること",
+      "stance": "立場",
+      "values": "重視點（、区切り）",
+      "catchphrases": "口癖（、区切り）",
+      "forbidden": "禁句（、区切り）",
+      "extra": "追加の希望",
+      "resetConfirm": "既定値に戻しますか？現在の上書きと人格の変化を消去します。履歴は選択に従います。",
+      "resolveTask": "この件を解決済みにする",
+      "resolveConfirm": "結果を確認し、この件を解決しましたか？通知を取り消すだけで、タスクは実行しません。",
+      "rolloutNotice": "自発メッセージは初期設定で無効です。新規設定ではタスクのフォローのみ選択済みで、他の種類・気分・演化・共通の記録は個別に有効にします。既存設定は保持します。",
+      "clearRoleHistory": "既定値に戻す際に人格のバージョン履歴も消去する",
+      "tonePreset": "話し方のプリセット",
+      "choosePreset": "スタイルを選ぶか、下で自由に編集できます",
+      "toneLabel": {
+        "concise": "簡潔",
+        "warm": "穏やか",
+        "direct": "率直"
+      },
+      "toneStyle": {
+        "concise": "短い文で要点を伝え、繰り返しや不要な挨拶を省く。",
+        "warm": "自然で穏やかに話し、提案の前にユーザーの関心に応える。",
+        "direct": "事実、判断と理由を率直に伝え、不確かさを明示する。"
+      },
+      "mood": "気分の表現",
+      "moodHint": "明確なやり取りに応じて口調と待機表情だけを調整します。無効にするとリセットされ、過去の記録は再生されません。",
+      "clearCategory": "この種類のメッセージを消去",
+      "clearCategoryConfirm": "この種類のメッセージを消去しますか？当日の使用枠は戻らず、タスクと話題は保持します。",
+      "notificationPermission": "タスクのシステム通知を許可",
+      "notificationGranted": "システム通知が許可されました。自発メッセージの設定と制限は引き続き適用されます。",
+      "notificationDenied": "システム通知は許可されていません。吹き出しは使えます。バックグラウンドで再要求しません。"
+    },
+    "category": {
+      "task_unresolved": "未完了タスクのフォロー",
+      "open_loop": "話題の再訪",
+      "greeting": "起動時の挨拶",
+      "milestone": "共同マイルストン",
+      "pattern": "パターン観察",
+      "small_talk": "小話",
+      "output_feedback": "成果物フィードバック"
+    },
+    "review": {
+      "title": "開いている話題",
+      "loadFailed": "話題を読み取れませんでした。",
+      "done": "処理しました。",
+      "conflict": "操作が競合しました。更新して再試行してください。",
+      "capacity": "進行中 {count}/{limit}",
+      "close": "完了にして閉じる",
+      "cancel": "キャンセル",
+      "editDate": "日付を入力（YYYY-MM-DD）",
+      "editDateButton": "予定変更",
+      "invalidDate": "日付が不正です。",
+      "similar": "類似の候補があります。自動統合しないため手動で統合してください。",
+      "approve": "承認",
+      "reject": "却下",
+      "candidateContent": "話題の内容",
+      "responseProposal": "話題への返答を確認",
+      "proposal": {
+        "closed": "完了",
+        "cancelled": "中止",
+        "tracking": "日程変更"
+      }
+    },
+    "messages": {
+      "task_failed": "以前のタスクが失敗しました。記録を確認できます。外部での結果は別途確認が必要です。",
+      "task_interrupted": "以前のタスクが中断されました。結果の確認が必要です。返信後に読み取り専用で確認でき、自動で再実行しません。",
+      "greeting": "おかえりなさい。何から始めましょうか？",
+      "open_loop_followup": "以前の予定はどうでしたか？まだでも大丈夫です。変更や完了には確認が必要です。",
+      "milestone_first_task": "初めてのタスク実行が終了し、確認できる記録が残りました。小さな節目として記録します。",
+      "milestone_first_reply": "自発メッセージに初めて返答がありました。小さな節目として記録します。",
+      "milestone_first_thanks": "明確なお礼を受け取りました。このやり取りを記録します。",
+      "small_talk_a": "時間があるとき、小さなアイデアを一緒に考えてもいいですね。",
+      "small_talk_b": "必要なら、次の一歩を少し小さくするお手伝いができます。",
+      "pattern_confirmed_plans": "確認済みの予定のうち、異なる日付の3件が同じ曜日にあります。時間の配分を確認しますか？",
+      "output_html_viewed": "この HTML プレビューが連続で1分表示されました。構成や文面の調整もできます。",
+      "output_html_favorited": "この HTML をお気に入りに保存しました。必要ならレイアウトや内容を調整できます。",
+      "milestone_first_favorite": "初めて成果を明確にお気に入りに保存しました。小さな節目です。",
+      "milestone_shared_week": "共通の記録が一週間になりました。記念であり、機能には影響しません。"
+    },
+    "continuity": {
+      "title": "共通の記録と呼び方",
+      "enabled": "これからの出来事を記録する",
+      "days": "記録を始めて {days} 日目",
+      "nickname": "あなたの呼び方",
+      "noNickname": "特別な呼び方を使わない",
+      "nicknameHint": "節目は選択肢を増やすだけです。呼び方を自動変更せず、機能も制限しません。",
+      "milestones": {
+        "first_task": "初めてタスクの実行が完了",
+        "first_reply": "初めて自発メッセージに返答",
+        "first_thanks": "初めて明確なお礼",
+        "first_favorite": "初めて成果をお気に入りに保存",
+        "shared_week": "共通の記録が一週間"
+      },
+      "names": {
+        "partner": "相棒",
+        "friend": "友達"
+      },
+      "evolution": "性格の変化の提案を許可",
+      "evolutionHint": "初期設定は無効です。同じ好みを3つの別の会話で明確に示した場合だけ提案し、確認後に適用します。手動設定が常に優先されます。",
+      "proposals": "確認待ちの表現変更",
+      "evidence": "{count} 個の別の会話による明確な根拠",
+      "versions": "確認済みのバージョン",
+      "version": "バージョン {revision}",
+      "rollback": "このバージョンに戻す",
+      "rollbackHint": "戻すと新しいバージョンを作り、提案を一時停止します。再開には演化を無効にしてから有効にしてください。",
+      "rollbackConfirm": "この表現に戻しますか？手動の性格設定は保持します。"
+    }
   }
 }

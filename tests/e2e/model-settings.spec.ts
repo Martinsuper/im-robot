@@ -23,7 +23,13 @@ async function installSettingsBackend(page: Page, mode: "persistent" | "lost" | 
       unregisterCallback() {},
       async invoke(command: string, args?: { input?: Record<string, unknown>; enabled?: boolean }) {
         calls.push({ command, args: JSON.parse(JSON.stringify(args ?? {})) });
+        if (command === "get_notification_status") return { platform: "macos", authorization: "authorized", alertsEnabled: true, soundsEnabled: true, alertStyle: "banner" };
         if (command === "get_settings") return structuredClone(state);
+        if (command === "get_onboarding_status") return { required: false, completed: true, version: "1.0" };
+        if (command === "soul_get_settings") return { revision: 1, enabled: false, paused: false, categories: [], mood_enabled: false, evolution_enabled: false, daily_limit: 3, cooldown_seconds: 7200 };
+        if (command === "soul_get_profile") return { profile_id: "piko", schema_version: 2, revision: 1, default_resource_version: "1", locale: "zh-CN", user_overrides: {}, effective: { background: "", values: [], tone: "", catchphrases: [], forbidden_phrases: [], care: "", stance: "", extra: "" }, writable: true, fallback_reason: null };
+        if (command === "soul_get_continuity") return { revision: 1, history_enabled: false, days: 0, nickname: null, nickname_options: [], milestones: [], proposals: [], versions: [] };
+        if (command === "soul_diagnostics") return { storage: "ready", profile_valid: true, ledger_readable: true };
         if (command === "update_agent_auto_approve_commands") {
           if (mode === "failure") throw "Settings storage unavailable";
           state.agentAutoApproveCommands = args?.enabled === true;

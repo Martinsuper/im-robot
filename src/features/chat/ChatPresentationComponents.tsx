@@ -189,6 +189,7 @@ export function HistoryItem({
             </div>
             {htmlPreviewSource || (previewAsSource && rawPreviewSource) ? (
               <HtmlPreviewFrame
+                sourceChatId={entry.id}
                 source={(htmlPreviewSource ?? rawPreviewSource) as string}
                 view={previewAsSource ? "source" : "preview"}
                 onViewChange={onPreviewViewChange}

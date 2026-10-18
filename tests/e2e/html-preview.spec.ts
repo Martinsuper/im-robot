@@ -18,6 +18,7 @@ test("HTML preview renders scripts and options dismiss outside, on Escape and in
   await expect(menu).not.toHaveAttribute("open", "");
   const frame = page.frameLocator(".html-preview-frame");
   await expect(frame.getByRole("heading", { name: "Piko Preview OK" })).toBeVisible();
+  await page.getByRole("checkbox").check();
   await frame.getByRole("button", { name: "Test script" }).click();
   await expect(frame.getByRole("button", { name: "Script OK" })).toBeVisible();
   await summary.click();
@@ -33,6 +34,7 @@ async function showPreview(page: import("@playwright/test").Page) {
   await page.getByLabel("更多操作").click();
   await page.locator(".inline-more-menu").getByRole("button", { name: "HTML 预览" }).click();
   await expect(page.frameLocator(".html-preview-frame").getByRole("heading")).toBeVisible();
+  await page.getByRole("checkbox").check();
 }
 
 test("preview resizes from its corner and opens an independent sandboxed window", async ({ page }, testInfo) => {
@@ -53,7 +55,7 @@ test("preview resizes from its corner and opens an independent sandboxed window"
   await page.getByRole("button", { name: "独立窗口打开" }).click();
   const popup = await popupPromise;
   await expect(popup.frameLocator("iframe").getByRole("heading", { name: "Resizable preview" })).toBeVisible();
-  await expect(popup.locator("iframe")).toHaveAttribute("sandbox", "allow-scripts allow-forms allow-modals");
+  await expect(popup.locator("iframe")).toHaveAttribute("sandbox", "allow-scripts");
   await popup.frameLocator("iframe").getByRole("button", { name: "Run script" }).click();
   await expect(popup.frameLocator("iframe").getByRole("button", { name: "Detached script OK" })).toBeVisible();
   await page.reload();

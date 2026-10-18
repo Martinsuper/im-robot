@@ -3,6 +3,7 @@ pub mod extraction;
 pub mod model;
 pub mod policy;
 pub mod reflection;
+pub mod soul;
 pub mod store;
 pub mod writer;
 

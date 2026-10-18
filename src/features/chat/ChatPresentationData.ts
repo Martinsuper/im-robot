@@ -38,5 +38,5 @@ export const SUGGESTION_ICONS = [Coffee, FileText, MessageCircle];
 
 /** 打开面板并定位到「设置 → 对话与模型」。 */
 export function openModelSettings() {
-  void runCommand("open_panel");
+  void runCommand("open_panel", { tab: "settings" });
 }

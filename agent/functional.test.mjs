@@ -282,3 +282,15 @@ test("command auto approval still requires file mutation approval", async (t) =>
   assert.equal(events.filter((e) => e.type === "approval").length, 1);
   assert.equal(existsSync(path.join(f.cwd, "denied.txt")), false);
 });
+
+test("tool output truncation preserves complete Unicode characters", async (t) => {
+  const f = await fixture(t, (_req, res, requests) => requests.length === 1
+    ? toolResponse(res, "read", { path: "unicode.txt" }) : finish(res));
+  await writeFile(path.join(f.cwd, "unicode.txt"), "a".repeat(15999) + "🤖".repeat(20));
+  const events = await f.run();
+  completed(events);
+  const output = events.find((event) => event.type === "tool-end")?.output;
+  assert.equal(Array.from(output).length, 16000);
+  assert.ok(output.endsWith("🤖"));
+  assert.equal(JSON.parse(JSON.stringify(output)), output);
+});

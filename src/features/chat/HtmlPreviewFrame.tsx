@@ -74,6 +74,7 @@ export type HtmlPreviewView = "preview" | "source";
 
 export function HtmlPreviewFrame({
   source,
+  sourceChatId,
   view: controlledView,
   initialView = "preview",
   onViewChange,
@@ -82,6 +83,7 @@ export function HtmlPreviewFrame({
   onEscape,
 }: {
   source: string;
+  sourceChatId?: string;
   view?: HtmlPreviewView;
   initialView?: HtmlPreviewView;
   onViewChange?: (view: HtmlPreviewView) => void;
@@ -93,6 +95,8 @@ export function HtmlPreviewFrame({
   const escapeChannel = useId();
   const supportsEscape = Boolean(onEscape);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const previewToken = useRef<string | null>(null);
+  const visibilityRatio = useRef(0);
   const [networkSource, setNetworkSource] = useState<string | null>(null);
   const networkAllowed = networkSource === source;
   const setNetworkAllowed = (allowed: boolean) => setNetworkSource(allowed ? source : null);
@@ -134,9 +138,30 @@ export function HtmlPreviewFrame({
   const currentFrame = frameState?.source === frameKey ? frameState : null;
   const frameUrl = currentFrame?.url ?? null;
   const failed = currentFrame?.failed ?? false;
+  useEffect(()=>{
+    visibilityRatio.current=0;
+    const frame=iframeRef.current;
+    if (!frame || typeof IntersectionObserver==="undefined") return;
+    const observer=new IntersectionObserver(entries=>{visibilityRatio.current=entries[0]?.intersectionRatio??0;},{threshold:[0,0.5,1]});
+    observer.observe(frame);return ()=>observer.disconnect();
+  },[frameUrl]);
+
   const [opening, setOpening] = useState(false);
   const [openFailed, setOpenFailed] = useState(false);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    const report = () => {
+      const token=previewToken.current;
+      if (!token) return;
+      const visible=document.visibilityState==="visible" && visibilityRatio.current>=0.5;
+      void invoke("soul_preview_visibility",{id:token,visible}).catch(()=>undefined);
+    };
+    const timer=window.setInterval(report,5000);
+    document.addEventListener("visibilitychange",report);
+    return ()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",report);if(previewToken.current)void invoke("soul_preview_visibility",{id:previewToken.current,visible:false}).catch(()=>undefined);};
+  }, [source]);
 
   async function openDetached(position?: { x: number; y: number }) {
     if (opening) return;
@@ -144,7 +169,8 @@ export function HtmlPreviewFrame({
     setOpenFailed(false);
     try {
       if (isTauriRuntime) {
-        await invoke("open_html_preview_window", { html: srcDoc, ...(networkAllowed ? { allowNetwork: true } : {}), ...position });
+        await invoke("open_html_preview_window", { html: srcDoc,
+          ...(sourceChatId ? {sourceChatId} : {}), ...(networkAllowed ? { allowNetwork: true } : {}), ...position });
       } else {
         const popup = window.open("", "_blank", "popup,width=1000,height=720,resizable=yes,scrollbars=yes");
         if (!popup) throw new Error("Popup blocked");
@@ -172,7 +198,8 @@ export function HtmlPreviewFrame({
     let token: string | null = null;
     (async () => {
       try {
-        token = await invoke<string>("create_html_preview_frame", { html: srcDoc, ...(networkAllowed ? { allowNetwork: true } : {}) });
+        token = await invoke<string>("create_html_preview_frame", { html: srcDoc,
+          ...(sourceChatId ? {sourceChatId} : {}), ...(networkAllowed ? { allowNetwork: true } : {}) });
       } catch {
         if (!disposed) setFrameState({ source: frameKey, url: null, failed: true });
         return;
@@ -181,6 +208,7 @@ export function HtmlPreviewFrame({
         void invoke("remove_html_preview_frame", { token }).catch(() => undefined);
         return;
       }
+      previewToken.current = token;
       setFrameState({ source: frameKey, url: previewFrameUrl(token), failed: false });
     })().catch(() => undefined);
     return () => {
@@ -189,7 +217,7 @@ export function HtmlPreviewFrame({
         void invoke("remove_html_preview_frame", { token }).catch(() => undefined);
       }
     };
-  }, [srcDoc, networkAllowed, frameKey]);
+  }, [srcDoc, networkAllowed, frameKey, sourceChatId]);
 
   return (
     <section className="html-preview-card" aria-label={t("chat.preview.ariaLabel", "HTML 预览")}>
@@ -296,6 +324,13 @@ export function HtmlPreviewFrame({
 export function HtmlPreviewWindow() {
   const { t } = useTranslation();
   const token = new URLSearchParams(window.location.search).get("token");
+  useEffect(()=>{
+    if (!isTauriRuntime || !token) return;
+    const report=()=>void invoke("soul_preview_visibility",{id:token,visible:document.visibilityState==="visible"}).catch(()=>undefined);
+    report();const timer=window.setInterval(report,5000);document.addEventListener("visibilitychange",report);
+    return ()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",report);void invoke("soul_preview_visibility",{id:token,visible:false}).catch(()=>undefined);};
+  },[token]);
+
   return (
     <main className="html-preview-window">
       {token ? <iframe

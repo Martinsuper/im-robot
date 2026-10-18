@@ -15,7 +15,7 @@ it("previews HTML in expanded history with the same standalone window controls",
   invoke.mockResolvedValue("history-frame");
   render(<HistoryItem {...props} />);
   await waitFor(() => expect(screen.getByTitle("Piko HTML 预览").getAttribute("src")).toContain("/frame/history-frame"));
-  expect(invoke).toHaveBeenCalledWith("create_html_preview_frame", { html: expect.stringContaining("<h1>History preview</h1>") });
+  expect(invoke).toHaveBeenCalledWith("create_html_preview_frame", { html: expect.stringContaining("<h1>History preview</h1>"), sourceChatId:entry.id });
   expect(screen.getByRole("button", { name: "独立窗口打开" })).toBeTruthy();
 });
 it("does not create previews until history is expanded and releases the frame on collapse", async () => {
@@ -44,7 +44,7 @@ it("also previews complete raw HTML documents from older history", async () => {
   invoke.mockResolvedValue("raw-frame");
   render(<HistoryItem {...props} entry={{ ...entry, response: '<!DOCTYPE html><html><body><h1>Old document</h1></body></html>' }} />);
   await waitFor(() => expect(screen.getByTitle("Piko HTML 预览").getAttribute("src")).toContain("/frame/raw-frame"));
-  expect(invoke).toHaveBeenCalledWith("create_html_preview_frame", { html: expect.stringContaining("Old document") });
+  expect(invoke).toHaveBeenCalledWith("create_html_preview_frame", { html: expect.stringContaining("Old document"), sourceChatId:entry.id });
 });
 
 it("sets the selected history view explicitly and keeps repeated tab clicks idempotent", async () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { BubbleWindow } from "./BubbleWindow";
 import type { ChatEvent } from "./chatTypes";
+import type { AgentTaskSnapshot } from "./agentTypes";
 import type { ChatHistoryEntry } from "../../types/appTypes";
 
 const listenMock = vi.fn();
@@ -99,9 +100,11 @@ function emitChat(payload: ChatEvent) {
 // --- 命令 mock：chat_start 挂起模拟进行中的请求 ---
 
 let chatHistory: ChatHistoryEntry[];
+let taskSnapshot: AgentTaskSnapshot | null | Promise<AgentTaskSnapshot | null> = null;
 
 function installDefaultCommands() {
   runCommandMock.mockImplementation((command: string) => {
+    if (command === "agent_get_task_snapshot") return Promise.resolve(taskSnapshot);
     if (command === "get_settings") {
       return Promise.resolve({
         companionName: "Piko",
@@ -150,7 +153,7 @@ function queueUuids(ids: string[]) {
 // --- 渲染与输入工具 ---
 
 async function submitPrompt(text: string) {
-  const input = screen.getByLabelText("发送给 Piko 的问题") as HTMLInputElement;
+  const input = screen.getByLabelText("发送给 Piko 的问题") as HTMLTextAreaElement;
   await act(async () => {
     fireEvent.change(input, { target: { value: text } });
     fireEvent.submit(input.closest("form") as HTMLFormElement);
@@ -165,6 +168,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     installListenMock();
     runCommandMock.mockReset();
     chatHistory = [];
+    taskSnapshot = null;
     installDefaultCommands();
     uuidQueue = [];
     Object.defineProperty(cryptoTarget, "randomUUID", {
@@ -178,6 +182,84 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     cleanup(); // vitest 未开启 globals，RTL 的 auto-cleanup 不会注册，需显式清理
     delete cryptoTarget.randomUUID;
     vi.restoreAllMocks();
+  });
+
+  it("Enter 发送多行内容，Shift+Enter 和中文输入法确认不发送", async () => {
+    render(<BubbleWindow />);
+    const input = await screen.findByLabelText("发送给 Piko 的问题");
+    await waitFor(() => expect(listenMock).toHaveBeenCalled());
+    fireEvent.change(input, { target: { value: "第一行\n第二行" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(chatStartInputCalls()).toHaveLength(0);
+    await act(async () => { fireEvent.keyDown(input, { key: "Enter" }); });
+    expect(chatStartInputCalls()[0]?.prompt).toBe("第一行\n第二行");
+  });
+
+  it("上翻阅读时流式回复不抢滚动位置，点击最新消息后恢复跟随", async () => {
+    queueUuids(["req-scroll"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("一段长回答");
+    act(() => {
+      emitChat({ type: "started", requestId: "req-scroll", working: true });
+      emitChat({ type: "delta", requestId: "req-scroll", sequence: 1, text: "第一段" });
+    });
+    const thread = screen.getByRole("region", { name: "对话内容" });
+    Object.defineProperties(thread, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    thread.scrollTop = 250;
+    fireEvent.scroll(thread);
+    act(() => { emitChat({ type: "delta", requestId: "req-scroll", sequence: 2, text: "第二段" }); });
+    expect(thread.scrollTop).toBe(250);
+    fireEvent.click(screen.getByRole("button", { name: "回到最新消息" }));
+    expect(thread.scrollTop).toBe(1000);
+    expect(screen.queryByRole("button", { name: "回到最新消息" })).toBeNull();
+  });
+
+  it("Esc 先收起工作空间，再收起对话；展开时保留原有输入", async () => {
+    render(<BubbleWindow />);
+    const input = await screen.findByLabelText("发送给 Piko 的问题");
+    fireEvent.change(input, { target: { value: "还没发送的灵感" } });
+    const toggle = screen.getByRole("button", { name: "工作空间与收藏" });
+    expect(screen.queryByRole("button", { name: /选择工作目录/ })).toBeNull();
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: /选择工作目录/ })).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(runCommandMock.mock.calls.some(([command]) => command === "hide_bubble")).toBe(false);
+    expect((input as HTMLTextAreaElement).value).toBe("还没发送的灵感");
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(runCommandMock).toHaveBeenCalledWith("hide_bubble");
+  });
+
+  it("恢复监听注册前的主动消息，保持来源且不启动任务", async () => {
+    const defaultCommand = runCommandMock.getMockImplementation()!;
+    const source = { kind: "agent_task", id: "task-interrupted", revision: 1 };
+    runCommandMock.mockImplementation((command: string, ...args: unknown[]) => command === "soul_current_message"
+      ? Promise.resolve({ id: "reserved-message", category: "task_unresolved", templateId: "task_interrupted", text: "恢复的任务提醒", source })
+      : defaultCommand(command, ...args));
+    render(<BubbleWindow />);
+    expect(await screen.findByText("恢复的任务提醒")).toBeTruthy();
+    expect(runCommandMock).toHaveBeenCalledWith("soul_ack_message", { receipt: { message_id: "reserved-message", kind: "shown", visible_seconds: 0 } });
+    expect(runCommandMock.mock.calls.some(([command]) => command === "agent_start")).toBe(false);
+  });
+
+  it("恢复读取期间已撤回的主动消息不会重新显示", async () => {
+    const defaultCommand = runCommandMock.getMockImplementation()!;
+    let recover!: (message: unknown) => void;
+    runCommandMock.mockImplementation((command: string, ...args: unknown[]) => command === "soul_current_message"
+      ? new Promise((resolve) => { recover = resolve; }) : defaultCommand(command, ...args));
+    render(<BubbleWindow />);
+    await waitFor(() => expect(recover).toBeTypeOf("function"));
+    await act(async () => {
+      for (const handler of handlersByEvent.get("soul:active") ?? []) handler({ payload: [] });
+      recover({ id: "revoked-message", category: "task_unresolved", templateId: "task_interrupted", text: "已撤回的提醒", source: { kind: "agent_task", id: "task", revision: 1 } });
+    });
+    expect(screen.queryByText("已撤回的提醒")).toBeNull();
   });
 
   it("执行中禁止重复发送，完成后新请求忽略旧请求事件", async () => {
@@ -463,6 +545,60 @@ describe("BubbleWindow 聊天事件流竞态", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 120));
     });
     expect(document.activeElement).toBe(otherWindow);
+  });
+
+
+  it("reopens a running task with partial text and approval without starting or cancelling execution", async () => {
+    taskSnapshot = {
+      requestId: "restored-task", conversationId: "restored-conversation", cwd: "/workspace",
+      prompt: "检查工作目录", response: "已经读取文件", eventSequence: 4,
+      events: [
+        { type: "tool-start", requestId: "restored-task", toolCallId: "read", tool: "read" },
+        { type: "tool-end", requestId: "restored-task", toolCallId: "read", output: "verified" },
+        { type: "approval", requestId: "restored-task", approvalId: "approve", tool: "write", arguments: { path: "output.txt" } },
+      ],
+    };
+    const view = render(<BubbleWindow />);
+    await screen.findByText("已经读取文件");
+    expect(screen.getByRole("button", { name: "允许此次操作" })).toBeTruthy();
+    expect(chatStartInputCalls()).toHaveLength(0);
+    await act(async () => {
+      for (const handler of handlersByEvent.get("agent-event") ?? []) handler({ payload: {
+        type: "approval-resolved", requestId: "restored-task", eventSequence: 5, approvalId: "approve", allowed: true,
+      } });
+    });
+    expect(screen.queryByRole("button", { name: "允许此次操作" })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("button", { name: "关闭" }), { key: "Escape" });
+    expect(runCommandMock).toHaveBeenCalledWith("hide_bubble");
+    view.unmount();
+    await act(async () => {});
+    expect(runCommandMock.mock.calls.filter((call) => call[0] === "agent_cancel")).toHaveLength(0);
+    expect(handlersByEvent.get("agent-event")?.size).toBe(0);
+    expect(handlersByEvent.get("chat-event")?.size).toBe(0);
+  });
+
+  it("merges a snapshot and buffered live text without repeating the overlapping delta", async () => {
+    let resolve!: (snapshot: AgentTaskSnapshot) => void;
+    taskSnapshot = new Promise((done) => { resolve = done; });
+    render(<BubbleWindow />);
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_get_task_snapshot", undefined, null));
+    await act(async () => {
+      for (const handler of handlersByEvent.get("agent-event") ?? []) {
+        handler({ payload: { type: "delta", requestId: "buffered-task", eventSequence: 2, text: "前半段" } });
+        handler({ payload: { type: "delta", requestId: "buffered-task", eventSequence: 3, text: "后半段" } });
+      }
+      resolve({ requestId: "buffered-task", conversationId: "buffered-conversation", cwd: null,
+        prompt: "继续", response: "前半段", eventSequence: 2, events: [] });
+    });
+    await screen.findByText("前半段后半段");
+    expect(screen.queryByText("前半段前半段后半段")).toBeNull();
+    expect(chatStartInputCalls()).toHaveLength(0);
+    await act(async () => {
+      for (const handler of handlersByEvent.get("agent-event") ?? []) handler({ payload: {
+        type: "completed", requestId: "buffered-task", eventSequence: 4,
+      } });
+    });
+    await waitFor(() => expect(screen.queryByTitle("停止生成")).toBeNull());
   });
 
 });

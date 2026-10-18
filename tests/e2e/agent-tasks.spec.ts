@@ -17,6 +17,9 @@ async function installAgentBackend(page: Page, taskRecords: unknown[] = []) {
       calls: [] as Array<{ command: string; args: Record<string, unknown> }>,
       directory: "/tmp/piko-agent-ui-test" as string | null,
       startError: "",
+      savePath: null as string | null,
+      saveError: "",
+      attachmentPreview: { displayName: "ui-test.md", byteSize: 12, charCount: 12, preview: "isolated test" },
       history: [] as Array<{ id: string; prompt: string; response: string; createdAt: number }>,
       output: {} as Record<string, string>,
       emit(payload: Record<string, unknown>) {
@@ -46,6 +49,9 @@ async function installAgentBackend(page: Page, taskRecords: unknown[] = []) {
           return id;
         }
         if (command === "plugin:dialog|open") return state.directory;
+        if (command === "plugin:dialog|save") return state.savePath;
+        if (command === "prepare_text_attachment") return structuredClone(state.attachmentPreview);
+        if (command === "save_generated_text" && state.saveError && args.overwrite !== true) throw state.saveError;
         if (command === "agent_start" && state.startError) throw state.startError;
         if (command === "get_settings") return {
           companionName: "Piko", theme: "sage", language: "zh-CN", hasApiKey: true, htmlPreviewEnabled: false,
@@ -157,6 +163,28 @@ test("reported completion cannot hide failed or unfinished tools", async ({ page
   const next = await start(page, "你好");
   await emit(page, next.requestId, { type: "completed" });
   await expect(page.getByRole("region", { name: "本轮执行结果" })).toHaveCount(0);
+});
+
+test("running task accepts a supplement without starting another engine", async ({ page }) => {
+  await installAgentBackend(page);
+  const first = await start(page, "整理文件");
+  await page.getByLabel("发送给 Piko 的问题").fill("不要删除文件");
+  await page.getByRole("button", { name: "补充要求", exact: true }).click();
+  await expect.poll(() => calls(page, "agent_steer")).toHaveLength(1);
+  expect(await calls(page, "agent_start")).toHaveLength(1);
+  // Draft stays until the running engine acknowledges receipt.
+  await expect(page.getByLabel("发送给 Piko 的问题")).toHaveValue("不要删除文件");
+  await emit(page, first.requestId, { type:"steering-accepted", text:"不要删除文件" });
+  await expect(page.getByLabel("发送给 Piko 的问题")).toHaveValue("");
+});
+
+test("safe resume reconnects the original conversation and keeps a resume root", async ({ page }) => {
+  await installAgentBackend(page, [{ requestId:"interrupted", conversationId:"original-conversation", status:"interrupted", startedAt:1, updatedAt:2, steps:[{id:"w",tool:"write",status:"unknown"}] }]);
+  await page.getByRole("button", { name:"安全续跑", exact:true }).click();
+  await expect.poll(() => calls(page, "agent_start")).toHaveLength(1);
+  const input = (await calls(page, "agent_start"))[0].args.input as {resumeOf:string;conversationId:string;verificationOf?:string};
+  expect(input.resumeOf).toBe("interrupted"); expect(input.conversationId).toBe("original-conversation"); expect(input.verificationOf).toBeUndefined();
+  await expect(page.getByRole("button", { name:"结束续跑" })).toBeDisabled();
 });
 
 test("expired approval disappears and cannot execute from a stale card", async ({ page }) => {
@@ -272,9 +300,20 @@ test("business confirmation stays in the same Pi conversation", async ({ page })
   expect(next.conversationId).toBe(input.conversationId);
 });
 
-test("Escape stops the active task without starting a second engine", async ({ page }) => {
+test("Escape hides the window while the active task continues", async ({ page }) => {
   await installAgentBackend(page); const input = await start(page);
   await page.getByLabel("发送给 Piko 的问题").press("Escape");
+  await expect.poll(() => calls(page, "hide_bubble")).toHaveLength(1);
+  expect(await calls(page, "agent_cancel")).toHaveLength(0);
+  expect(await calls(page, "chat_cancel")).toHaveLength(0);
+  await emit(page, input.requestId, { type: "delta", text: "收起后任务仍可完成。" });
+  await emit(page, input.requestId, { type: "completed" });
+  await expect(page.getByText("收起后任务仍可完成。", { exact: true }).first()).toBeVisible();
+});
+
+test("explicit stop cancels the active task without starting a second engine", async ({ page }) => {
+  await installAgentBackend(page); const input = await start(page);
+  await page.getByRole("button", { name: "停止生成", exact: true }).click();
   await expect.poll(() => calls(page, "agent_cancel")).toHaveLength(1);
   expect(await calls(page, "chat_cancel")).toHaveLength(0);
   await emit(page, input.requestId, { type: "cancelled" });
@@ -341,3 +380,63 @@ for (const viewport of [{ width: 480, height: 420 }, { width: 360, height: 300 }
     await page.screenshot({ path: testInfo.outputPath("unified-approval.png"), fullPage: true });
   });
 }
+
+
+async function completedReply(page: Page) {
+  const input = await start(page, "输出一段自动化测试内容");
+  await emit(page, input.requestId, { type: "delta", text: "自动化回复：可以朗读和保存。" });
+  await emit(page, input.requestId, { type: "completed" });
+  await expect(page.getByRole("button", { name: "朗读回复", exact: true })).toBeVisible();
+}
+
+test("reply toolbar copies isolated text and starts and stops native speech", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+    writeText: async (text: string) => { (window as unknown as { __copied: string }).__copied = text; },
+  } }));
+  await installAgentBackend(page);
+  await completedReply(page);
+  await page.getByRole("button", { name: "复制结果", exact: true }).click();
+  expect(await page.evaluate(() => (window as unknown as { __copied: string }).__copied)).toBe("自动化回复：可以朗读和保存。");
+  await page.getByRole("button", { name: "朗读回复", exact: true }).click();
+  await expect(page.getByRole("button", { name: "停止朗读", exact: true })).toBeVisible();
+  expect((await calls(page, "speak_local_text"))[0].args).toEqual({ text: "自动化回复：可以朗读和保存。" });
+  await page.getByRole("button", { name: "停止朗读", exact: true }).click();
+  expect(await calls(page, "stop_local_speech")).toHaveLength(1);
+  await expect(page.getByRole("button", { name: "朗读回复", exact: true })).toBeVisible();
+});
+
+test("reply save carries the full text and defaults to no overwrite", async ({ page }) => {
+  await installAgentBackend(page); await completedReply(page);
+  await page.evaluate(() => { (window as any).__agentTest.savePath = "/isolated-ui-test/reply.md"; });
+  await page.getByRole("button", { name: "保存回复", exact: true }).click();
+  await expect.poll(() => calls(page, "save_generated_text")).toHaveLength(1);
+  expect((await calls(page, "save_generated_text"))[0].args).toEqual({ path: "/isolated-ui-test/reply.md", content: "自动化回复：可以朗读和保存。", overwrite: false });
+});
+
+test("cancelling the reply file picker never writes", async ({ page }) => {
+  await installAgentBackend(page); await completedReply(page);
+  await page.getByRole("button", { name: "保存回复", exact: true }).click();
+  await expect.poll(() => calls(page, "plugin:dialog|save")).toHaveLength(1);
+  expect(await calls(page, "save_generated_text")).toHaveLength(0);
+});
+
+for (const approve of [false, true]) test(`reply overwrite requires explicit ${approve ? "approval" : "rejection"}`, async ({ page }) => {
+  await installAgentBackend(page); await completedReply(page);
+  await page.evaluate(() => { const state = (window as any).__agentTest; state.savePath = "/isolated-ui-test/existing.md"; state.saveError = "目标文件已存在"; });
+  page.once("dialog", async dialog => { expect(dialog.type()).toBe("confirm"); if (approve) await dialog.accept(); else await dialog.dismiss(); });
+  await page.getByRole("button", { name: "保存回复", exact: true }).click();
+  await expect.poll(() => calls(page, "save_generated_text")).toHaveLength(approve ? 2 : 1);
+  expect((await calls(page, "save_generated_text")).map(call => call.args.overwrite)).toEqual(approve ? [false, true] : [false]);
+});
+
+test("attachment picker, remove and screenshot entry use native command boundaries", async ({ page }) => {
+  await installAgentBackend(page);
+  await page.getByRole("button", { name: "选择文件", exact: true }).click();
+  await expect(page.getByText(/ui-test.md/)).toBeVisible();
+  expect((await calls(page, "prepare_text_attachment"))[0].args).toEqual({ path: "/tmp/piko-agent-ui-test" });
+  await page.getByRole("button", { name: "移除附件", exact: true }).click();
+  await expect(page.getByRole("button", { name: "移除附件", exact: true })).toHaveCount(0);
+  expect(await calls(page, "clear_text_attachment")).toHaveLength(1);
+  await page.getByRole("button", { name: "截图提问", exact: true }).click();
+  expect(await calls(page, "begin_screen_capture")).toHaveLength(1);
+});

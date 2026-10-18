@@ -35,8 +35,31 @@ test("external modifications prevent automatic replay", async (t) => {
 test("steering revokes reusable authorization for an unfinished operation", async (t) => {
   const { cwd, file, args } = await setup(t);
   await assert.rejects(new FileOperations(cwd, "task").execute("write", args, cwd, async () => { throw new Error("crash"); }, async () => {}));
-  const next = new FileOperations(cwd, "task", { resuming: true }); next.revokeAuthorization();
+  const next = new FileOperations(cwd, "task", { resuming: true }); await next.revokeAuthorization();
   let approvals = 0;
   await next.execute("write", args, cwd, async () => { await writeFile(file, args.content); return { content: [] }; }, async () => { approvals++; });
+  assert.equal(approvals, 1);
+});
+
+test("a completed target removed by someone else is not silently recreated", async (t) => {
+  const { cwd, file, args } = await setup(t);
+  await new FileOperations(cwd, "task").execute("write", args, cwd, async () => { await writeFile(file, args.content); return { content: [] }; }, async () => {});
+  await rm(file);
+  await assert.rejects(new FileOperations(cwd, "task", { resuming: true }).execute("write", args, cwd, () => assert.fail("must not recreate"), () => assert.fail("must not reuse permission")), /检查点不一致/);
+});
+test("raw bytes must match; invalid UTF-8 is not equivalent to replacement characters", async (t) => {
+  const { cwd, file } = await setup(t);
+  await writeFile(file, Buffer.from([255]));
+  let writes = 0;
+  const result = await new FileOperations(cwd, "task").execute("write", { path: "result.txt", content: "�" }, cwd, async () => { writes++; await writeFile(file, "�"); return { content: [] }; }, async () => {});
+  assert.equal(writes, 1); assert.equal(result.details.verification.reused, false);
+});
+test("revocation remains effective after restarting the runner", async (t) => {
+  const { cwd, file, args } = await setup(t);
+  const original = new FileOperations(cwd, "task");
+  await assert.rejects(original.execute("write", args, cwd, async () => { throw new Error("crash"); }, async () => {}));
+  await original.revokeAuthorization();
+  let approvals = 0;
+  await new FileOperations(cwd, "task", { resuming: true }).execute("write", args, cwd, async () => { await writeFile(file, args.content); return { content: [] }; }, async () => { approvals++; });
   assert.equal(approvals, 1);
 });

@@ -69,18 +69,18 @@ test("records merges memos and what Piko remembers", async ({ page }) => {
 
 });
 
-test("settings is grouped into companion / model / notify / system / about / advanced", async ({ page }) => {
+test("settings is grouped into companion / model / notify / system / soul / about / advanced", async ({ page }) => {
   await page.goto("/?view=panel");
   await page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "设置" }).click();
 
-  for (const title of ["伙伴", "对话与模型", "提醒与免打扰", "系统与隐私", "关于", "高级"]) {
+  for (const title of ["伙伴", "对话与模型", "提醒与免打扰", "系统与隐私", "灵魂系统", "关于", "高级"]) {
     await expect(page.locator(".settings-group__title", { hasText: title }).first()).toBeVisible();
   }
 
   // 05 §9：高级组默认折叠且位于最后
   const groups = page.locator("details.settings-group");
-  await expect(groups).toHaveCount(6);
-  await expect(groups.nth(5)).not.toHaveAttribute("open", /.*/);
+  await expect(groups).toHaveCount(7);
+  await expect(groups.last()).not.toHaveAttribute("open", /.*/);
 
   // 系统与隐私组里要有「导出我的数据」（05 §4.4）
   await expect(page.locator("#settings-group-system")).not.toHaveAttribute("open", /.*/);

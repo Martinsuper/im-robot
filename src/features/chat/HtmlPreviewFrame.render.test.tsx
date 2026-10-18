@@ -66,3 +66,14 @@ it("only accepts Escape messages from its own iframe with the matching channel",
   fireEvent(window, new MessageEvent("message", { source: iframe.contentWindow, data: { type: "piko-preview-escape", channel } }));
   expect(onEscape).toHaveBeenCalledOnce();
 });
+
+it("network permission is per document and is revoked on a new source", async () => {
+  invoke.mockResolvedValue("frame");
+  const view = render(<HtmlPreviewFrame source="<h1>Private</h1>" />);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_html_preview_frame", { html: expect.any(String) }));
+  fireEvent.click(screen.getByRole("checkbox"));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_html_preview_frame", { html: expect.any(String), allowNetwork: true }));
+  view.rerender(<HtmlPreviewFrame source="<h1>Another document</h1>" />);
+  expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+  await waitFor(() => expect(invoke.mock.calls.filter((call) => call[0] === "create_html_preview_frame").slice(-1)[0]?.[1]).not.toHaveProperty("allowNetwork"));
+});

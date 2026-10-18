@@ -1,4 +1,8 @@
+use crate::chat_session::ChatHistoryEntry;
+use crate::calendar_service::{CalendarEvent};
+use crate::reminder_service::Reminder;
 use crate::storage;
+use crate::settings::{app_settings_path, persist_settings, read_persisted_settings};
 /// Data import/export module.
 ///
 /// Supports exporting and importing: chat history, reminders, calendar events,
@@ -6,12 +10,13 @@ use crate::storage;
 ///
 /// Security: API keys are NEVER exported (they live in keyring).
 /// Temporary attachments and screenshots are NOT included.
-use crate::{AppSettings, CalendarEvent, ChatHistoryEntry, FocusRecord, Reminder};
+use crate::rhythm::{persist_focus_records, read_focus_records, FocusRecord};
+use crate::app_settings::AppSettings;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 /// Schema for data export/import.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,10 +103,10 @@ pub struct ImportPreview {
 /// Build export data from current state.
 pub fn build_export_data(app: &AppHandle) -> ExportData {
     let settings = read_settings_for_export(app);
-    let chats = crate::read_chat_history(app);
-    let reminders = crate::read_reminders(app);
-    let calendar = crate::read_calendar_events(app);
-    let focus = read_focus_for_export(app);
+    let chats = crate::chat_session::repository::read_chat_history(app);
+    let reminders = crate::reminder_service::read_reminders(app);
+    let calendar = crate::calendar_service::read_calendar_events(app);
+    let focus = read_focus_records(app);
 
     ExportData {
         schema_version: 1,
@@ -208,11 +213,6 @@ pub struct ImportResult {
 
 // --- Read functions (reuse existing lib.rs patterns) ---
 
-fn read_focus_for_export(app: &AppHandle) -> Vec<FocusRecord> {
-    focus_records_path(app)
-        .map(|path| storage::read_or_default(&path))
-        .unwrap_or_default()
-}
 
 fn read_settings_for_export(app: &AppHandle) -> Option<SanitizedSettings> {
     app_settings_path(app)
@@ -223,19 +223,6 @@ fn read_settings_for_export(app: &AppHandle) -> Option<SanitizedSettings> {
 
 // --- Path helpers ---
 
-fn focus_records_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|d| d.join("focus-records.json"))
-}
-
-fn app_settings_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|d| d.join("app-settings.json"))
-}
 
 // --- Merge functions ---
 
@@ -243,12 +230,12 @@ fn merge_chat_history(app: &AppHandle, incoming: &[ChatHistoryEntry]) -> Result<
     let _transaction = storage::transaction();
     // 保留策略已改为「最多 200 个会话」（见 chat_session 模块），这里只限制本次导入条数。
     const MAX_CHAT_HISTORY: usize = 50;
-    let existing_ids = crate::read_chat_history(app)
+    let existing_ids = crate::chat_session::repository::read_chat_history(app)
         .iter()
         .map(|e| e.id.clone())
         .collect::<std::collections::HashSet<_>>();
 
-    let mut existing = crate::read_chat_history(app);
+    let mut existing = crate::chat_session::repository::read_chat_history(app);
     let mut count = 0;
 
     for entry in incoming.iter().rev() {
@@ -259,19 +246,19 @@ fn merge_chat_history(app: &AppHandle, incoming: &[ChatHistoryEntry]) -> Result<
     }
 
     if count > 0 {
-        crate::persist_chat_history(app, &existing)?;
+        crate::chat_session::repository::persist_chat_history(app, &existing)?;
     }
     Ok(count)
 }
 
 fn merge_reminders(app: &AppHandle, incoming: &[Reminder]) -> Result<usize, String> {
     let _transaction = storage::transaction();
-    let existing_ids = crate::read_reminders(app)
+    let existing_ids = crate::reminder_service::read_reminders(app)
         .iter()
         .map(|r| r.id.clone())
         .collect::<std::collections::HashSet<_>>();
 
-    let mut existing = crate::read_reminders(app);
+    let mut existing = crate::reminder_service::read_reminders(app);
     let mut count = 0;
 
     for reminder in incoming {
@@ -282,19 +269,19 @@ fn merge_reminders(app: &AppHandle, incoming: &[Reminder]) -> Result<usize, Stri
     }
 
     if count > 0 {
-        crate::persist_reminders(app, &existing)?;
+        crate::reminder_service::persist_reminders(app, &existing)?;
     }
     Ok(count)
 }
 
 fn merge_calendar(app: &AppHandle, incoming: &[CalendarEvent]) -> Result<usize, String> {
     let _transaction = storage::transaction();
-    let existing_ids = crate::read_calendar_events(app)
+    let existing_ids = crate::calendar_service::read_calendar_events(app)
         .iter()
         .map(|e| e.id.clone())
         .collect::<std::collections::HashSet<_>>();
 
-    let mut existing = crate::read_calendar_events(app);
+    let mut existing = crate::calendar_service::read_calendar_events(app);
     let mut count = 0;
 
     for event in incoming {
@@ -305,19 +292,19 @@ fn merge_calendar(app: &AppHandle, incoming: &[CalendarEvent]) -> Result<usize, 
     }
 
     if count > 0 {
-        crate::persist_calendar_events(app, &existing)?;
+        crate::calendar_service::persist_calendar_events(app, &existing)?;
     }
     Ok(count)
 }
 
 fn merge_focus(app: &AppHandle, incoming: &[FocusRecord]) -> Result<usize, String> {
     let _transaction = storage::transaction();
-    let existing_ids = read_focus_for_export(app)
+    let existing_ids = read_focus_records(app)
         .iter()
         .map(|r| r.completed_at)
         .collect::<std::collections::HashSet<_>>();
 
-    let mut existing = read_focus_for_export(app);
+    let mut existing = read_focus_records(app);
     let mut count = 0;
 
     for record in incoming {
@@ -335,8 +322,7 @@ fn merge_focus(app: &AppHandle, incoming: &[FocusRecord]) -> Result<usize, Strin
 
 fn merge_settings(app: &AppHandle, incoming: &SanitizedSettings) -> Result<(), String> {
     let _transaction = storage::transaction();
-    let path = app_settings_path(app).ok_or("无法获取设置路径")?;
-    let mut settings: AppSettings = storage::read(&path)?;
+    let mut settings = read_persisted_settings(app)?;
     settings.quiet_mode = incoming.quiet_mode.clone();
     settings.companion_name = incoming.companion_name.clone();
     settings.theme = incoming.theme.clone();
@@ -347,13 +333,5 @@ fn merge_settings(app: &AppHandle, incoming: &SanitizedSettings) -> Result<(), S
     settings.ai.speech_model = incoming.ai_speech_model.clone();
     settings.ai.temperature = incoming.ai_temperature;
     settings.ai.timeout_seconds = incoming.ai_timeout_seconds;
-    storage::write(&path, &settings)
-}
-
-// --- Persist helpers (local copies to avoid dependency on lib.rs) ---
-
-fn persist_focus_records(app: &AppHandle, records: &[FocusRecord]) -> Result<(), String> {
-    let _transaction = storage::transaction();
-    let path = focus_records_path(app).ok_or_else(|| "无法获取专注记录路径".to_string())?;
-    storage::write(&path, records)
+    persist_settings(app, &settings)
 }

@@ -56,5 +56,17 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=EventKit");
         println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rerun-if-changed=src/calendar_bridge.m");
+        let notification_obj=out_dir.join("soul_notifications.o");
+        let status=std::process::Command::new("clang")
+            .args(["-c","-fobjc-arc","-fblocks","-o"])
+            .arg(&notification_obj).arg("src/soul_notifications.m").status().expect("compile soul notifications");
+        assert!(status.success(),"compile soul notifications failed");
+        let notification_lib=out_dir.join("libsoul_notifications.a");
+        let status=std::process::Command::new("ar").arg("rcs").arg(&notification_lib).arg(&notification_obj).status().expect("archive soul notifications");
+        assert!(status.success(),"archive soul notifications failed");
+        println!("cargo:rustc-link-lib=static=soul_notifications");
+        println!("cargo:rustc-link-lib=framework=UserNotifications");
+        println!("cargo:rustc-link-lib=framework=AppKit");
+        println!("cargo:rerun-if-changed=src/soul_notifications.m");
     }
 }

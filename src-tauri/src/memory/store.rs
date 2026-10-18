@@ -43,7 +43,7 @@ pub fn init_memory_db(app: &tauri::AppHandle) -> Result<MemoryDb, String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("无法创建配置目录: {}", e))?;
     }
 
-    let conn = Connection::open_with_flags(
+    let mut conn = Connection::open_with_flags(
         &path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
     )
@@ -58,6 +58,32 @@ pub fn init_memory_db(app: &tauri::AppHandle) -> Result<MemoryDb, String> {
     .map_err(|e| format!("设置数据库参数失败: {}", e))?;
 
     run_migrations(&conn)?;
+    // Soul failure must preserve the persistent memory database and ordinary chat.
+    // Do not initialize soul tables in the volatile fallback below.
+    let soul_result = super::soul::store::migrate(&mut conn).and_then(|()| {
+        let had_delivery = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM soul_quota WHERE last_dispatch_at IS NOT NULL) OR EXISTS(SELECT 1 FROM soul_proactive_ledger WHERE dispatching_at IS NOT NULL)",
+            [], |row| row.get::<_, bool>(0),
+        ).map_err(|_| "ledger_unreadable".to_string())?;
+        super::soul::proactive::recover_restart(&mut conn, i64::try_from(crate::common::unix_timestamp()).unwrap_or(i64::MAX))?;
+        super::soul::diagnostics::check_ledger(&conn)?;
+        Ok(had_delivery)
+    });
+    app.manage(super::soul::model::SoulBootStatus(soul_result.is_ok()));
+    // Heartbeats and the dispatch cooldown live in memory, outside the db,
+    // so restarts always start from explicit defaults rather than stale data.
+    app.manage(super::soul::activity::ActivityState::default());
+    app.manage(Mutex::new(if matches!(&soul_result, Ok(true)) {
+        super::soul::proactive::Cooldown::parked(std::time::Instant::now())
+    } else {
+        super::soul::proactive::Cooldown::idle()
+    }));
+    app.manage(super::soul::proactive::ShownRegistry::default());
+    app.manage(super::soul::observations::PreviewVisibility::default());
+    if soul_result.is_err() {
+        // Diagnostics report a stable code; do not copy database payloads to logs.
+        eprintln!("Soul storage disabled: migration_failed");
+    }
 
     Ok(MemoryDb(Mutex::new(conn)))
 }

@@ -1,3 +1,4 @@
+use tauri::Manager;
 use super::model::{
     AddRelationInput, ApplyCandidateInput, BuildContextInput, CaptureCandidateInput,
     CreateMemoryInput, FeedbackInput, ListMemoriesInput, MemoryCandidate, MemoryExport,
@@ -105,6 +106,11 @@ pub fn delete_memory(
     id: String,
 ) -> Result<(), String> {
     db.delete(&id)?;
+    // S11：删除来源时撤销该来源在灵魂系统里的候选/排期/待发消息（best effort）。
+    if let Ok(mut conn) = db.0.lock() {
+        let _ = super::soul::lifecycle::delete_sources(&mut conn,&[id.clone()],i64::try_from(crate::common::unix_timestamp()).unwrap_or(0));
+    }
+    super::soul::commands::reconcile_visible(&app);
     let _ = app.emit_to("panel", "memories-updated", ());
     Ok(())
 }
@@ -115,10 +121,20 @@ pub fn clear_memories(
     db: State<'_, Arc<MemoryDb>>,
     memory_type: Option<MemoryType>,
 ) -> Result<usize, String> {
+    if app.try_state::<super::soul::model::SoulBootStatus>().is_some_and(|status|status.0) {
+        let mut conn=db.0.lock().map_err(|_|"storage_unavailable")?;
+        let sources={
+            let mut statement=conn.prepare("SELECT id FROM memory_items WHERE ?1 IS NULL OR memory_type=?1").map_err(|_|"storage_unavailable")?;
+            let sources=statement.query_map(rusqlite::params![memory_type.as_ref()],|row|row.get::<_,String>(0)).map_err(|_|"storage_unavailable")?.collect::<Result<Vec<_>,_>>().map_err(|_|"storage_unavailable")?;
+            sources
+        };
+        super::soul::lifecycle::delete_sources(&mut conn,&sources,crate::common::unix_timestamp() as i64)?;
+    }
     let count = match memory_type {
         Some(t) => db.clear_type(t)?,
         None => db.clear_all()?,
     };
+    super::soul::commands::reconcile_visible(&app);
     let _ = app.emit_to("panel", "memories-updated", ());
     Ok(count)
 }

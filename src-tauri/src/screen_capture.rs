@@ -1,89 +1,68 @@
-//! 屏幕截图：macOS 屏幕录制权限、区域坐标换算、PNG 编码与预览状态存取。
-
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use screenshots::{image::DynamicImage, Screen};
-use serde::{Deserialize, Serialize};
-use std::{io::Cursor, sync::Mutex, thread, time::Duration};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, State};
-use thiserror::Error;
-
-use crate::show_and_focus;
-
-/// 模块内函数的类型化错误。Display 保留原有中文文案，经
-/// `From<CaptureError> for String` 兼容命令边界既有的 `Result<_, String>` 签名。
-#[derive(Debug, Error)]
-pub enum CaptureError {
-    #[error("截图数据格式无效")]
-    InvalidDataUrl,
-    #[cfg(target_os = "macos")]
-    #[error("Piko 没有屏幕录制权限。请在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Piko，然后重新启动应用。")]
-    ScreenRecordingPermission,
-    #[error("无法读取屏幕：{0}")]
-    Screen(String),
-    #[error("截图失败，请检查屏幕录制权限：{0}")]
-    CaptureArea(String),
-    #[error("无法生成截图预览：{0}")]
-    PngEncode(String),
-}
-
-impl From<CaptureError> for String {
-    fn from(error: CaptureError) -> Self {
-        error.to_string()
-    }
-}
+//! Screen capture permissions, selection and preview state.
+use crate::desktop::show_and_focus;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
+use screenshots::image::DynamicImage;
+use screenshots::Screen;
+use serde::Deserialize;
+use serde::Serialize;
+use std::io::Cursor;
+use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
+use tauri::AppHandle;
+use tauri::Emitter;
+use tauri::Manager;
+use tauri::PhysicalPosition;
+use tauri::State;
 
 #[derive(Clone, Debug)]
-pub struct ScreenCapture {
-    pub data_url: String,
-    pub width: u32,
-    pub height: u32,
+pub(crate) struct ScreenCapture {
+    pub(crate) data_url: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CaptureSelection {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
+pub(crate) struct CaptureSelection {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ScreenshotPreview {
-    data_url: String,
-    width: u32,
-    height: u32,
+pub(crate) struct ScreenshotPreview {
+    pub(crate) data_url: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
 #[derive(Default)]
-pub struct ScreenCaptureStore(pub Mutex<Option<ScreenCapture>>);
-
-pub fn parse_data_url(data_url: &str) -> Result<(&str, &str), CaptureError> {
-    let encoded = data_url
-        .strip_prefix("data:")
-        .and_then(|value| value.split_once(";base64,"))
-        .ok_or(CaptureError::InvalidDataUrl)?;
-    Ok(encoded)
-}
+pub(crate) struct ScreenCaptureStore(pub(crate) Mutex<Option<ScreenCapture>>);
 
 #[cfg(target_os = "macos")]
-fn ensure_screen_capture_permission() -> Result<(), CaptureError> {
+pub(crate) fn ensure_screen_capture_permission() -> Result<(), String> {
     let access = core_graphics::access::ScreenCaptureAccess;
     if access.preflight() || access.request() {
         Ok(())
     } else {
-        Err(CaptureError::ScreenRecordingPermission)
+        Err(
+            "Piko 没有屏幕录制权限。请在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 Piko，然后重新启动应用。"
+                .to_string(),
+        )
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn ensure_screen_capture_permission() -> Result<(), CaptureError> {
+pub(crate) fn ensure_screen_capture_permission() -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-pub fn capture_area_coordinates(
+pub(crate) fn capture_area_coordinates(
     origin: PhysicalPosition<i32>,
     selection: &CaptureSelection,
     _scale: f64,
@@ -97,7 +76,7 @@ pub fn capture_area_coordinates(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn capture_area_coordinates(
+pub(crate) fn capture_area_coordinates(
     origin: PhysicalPosition<i32>,
     selection: &CaptureSelection,
     scale: f64,
@@ -111,7 +90,7 @@ pub fn capture_area_coordinates(
 }
 
 #[tauri::command]
-pub fn begin_screen_capture(app: AppHandle) -> Result<(), String> {
+pub(crate) fn begin_screen_capture(app: AppHandle) -> Result<(), String> {
     ensure_screen_capture_permission()?;
     let capture = app
         .get_webview_window("capture")
@@ -133,14 +112,14 @@ pub fn begin_screen_capture(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn cancel_screen_capture(app: AppHandle) {
+pub(crate) fn cancel_screen_capture(app: AppHandle) {
     if let Some(window) = app.get_webview_window("capture") {
         let _ = window.hide();
     }
 }
 
 #[tauri::command]
-pub fn confirm_screen_capture(
+pub(crate) fn confirm_screen_capture(
     app: AppHandle,
     captures: State<'_, ScreenCaptureStore>,
     selection: CaptureSelection,
@@ -160,8 +139,7 @@ pub fn confirm_screen_capture(
     thread::sleep(Duration::from_millis(140));
 
     let png = (|| {
-        let screen =
-            Screen::from_point(x, y).map_err(|error| CaptureError::Screen(error.to_string()))?;
+        let screen = Screen::from_point(x, y).map_err(|error| format!("无法读取屏幕：{error}"))?;
         let image = screen
             .capture_area(
                 x - screen.display_info.x,
@@ -169,19 +147,19 @@ pub fn confirm_screen_capture(
                 width,
                 height,
             )
-            .map_err(|error| CaptureError::CaptureArea(error.to_string()))?;
+            .map_err(|error| format!("截图失败，请检查屏幕录制权限：{error}"))?;
         let mut png = Cursor::new(Vec::new());
         DynamicImage::ImageRgba8(image)
             .write_to(&mut png, screenshots::image::ImageOutputFormat::Png)
-            .map_err(|error| CaptureError::PngEncode(error.to_string()))?;
-        Ok::<_, CaptureError>(png.into_inner())
+            .map_err(|error| format!("无法生成截图预览：{error}"))?;
+        Ok::<_, String>(png.into_inner())
     })();
     let png = match png {
         Ok(png) => png,
         Err(error) => {
             let _ = capture.show();
             let _ = capture.set_focus();
-            return Err(error.into());
+            return Err(error);
         }
     };
     let data_url = format!("data:image/png;base64,{}", BASE64_STANDARD.encode(png));
@@ -204,7 +182,7 @@ pub fn confirm_screen_capture(
 }
 
 #[tauri::command]
-pub fn get_screen_capture_preview(
+pub(crate) fn get_screen_capture_preview(
     captures: State<'_, ScreenCaptureStore>,
 ) -> Result<Option<ScreenshotPreview>, String> {
     Ok(captures
@@ -220,7 +198,7 @@ pub fn get_screen_capture_preview(
 }
 
 #[tauri::command]
-pub fn clear_screen_capture(captures: State<'_, ScreenCaptureStore>) -> Result<(), String> {
+pub(crate) fn clear_screen_capture(captures: State<'_, ScreenCaptureStore>) -> Result<(), String> {
     *captures
         .0
         .lock()
@@ -229,7 +207,7 @@ pub fn clear_screen_capture(captures: State<'_, ScreenCaptureStore>) -> Result<(
 }
 
 #[tauri::command]
-pub fn screen_capture_permission_status() -> String {
+pub(crate) fn screen_capture_permission_status() -> String {
     #[cfg(target_os = "macos")]
     {
         let access = core_graphics::access::ScreenCaptureAccess;

@@ -618,5 +618,163 @@
       "todayTyping": "今日输入",
       "typingDuration": "输入时长"
     }
+  },
+  "soul": {
+    "title": "灵魂系统",
+    "diagnosticsTitle": "本地存储状态",
+    "loading": "正在检查…",
+    "refresh": "重新检查",
+    "loadFailed": "无法读取状态，请稍后重试。",
+    "preview": "桌面应用中可查看本地存储诊断。",
+    "available": "存储可用",
+    "unavailable": "存储不可用",
+    "volatile": "当前仅使用临时存储",
+    "profileHealthy": "角色配置正常",
+    "profileFallback": "角色配置异常，将使用默认角色",
+    "ledgerHealthy": "主动账本可读",
+    "ledgerBlocked": "主动账本异常，已阻止投递",
+    "rolloutPending": "主动消息尚未启用，需完成 P0 集成验收。",
+    "defaultRole": {
+      "background": "在城市窗台出生的桌前小助手，陪你把想法落到具体事情上。",
+      "values": [
+        "细心可靠",
+        "坦诚表达不同意见",
+        "有点俏皮但不刻薄",
+        "尊重用户的选择与边界"
+      ],
+      "tone": "优先使用简短清楚的句子，偶尔自嘲；不确定时直接说明。",
+      "catchphrases": [],
+      "forbidden_phrases": [
+        "作为一个AI助手",
+        "还有什么可以帮您"
+      ],
+      "care": "对用户明确答应过的具体事情上心，不凭空推断健康或心理状态。",
+      "stance": "发现事实错误、实际风险或产出局限时温和指出，给出理由与可行建议。",
+      "extra": ""
+    },
+    "settings": {
+      "title": "人格与主动消息",
+      "loadFailed": "无法读取灵魂设置。",
+      "saved": "人格已保存。",
+      "conflict": "保存失败，请重试。",
+      "globalSwitch": "启用主动消息",
+      "pause": "暂时不要说话",
+      "notShipped": "暂未开放，P1/P2 提供",
+      "readOnlyRole": "人格数据异常，只能查看默认角色。",
+      "save": "保存人格",
+      "reset": "恢复默认",
+      "resetDone": "已恢复默认人格。",
+      "clear": "清空灵魂数据",
+      "clearConfirm": "确定清空全部灵魂数据（人格、话题、主动消息、情绪与共同历史）？清空后无法恢复。",
+      "cleared": "已清空。",
+      "clearFailed": "清空失败，请重试。",
+      "background": "背景",
+      "tone": "语气",
+      "care": "在意的事",
+      "stance": "立场",
+      "values": "看重（顿号分隔）",
+      "catchphrases": "口头禅（顿号分隔）",
+      "forbidden": "禁用句（顿号分隔）",
+      "extra": "自由补充",
+      "resetConfirm": "恢复默认角色？当前覆盖与已确认演化会清除，版本历史按勾选项处理。",
+      "resolveTask": "标记此事已解决",
+      "resolveConfirm": "确认已核实结果并解决此事？这只撤销提醒，不会执行或重跑任务。",
+      "rolloutNotice": "全局主动消息默认关闭。开启后，新安装仅任务跟进默认选中；其余类别、情绪、演化与共同历史需单独选择，已有设置不会被自动改写。",
+      "clearRoleHistory": "恢复默认时同时清除角色版本历史",
+      "tonePreset": "表达风格预设",
+      "choosePreset": "选择一种风格，或在下方自由修改",
+      "toneLabel": {
+        "concise": "简洁",
+        "warm": "温和",
+        "direct": "直接"
+      },
+      "toneStyle": {
+        "concise": "用短句给出要点，减少重复和寒暄。",
+        "warm": "表达温和自然，先回应用户关心的事，再给出建议。",
+        "direct": "直接说明事实、判断和理由，有不确定性时明确指出。"
+      },
+      "mood": "情绪表达",
+      "moodHint": "仅根据明确互动调整语气与空闲表情，不改变任务或权限。关闭会清零；开启不回放旧记录。",
+      "clearCategory": "清理此类消息",
+      "clearCategoryConfirm": "清理该类别的消息记录？不会返还当日额度，也不会删除任务或话题。",
+      "notificationPermission": "授权任务系统通知",
+      "notificationGranted": "系统通知已授权；仍遵守主动消息开关和频控。",
+      "notificationDenied": "未获得系统通知权限，可继续使用气泡。不会在后台重复请求权限。"
+    },
+    "category": {
+      "task_unresolved": "任务跟进提醒",
+      "open_loop": "话题回访",
+      "greeting": "启动问候",
+      "milestone": "共同里程碑",
+      "pattern": "模式观察",
+      "small_talk": "偶发小话",
+      "output_feedback": "产出评价"
+    },
+    "review": {
+      "title": "开放话题",
+      "loadFailed": "无法读取话题数据。",
+      "done": "已处理。",
+      "conflict": "操作冲突，请刷新重试。",
+      "capacity": "进行中 {count}/{limit}",
+      "close": "完成并关闭",
+      "cancel": "取消",
+      "editDate": "输入日期（YYYY-MM-DD）",
+      "editDateButton": "改期/排期",
+      "invalidDate": "日期无效。",
+      "similar": "与此相似的其他候选：请手动合并，系统不会自动合并。",
+      "approve": "批准",
+      "reject": "拒绝",
+      "candidateContent": "话题内容",
+      "responseProposal": "话题回应待确认",
+      "proposal": {
+        "closed": "完成",
+        "cancelled": "取消",
+        "tracking": "改期"
+      }
+    },
+    "messages": {
+      "task_failed": "之前有一项任务失败了，可以查看任务记录。外部操作的实际结果仍需确认。",
+      "task_interrupted": "之前有一项任务中断了，结果待核对。回应后可以进行只读核对，不会自动重跑。",
+      "greeting": "回来啦，想从哪件事开始？",
+      "open_loop_followup": "之前提过的计划现在怎么样？还没完成也没关系；改期或归档需要你确认。",
+      "milestone_first_task": "第一次任务运行已经结束，执行记录可供核对。记下这个小节点。",
+      "milestone_first_reply": "这是一条主动消息第一次被回应，记下这个小节点。",
+      "milestone_first_thanks": "收到你明确的道谢，记下这次互动。",
+      "small_talk_a": "有空时，也可以聊聊一个小想法。",
+      "small_talk_b": "需要时，我可以帮你把下一步缩小一点。",
+      "pattern_confirmed_plans": "你确认过的计划中，有三项不同日期的安排落在同一星期几。要不要看看时间分布？",
+      "output_html_viewed": "这份 HTML 预览已连续显示一分钟。需要调整结构或文案时，可以告诉我。",
+      "output_html_favorited": "这份 HTML 产出已经收藏。需要时可以继续调整版式或内容。",
+      "milestone_first_favorite": "第一次明确收藏了一份产出，记下这个小节点。",
+      "milestone_shared_week": "共同记录已经满一周；这只是一个纪念，不影响任何功能。"
+    },
+    "continuity": {
+      "title": "共同历史与称呼",
+      "enabled": "记录新的共同经历",
+      "days": "共同记录第 {days} 天",
+      "nickname": "选择对你的称呼",
+      "noNickname": "不使用特殊称呼",
+      "nicknameHint": "里程碑只解锁选项，不会自动改称呼，也不影响任何能力。",
+      "milestones": {
+        "first_task": "首次完成任务运行",
+        "first_reply": "首次回应主动消息",
+        "first_thanks": "首次明确道谢",
+        "first_favorite": "首次收藏产出",
+        "shared_week": "共同记录满一周"
+      },
+      "names": {
+        "partner": "搭档",
+        "friend": "朋友"
+      },
+      "evolution": "允许提出人格演化候选",
+      "evolutionHint": "默认关闭。相同偏好需在三个不同会话明确表达，确认后才会改变表达；用户覆盖始终优先。",
+      "proposals": "待确认的表达变化",
+      "evidence": "来自 {count} 个不同会话的明确证据",
+      "versions": "已确认版本",
+      "version": "版本 {revision}",
+      "rollback": "回退到此版本",
+      "rollbackHint": "回退会创建新版本，并暂停后续演化候选；关闭再开启演化可恢复提议。",
+      "rollbackConfirm": "确认回退表达版本？你的手动人格覆盖会保留。"
+    }
   }
 }
