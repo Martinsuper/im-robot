@@ -42,7 +42,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 chrono = "0.4"
 chrono-tz = "0.10"
 iana-time-zone = "0.1"
-wasmtime = "45"
+wasmtime = "46"
 wasmtime-wasi = "45"
 
 [target.'cfg(target_os = "macos")'.dependencies]
