@@ -1,3 +1,4 @@
+import { invokeCommand, type CommandMap } from "../../generated/ipc";
 import { useCallback, useEffect, useState } from "react";
 import { runCommand } from "../app/appRuntime";
 import { useTranslation } from "../i18n/I18nProvider";
@@ -10,8 +11,8 @@ export function ContinuitySettings({roleRevision,onChanged}:{roleRevision:number
  const {t,locale}=useTranslation();const toast=useToast();const [history,setHistory]=useState<History>();const [pending,setPending]=useState(false);
  const load=useCallback(()=>void runCommand<History>("soul_get_continuity").then(setHistory).catch(error=>toast.error(toUserMessage(error,t("soul.settings.loadFailed")))),[t,toast]);
  useEffect(load,[load]);
- async function action(command:string,args:Record<string,unknown>){
-  setPending(true);try{await runCommand(command,args);load();onChanged();}catch(error){toast.error(toUserMessage(error,t("soul.settings.conflict")));}finally{setPending(false);}
+ async function action<K extends "soul_update_continuity" | "soul_review_evolution" | "soul_rollback_evolution">(command:K,args:CommandMap[K]["args"]){
+  setPending(true);try{await invokeCommand(command,args);load();onChanged();}catch(error){toast.error(toUserMessage(error,t("soul.settings.conflict")));}finally{setPending(false);}
  }
  if(!history)return null;
  return <div className="soul-continuity">

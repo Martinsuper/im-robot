@@ -4,6 +4,7 @@ import {afterEach,expect,it,vi} from "vitest";
 import {ContinuitySettings} from "./ContinuitySettings";
 const mock=vi.hoisted(()=>({command:vi.fn(),toast:{error:vi.fn()},t:(key:string)=>key}));
 vi.mock("../app/appRuntime",()=>({runCommand:mock.command}));
+vi.mock("../../generated/ipc",()=>({invokeCommand:mock.command}));
 vi.mock("../i18n/I18nProvider",()=>({useTranslation:()=>({t:mock.t,locale:"en-US"})}));
 vi.mock("../../components/feedback/toastStore",()=>({useToast:()=>mock.toast}));
 const data={revision:2,history_enabled:true,days:3,nickname:null,nickname_options:["partner"],milestones:["first_task"],proposals:[{id:"proposal",field:"tone",before:null,after:"concise",evidence_count:3}],versions:[{id:"role-1",revision:1,snapshot:"{}",created_at:100}]};

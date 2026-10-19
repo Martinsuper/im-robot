@@ -2,14 +2,19 @@
 #[derive(Default)]
 pub(crate) struct SseLines {
     pending: Vec<u8>,
+    scanned: usize,
 }
 
 impl SseLines {
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<String>, String> {
+        const MAX_PENDING: usize = 4 * 1024 * 1024;
+        if chunk.len() > MAX_PENDING.saturating_sub(self.pending.len()) {
+            return Err("模型流式响应超过 4 MiB 缓冲区限制".into());
+        }
         self.pending.extend_from_slice(chunk);
         let mut lines = Vec::new();
         let mut consumed = 0;
-        for (index, byte) in self.pending.iter().enumerate() {
+        for (index, byte) in self.pending.iter().enumerate().skip(self.scanned) {
             if *byte == b'\n' {
                 lines.push(
                     std::str::from_utf8(&self.pending[consumed..index])
@@ -20,6 +25,7 @@ impl SseLines {
             }
         }
         self.pending.drain(..consumed);
+        self.scanned = self.pending.len();
         Ok(lines)
     }
 
@@ -58,5 +64,21 @@ mod tests {
             _ = std::future::pending::<()>() => false,
         };
         assert!(cancelled);
+    }
+}
+
+#[cfg(test)]
+mod limits_tests {
+    use super::*;
+    #[test]
+    fn bounds_unterminated_lines_and_handles_appended_newlines() {
+        let mut parser = SseLines::default();
+        parser.push(b"data: hello").unwrap();
+        assert_eq!(
+            parser.push(b" world\nnext").unwrap(),
+            vec!["data: hello world"]
+        );
+        assert_eq!(parser.push(b" line\n").unwrap(), vec!["next line"]);
+        assert!(parser.push(&vec![b'a'; 4 * 1024 * 1024 + 1]).is_err());
     }
 }

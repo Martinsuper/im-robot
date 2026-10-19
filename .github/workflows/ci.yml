@@ -2,6 +2,11 @@ name: Verify
 
 on:
   pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   frontend:
@@ -12,17 +17,34 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - run: npm audit
+      - run: cargo test --manifest-path tools/contracts/Cargo.toml
+      - run: npm run check
       - run: npm run lint
       - run: npm run test
       - run: npm --prefix agent ci
+      - run: npm --prefix agent audit
       - run: npm run test:agent
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-failure
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
 
   rust:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -32,13 +54,32 @@ jobs:
         with:
           node-version: 22
       - run: npm run agent:prepare
+      - run: npm run smoke:runtime
+      - run: npm run test:agent:packaged
+      - name: macOS native bridges
+        if: runner.os == 'macOS'
+        run: |
+          npm run test:calendar
+          npm run test:notifications-native
       - name: Install Tauri Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libxtst-dev libxi-dev libpipewire-0.3-dev libxcb-randr0-dev libclang-dev
       - run: cargo fmt --check
         working-directory: src-tauri
       - run: cargo clippy --all-targets --all-features -- -D warnings
         working-directory: src-tauri
+      - run: cargo clippy --no-default-features --all-targets -- -D warnings
+        working-directory: src-tauri
       - run: cargo test
         working-directory: src-tauri
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit --file src-tauri/Cargo.lock
+      - run: cargo audit --file tools/contracts/Cargo.lock

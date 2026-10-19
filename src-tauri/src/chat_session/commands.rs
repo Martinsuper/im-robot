@@ -1,8 +1,8 @@
 //! Session and history IPC adapters, including source lifecycle cleanup.
 use super::{self as chat_session, repository::*, ChatHistoryEntry};
 use crate::memory;
-use crate::storage;
 use crate::runtime_types::ChatContext;
+use crate::storage;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 

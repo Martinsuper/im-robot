@@ -4,9 +4,21 @@ use rusqlite::{params, Connection};
 
 pub fn sweep(conn: &mut Connection, now: i64) -> Result<(), String> {
     store::transaction(conn, |tx| {
-        tx.execute("DELETE FROM soul_topic_responses WHERE coalesce(reviewed_at,created_at)<?1",[now-30*86400]).map_err(|_|"ledger_write_failed")?;
-        tx.execute("DELETE FROM soul_output_observations WHERE created_at<?1",[now-30*86400]).map_err(|_|"ledger_write_failed")?;
-        tx.execute("DELETE FROM soul_evidence WHERE occurred_at<?1",[now-90*86400]).map_err(|_|"ledger_write_failed")?;
+        tx.execute(
+            "DELETE FROM soul_topic_responses WHERE coalesce(reviewed_at,created_at)<?1",
+            [now - 30 * 86400],
+        )
+        .map_err(|_| "ledger_write_failed")?;
+        tx.execute(
+            "DELETE FROM soul_output_observations WHERE created_at<?1",
+            [now - 30 * 86400],
+        )
+        .map_err(|_| "ledger_write_failed")?;
+        tx.execute(
+            "DELETE FROM soul_evidence WHERE occurred_at<?1",
+            [now - 90 * 86400],
+        )
+        .map_err(|_| "ledger_write_failed")?;
 
         tx.execute("INSERT OR IGNORE INTO soul_candidate_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_candidates WHERE created_at<?2 AND (status='pending_review' OR reviewed_at<?2)",params![now,now-CANDIDATE_RETENTION_SECONDS]).map_err(|_| "retention_failed")?;
         tx.execute("DELETE FROM soul_candidates WHERE dedupe_key IN (SELECT dedupe_key FROM soul_candidate_tombstones)",[]).map_err(|_| "retention_failed")?;
@@ -23,8 +35,16 @@ pub fn delete_sources(conn: &mut Connection, ids: &[String], now: i64) -> Result
     store::transaction(conn, |tx| {
         for id in ids {
             tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE id IN(SELECT observation_id FROM soul_observation_sources WHERE source_id=?1) AND state IN ('pending','dispatching','shown')",params![id,now]).map_err(|_|"source_delete_failed")?;
-            tx.execute("DELETE FROM soul_evidence WHERE json_extract(source_ref,'$.id')=?1",[id]).map_err(|_|"source_delete_failed")?;
-            tx.execute("DELETE FROM soul_output_observations WHERE json_extract(source_ref,'$.id')=?1",[id]).map_err(|_|"source_delete_failed")?;
+            tx.execute(
+                "DELETE FROM soul_evidence WHERE json_extract(source_ref,'$.id')=?1",
+                [id],
+            )
+            .map_err(|_| "source_delete_failed")?;
+            tx.execute(
+                "DELETE FROM soul_output_observations WHERE json_extract(source_ref,'$.id')=?1",
+                [id],
+            )
+            .map_err(|_| "source_delete_failed")?;
             tx.execute("DELETE FROM soul_topic_responses WHERE topic_id IN(SELECT id FROM soul_open_loops WHERE json_extract(source_ref,'$.id')=?1)",[id]).map_err(|_|"source_delete_failed")?;
             tx.execute("UPDATE soul_candidates SET status='rejected',reviewed_at=?1 WHERE kind='evolution' AND status='pending_review'",[now]).map_err(|_|"source_delete_failed")?;
 

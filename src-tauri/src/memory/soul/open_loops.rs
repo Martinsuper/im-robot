@@ -289,9 +289,6 @@ pub(crate) fn candidates_from_user(
 pub const MANUAL_PARSER_VERSION: &str = "manual-1";
 
 #[cfg(test)]
-const DAY: i64 = 86_400;
-
-#[cfg(test)]
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = y - ((m <= 2) as i64);
     let era = y.div_euclid(400);
@@ -326,8 +323,12 @@ fn calendar_bounds(
         date.weekday().num_days_from_monday(),
     )))?;
     let lower = expression.trim().to_lowercase();
-    if let Ok(date)=NaiveDate::parse_from_str(&lower,"%Y-%m-%d") {
-        return Some((date.and_hms_opt(0,0,0)?,date.checked_add_signed(Duration::days(1))?.and_hms_opt(0,0,0)?));
+    if let Ok(date) = NaiveDate::parse_from_str(&lower, "%Y-%m-%d") {
+        return Some((
+            date.and_hms_opt(0, 0, 0)?,
+            date.checked_add_signed(Duration::days(1))?
+                .and_hms_opt(0, 0, 0)?,
+        ));
     }
     let (first, after, hour) = match lower.as_str() {
         "周末" | "本周末" | "这个周末" | "this weekend" | "週末" => {
@@ -810,13 +811,23 @@ pub fn update(
         }
         let mut parser_version = parser_now;
         if let Some(time) = &input.time {
-            let anchored=OpenLoopTime{baseline,..time.clone()};
-            let resolved=resolve_time(&anchored)?;
-            if starts!=resolved.starts_at || ends!=resolved.ends_at || timezone!=resolved.timezone {
-                starts=resolved.starts_at; ends=resolved.ends_at;
-                expression=resolved.expression; timezone=resolved.timezone;
-                parser_version=MANUAL_PARSER_VERSION.to_string();
-                if state_next==OpenLoopState::Due {state_next=OpenLoopState::Tracking;}
+            let anchored = OpenLoopTime {
+                baseline,
+                ..time.clone()
+            };
+            let resolved = resolve_time(&anchored)?;
+            if starts != resolved.starts_at
+                || ends != resolved.ends_at
+                || timezone != resolved.timezone
+            {
+                starts = resolved.starts_at;
+                ends = resolved.ends_at;
+                expression = resolved.expression;
+                timezone = resolved.timezone;
+                parser_version = MANUAL_PARSER_VERSION.to_string();
+                if state_next == OpenLoopState::Due {
+                    state_next = OpenLoopState::Tracking;
+                }
             }
         }
         if let Some(text) = &input.content {

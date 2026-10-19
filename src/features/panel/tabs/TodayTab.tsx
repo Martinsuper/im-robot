@@ -237,9 +237,9 @@ export function TodayTab() {
     return ids;
   }, [overlaps]);
 
-  async function updateFocus(command: string, args?: Record<string, unknown>) {
+  async function updateFocus(command: "start_focus" | "start_break" | "pause_focus" | "resume_focus" | "stop_focus", args?: { minutes: number }) {
     try {
-      const snapshot = await runCommand<FocusSnapshot>(command, args, defaultFocusSnapshot);
+      const snapshot = await runCommand(command, args ?? {}) as FocusSnapshot;
       setFocus(snapshot ?? defaultFocusSnapshot);
       setTick(0);
     } catch (error) {

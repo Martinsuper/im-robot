@@ -29,6 +29,8 @@ pub(crate) struct AppSettings {
     pub(crate) ai: AiSettings,
     #[serde(default)]
     pub(crate) has_api_key: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) credential_error: Option<String>,
     #[serde(default)]
     pub(crate) html_preview_enabled: bool,
     #[serde(default)]
@@ -90,6 +92,7 @@ impl Default for AppSettings {
             break_reminder_quiet_hours_end: default_break_reminder_quiet_hours_end(),
             ai: AiSettings::default(),
             has_api_key: false,
+            credential_error: None,
             html_preview_enabled: false,
             agent_auto_approve_commands: false,
             global_shortcut: default_global_shortcut(),

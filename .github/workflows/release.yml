@@ -3,15 +3,21 @@ name: Release Build
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   # Prepare: delete auto-created release, create fresh draft
   prepare:
+    needs: verify
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -25,10 +31,14 @@ jobs:
         shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "Tag does not match package version: $GITHUB_REF_NAME vs v$VERSION"
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version: $VERSION"
 
-      - name: Create release (abort if already published)
+      - name: Create draft release (abort if already published)
         id: create_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,10 +48,10 @@ jobs:
           REPO="${{ github.repository }}"
 
           echo "Looking for existing release: $TAG"
-          EXISTING=$(gh release view "$TAG" --json databaseId,isDraft 2>/dev/null || echo "")
+          EXISTING=$(gh api "repos/$REPO/releases/tags/$TAG" 2>/dev/null || echo "")
           if [ -n "$EXISTING" ]; then
-            EXISTING_ID=$(echo "$EXISTING" | jq -r '.databaseId')
-            IS_DRAFT=$(echo "$EXISTING" | jq -r '.isDraft')
+            EXISTING_ID=$(echo "$EXISTING" | jq -r '.id')
+            IS_DRAFT=$(echo "$EXISTING" | jq -r '.draft')
             if [ "$IS_DRAFT" != "true" ]; then
               echo "release $TAG 已存在且已发布（id=$EXISTING_ID），中止以避免误删正式版。"
               echo "如确需重建，请先在 GitHub 上手动删除该 release 或删除对应 tag。"
@@ -56,7 +66,7 @@ jobs:
           # Create a published release
           echo "Creating release for $TAG..."
           RELEASE_BODY="See the assets to download this version and install."
-          RELEASE_ID=$(echo "{\"tag_name\":\"$TAG\",\"name\":\"Piko ${{ steps.version.outputs.version }}\",\"body\":\"$RELEASE_BODY\",\"draft\":false,\"prerelease\":false}" | gh api "repos/$REPO/releases" --input - --jq '.id')
+          RELEASE_ID=$(echo "{\"tag_name\":\"$TAG\",\"name\":\"Piko ${{ steps.version.outputs.version }}\",\"body\":\"$RELEASE_BODY\",\"draft\":true,\"prerelease\":false}" | gh api "repos/$REPO/releases" --input - --jq '.id')
 
           echo "Created release ID: $RELEASE_ID"
           echo "releaseId=$RELEASE_ID" >> "$GITHUB_OUTPUT"
@@ -66,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-22.04, windows-latest]
+        platform: [macos-latest, macos-15-intel, ubuntu-22.04, windows-latest]
 
     runs-on: ${{ matrix.platform }}
 
@@ -77,25 +87,33 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install dependencies (Ubuntu)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libxtst-dev libxi-dev libpipewire-0.3-dev libxcb-randr0-dev libclang-dev
 
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Verify packaged native agent runtime
+        run: |
+          npm run agent:prepare
+          npm run smoke:runtime
+
       - name: Build Tauri app
         run: npx tauri build
+
+      - name: Generate installer checksums
+        run: node scripts/release-checksums.mjs
 
       - name: Upload release assets
         env:
@@ -113,6 +131,7 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/*/*.sha256
           )
 
           if [ ${#FILES[@]} -eq 0 ]; then
@@ -139,4 +158,16 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/*/*.sha256
           if-no-files-found: warn
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish fully uploaded release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ needs.prepare.outputs.version }}
+        run: gh release edit "$TAG" --draft=false

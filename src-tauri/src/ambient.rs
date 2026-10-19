@@ -8,7 +8,6 @@ use crate::runtime_types::PetVisualEvent;
 use crate::settings::read_settings;
 use serde_json::json;
 use std::sync::Mutex;
-use std::thread;
 use std::time::Duration;
 use tauri::AppHandle;
 use tauri::Emitter;
@@ -19,17 +18,22 @@ pub(crate) struct IdleDetection(pub(crate) Mutex<bool>);
 
 pub(crate) fn watch_ambient_nudges(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || loop {
-        let settings = read_settings(&app);
-        let delay = match settings.quiet_mode.as_str() {
-            "active" => 45,
-            "minimal" => 300,
-            _ => 120,
-        };
-        thread::sleep(Duration::from_secs(delay));
-        if !settings.sensing_paused && settings.quiet_mode != "minimal" {
-            let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::AmbientNudge);
+    crate::background::SUPERVISOR.spawn("ambient-nudges", move |worker| {
+        while !worker.cancelled() {
+            let settings = read_settings(&app);
+            let delay = match settings.quiet_mode.as_str() {
+                "active" => 45,
+                "minimal" => 300,
+                _ => 120,
+            };
+            if !worker.wait(Duration::from_secs(delay)) {
+                break;
+            }
+            if !settings.sensing_paused && settings.quiet_mode != "minimal" {
+                let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::AmbientNudge);
+            }
         }
+        Ok(())
     });
 }
 
@@ -113,64 +117,74 @@ pub(crate) fn system_idle_seconds() -> Option<u64> {
 
 pub(crate) fn watch_idle_detection(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || loop {
-        if let Some(idle_seconds) = system_idle_seconds() {
-            let settings = read_settings(&app);
-            let chat_is_active = app
-                .state::<ChatRequests>()
-                .0
-                .lock()
-                .map(|requests| !requests.is_empty())
-                .unwrap_or(false);
-            let focus_is_active = app.state::<FocusTimer>().is_active();
-            let idle = app.state::<IdleDetection>();
-            if let Ok(mut was_idle) = idle.0.lock() {
-                let (is_idle, event) = next_idle_state(
-                    *was_idle,
-                    &settings,
-                    idle_seconds,
-                    chat_is_active || focus_is_active,
-                );
-                *was_idle = is_idle;
-                if let Some(event) = event {
-                    let _ = app.emit_to("pet", "pet-visual-event", event);
-                }
-            };
+    crate::background::SUPERVISOR.spawn("idle-detection", move |worker| {
+        while !worker.cancelled() {
+            if let Some(idle_seconds) = system_idle_seconds() {
+                let settings = read_settings(&app);
+                let chat_is_active = app
+                    .state::<ChatRequests>()
+                    .0
+                    .lock()
+                    .map(|requests| !requests.is_empty())
+                    .unwrap_or(false);
+                let focus_is_active = app.state::<FocusTimer>().is_active();
+                let idle = app.state::<IdleDetection>();
+                if let Ok(mut was_idle) = idle.0.lock() {
+                    let (is_idle, event) = next_idle_state(
+                        *was_idle,
+                        &settings,
+                        idle_seconds,
+                        chat_is_active || focus_is_active,
+                    );
+                    *was_idle = is_idle;
+                    if let Some(event) = event {
+                        let _ = app.emit_to("pet", "pet-visual-event", event);
+                    }
+                };
+            }
+            if !worker.wait(Duration::from_secs(2)) {
+                break;
+            }
         }
-        thread::sleep(Duration::from_secs(2));
+        Ok(())
     });
 }
 
 /// Watch the foreground application and update pet behavior accordingly.
 pub(crate) fn watch_foreground_app(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || loop {
-        if let Some(name) = app_awareness::get_foreground_app_name() {
-            let category = app_awareness::classify(&name);
-            let state = app.state::<app_awareness::ForegroundAppState>();
+    crate::background::SUPERVISOR.spawn("foreground-app", move |worker| {
+        while !worker.cancelled() {
+            if let Some(name) = app_awareness::get_foreground_app_name() {
+                let category = app_awareness::classify(&name);
+                let state = app.state::<app_awareness::ForegroundAppState>();
 
-            // Update state
-            if let Ok(mut cat) = state.current_category.lock() {
-                *cat = category;
-            }
-            if let Ok(mut last) = state.last_app_name.lock() {
-                *last = Some(name.clone());
-            }
+                // Update state
+                if let Ok(mut cat) = state.current_category.lock() {
+                    *cat = category;
+                }
+                if let Ok(mut last) = state.last_app_name.lock() {
+                    *last = Some(name.clone());
+                }
 
-            // Check if sensing is paused
-            let paused = state.sensing_paused.lock().map(|p| *p).unwrap_or(false);
-            if !paused {
-                let _ = app.emit_to(
-                    "pet",
-                    "foreground-app-changed",
-                    json!({
-                        "category": format!("{category}"),
-                        "appName": name,
-                    }),
-                );
+                // Check if sensing is paused
+                let paused = state.sensing_paused.lock().map(|p| *p).unwrap_or(false);
+                if !paused {
+                    let _ = app.emit_to(
+                        "pet",
+                        "foreground-app-changed",
+                        json!({
+                            "category": format!("{category}"),
+                            "appName": name,
+                        }),
+                    );
+                }
+                emit_work_rhythm_updated(&app);
             }
-            emit_work_rhythm_updated(&app);
+            if !worker.wait(Duration::from_secs(5)) {
+                break;
+            }
         }
-        thread::sleep(Duration::from_secs(5));
+        Ok(())
     });
 }

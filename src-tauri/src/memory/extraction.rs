@@ -134,7 +134,12 @@ fn conversation_candidates(prompt: &str) -> Vec<MemoryCandidate> {
 
 /// Commit candidates and source IDs together: crash/retry cannot re-extract rejected facts.
 #[cfg(test)]
-fn extract(db: &MemoryDb, entries: &[crate::chat_session::ChatHistoryEntry], now: u64, force: bool) -> Result<usize, String> {
+fn extract(
+    db: &MemoryDb,
+    entries: &[crate::chat_session::ChatHistoryEntry],
+    now: u64,
+    force: bool,
+) -> Result<usize, String> {
     extract_with_topics(db, entries, now, force, None)
 }
 
@@ -148,7 +153,8 @@ fn extract_with_topics(
     let mut conn = db.0.lock().map_err(|e| e.to_string())?;
     initialize(&conn)?;
     // A failed/unsupported soul migration must not disable ordinary extraction.
-    let topic_timezone = topic_timezone.filter(|_| super::soul::store::ensure_available(&conn).is_ok());
+    let topic_timezone =
+        topic_timezone.filter(|_| super::soul::store::ensure_available(&conn).is_ok());
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let (enabled, interval, last): (bool, u64, u64) = tx.query_row(
         "SELECT enabled, interval_minutes, last_run_at FROM memory_extraction_settings WHERE id=1",
@@ -237,9 +243,14 @@ fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
         .unwrap_or_default()
         .as_secs();
     let db = app.state::<Arc<MemoryDb>>();
-    let soul_ready = app.try_state::<super::soul::model::SoulBootStatus>()
+    let soul_ready = app
+        .try_state::<super::soul::model::SoulBootStatus>()
         .is_some_and(|state| state.0);
-    let timezone = if soul_ready { iana_time_zone::get_timezone().ok() } else { None };
+    let timezone = if soul_ready {
+        iana_time_zone::get_timezone().ok()
+    } else {
+        None
+    };
     let count = extract_with_topics(&db, &entries, now, force, timezone.as_deref())?;
     if count > 0 {
         let _ = app.emit(
@@ -256,15 +267,18 @@ fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
 
 pub fn start(app: AppHandle) {
     // One worker serializes all automatic passes; missed intervals catch up on startup.
-    tauri::async_runtime::spawn(async move {
-        loop {
+    crate::background::SUPERVISOR.spawn_async("memory-extraction", move |worker| async move {
+        while !worker.cancelled() {
             let handle = app.clone();
             match tauri::async_runtime::spawn_blocking(move || run(&handle, false)).await {
-                Ok(Ok(_)) => {}
-                result => eprintln!("[memory] 自动提取失败，下次重试：{result:?}"),
+                Ok(Ok(_)) => worker.health(Ok(())),
+                result => worker.health(Err(format!("memory_extraction_failed: {result:?}"))),
             }
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            if !worker.sleep(std::time::Duration::from_secs(60)).await {
+                break;
+            }
         }
+        Ok(())
     });
 }
 
@@ -390,17 +404,23 @@ mod tests {
             conn.execute("UPDATE memory_extraction_settings SET enabled=0", [])
                 .unwrap();
         }
-        let entries = vec![entry("a", "我打算整理仓库。"), entry("b", "我打算每周整理一次仓库。")];
+        let entries = [
+            entry("a", "我打算整理仓库。"),
+            entry("b", "我打算每周整理一次仓库。"),
+        ];
         assert_eq!(
             extract_with_topics(&db, &entries[..1], 100, true, Some("Asia/Shanghai")).unwrap(),
             0
         );
         {
             let conn = db.0.lock().unwrap();
-            assert!(super::super::soul::open_loops::pending(&conn).unwrap().candidates.is_empty());
+            assert!(super::super::soul::open_loops::pending(&conn)
+                .unwrap()
+                .candidates
+                .is_empty());
         }
         {
-            let mut conn = db.0.lock().unwrap();
+            let conn = db.0.lock().unwrap();
             conn.execute("UPDATE memory_extraction_settings SET enabled=1", [])
                 .unwrap();
         }
@@ -421,14 +441,14 @@ mod tests {
         ));
         let expected;
         {
-            let db = MemoryDb(std::sync::Mutex::new(
+            let db = MemoryDb(crate::data_gate::DataMutex::new(
                 rusqlite::Connection::open(&path).unwrap(),
             ));
             extract(&db, &[entry("a", "我喜欢早上喝咖啡")], 100, true).unwrap();
             expected = pending(&db).unwrap()[0].id.clone();
         }
         {
-            let db = MemoryDb(std::sync::Mutex::new(
+            let db = MemoryDb(crate::data_gate::DataMutex::new(
                 rusqlite::Connection::open(&path).unwrap(),
             ));
             assert_eq!(pending(&db).unwrap()[0].id, expected);

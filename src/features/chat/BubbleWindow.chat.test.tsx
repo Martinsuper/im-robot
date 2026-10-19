@@ -21,7 +21,9 @@ vi.mock("../app/appRuntime", () => ({
 }));
 
 const focusHandlers = new Set<(event: { payload: boolean }) => void>();
+const setAlwaysOnTopMock = vi.fn(() => Promise.resolve());
 const getCurrentWindowMock = vi.fn(() => ({
+  setAlwaysOnTop: setAlwaysOnTopMock,
   startDragging: vi.fn(() => Promise.resolve()),
   onFocusChanged: vi.fn((handler: (event: { payload: boolean }) => void) => {
     focusHandlers.add(handler);
@@ -161,9 +163,34 @@ async function submitPrompt(text: string) {
 }
 
 describe("BubbleWindow 聊天事件流竞态", () => {
+  it("默认不置顶，点击图标切换原生窗口置顶并同步选中状态", async () => {
+    render(<BubbleWindow />);
+    const pin = screen.getByRole("button", { name: "窗口置顶" });
+    expect(pin.getAttribute("aria-pressed")).toBe("false");
+    expect(setAlwaysOnTopMock).not.toHaveBeenCalled();
+    fireEvent.click(pin);
+    await waitFor(() => expect(pin.getAttribute("aria-pressed")).toBe("true"));
+    expect(setAlwaysOnTopMock).toHaveBeenLastCalledWith(true);
+    fireEvent.click(pin);
+    await waitFor(() => expect(pin.getAttribute("aria-pressed")).toBe("false"));
+    expect(setAlwaysOnTopMock).toHaveBeenLastCalledWith(false);
+  });
+
+  it("置顶失败时保持未选中，并允许重试", async () => {
+    setAlwaysOnTopMock.mockRejectedValueOnce(new Error("window unavailable"));
+    render(<BubbleWindow />);
+    const pin = screen.getByRole("button", { name: "窗口置顶" });
+    fireEvent.click(pin);
+    await waitFor(() => expect((pin as HTMLButtonElement).disabled).toBe(false));
+    expect(pin.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(pin);
+    await waitFor(() => expect(pin.getAttribute("aria-pressed")).toBe("true"));
+  });
+
   beforeEach(() => {
     handlersByEvent.clear();
     focusHandlers.clear();
+    setAlwaysOnTopMock.mockReset().mockResolvedValue(undefined);
     listenMock.mockReset();
     installListenMock();
     runCommandMock.mockReset();

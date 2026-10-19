@@ -103,10 +103,14 @@ pub fn emit_output(
     })
 }
 pub fn produce_local(conn: &mut Connection, now: i64) -> Result<(), String> {
-    let history=super::continuity::get(conn,now)?;
-    if history.history_enabled && history.days>=7 {
-        let source=SourceRef{kind:"app_event".into(),id:format!("shared-week-{}",history.revision),revision:1};
-        super::continuity::record_event(conn,"shared_week",&source,now,now)?;
+    let history = super::continuity::get(conn, now)?;
+    if history.history_enabled && history.days >= 7 {
+        let source = SourceRef {
+            kind: "app_event".into(),
+            id: format!("shared-week-{}", history.revision),
+            revision: 1,
+        };
+        super::continuity::record_event(conn, "shared_week", &source, now, now)?;
     }
 
     store::transaction(conn, |tx| {
@@ -344,13 +348,28 @@ mod tests {
 }
 
 #[cfg(test)]
-mod local_tests{
- use super::*;
- #[test]
- fn local_templates_are_off_by_default_and_share_existing_queue_dedupe(){
-  let mut c=Connection::open_in_memory().unwrap();store::migrate(&mut c).unwrap();super::super::settings::get(&mut c,100).unwrap();
-  produce_local(&mut c,101).unwrap();assert_eq!(c.query_row("SELECT count(*) FROM soul_proactive_ledger",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-  c.execute("UPDATE soul_control SET enabled=1,category_settings='[{\"category\":\"small_talk\",\"enabled\":true}]'",[]).unwrap();
-  produce_local(&mut c,101).unwrap();produce_local(&mut c,102).unwrap();assert_eq!(c.query_row("SELECT count(*) FROM soul_proactive_ledger",[],|r|r.get::<_,i64>(0)).unwrap(),1);
- }
+mod local_tests {
+    use super::*;
+    #[test]
+    fn local_templates_are_off_by_default_and_share_existing_queue_dedupe() {
+        let mut c = Connection::open_in_memory().unwrap();
+        store::migrate(&mut c).unwrap();
+        super::super::settings::get(&mut c, 100).unwrap();
+        produce_local(&mut c, 101).unwrap();
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM soul_proactive_ledger", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        c.execute("UPDATE soul_control SET enabled=1,category_settings='[{\"category\":\"small_talk\",\"enabled\":true}]'",[]).unwrap();
+        produce_local(&mut c, 101).unwrap();
+        produce_local(&mut c, 102).unwrap();
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM soul_proactive_ledger", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
 }

@@ -3,6 +3,22 @@ use serde_json::{json, Value};
 
 pub(super) const VERSION: u64 = 1;
 
+/// This table also generates agent/wire-schema.mjs; version and required fields have one owner.
+pub(super) const EVENT_FIELDS: &[(&str, &[&str])] = &[
+    ("started", &[]),
+    ("completed", &[]),
+    ("cancelled", &[]),
+    ("delta", &["text"]),
+    ("steering-accepted", &["text"]),
+    ("tool-start", &["tool", "toolCallId"]),
+    ("tool-end", &["tool", "toolCallId"]),
+    ("approval", &["approvalId", "tool"]),
+    ("approval-expired", &["approvalId"]),
+    ("app-tool", &["callId", "name"]),
+    ("failed", &["message"]),
+    ("protocol-error", &["message"]),
+];
+
 pub(super) fn command(mut value: Value) -> Value {
     value["protocolVersion"] = json!(VERSION);
     value
@@ -16,16 +32,11 @@ pub(super) fn event(line: &str, request_id: &str) -> Result<Value, String> {
     if value["requestId"].as_str() != Some(request_id) {
         return Err("Agent 返回了不属于当前任务的通信数据。".into());
     }
-    let required: &[&str] = match value["type"].as_str() {
-        Some("started" | "completed" | "cancelled") => &[],
-        Some("delta" | "steering-accepted") => &["text"],
-        Some("tool-start" | "tool-end") => &["tool", "toolCallId"],
-        Some("approval") => &["approvalId", "tool"],
-        Some("approval-expired") => &["approvalId"],
-        Some("app-tool") => &["callId", "name"],
-        Some("failed" | "protocol-error") => &["message"],
-        _ => return Err("Agent 返回了未知的事件类型。".into()),
-    };
+    let required = EVENT_FIELDS
+        .iter()
+        .find(|(kind, _)| Some(*kind) == value["type"].as_str())
+        .map(|(_, fields)| *fields)
+        .ok_or("Agent 返回了未知的事件类型。")?;
     if required.iter().any(|key| !value[*key].is_string()) {
         return Err("Agent 返回的事件缺少必要字段。".into());
     }

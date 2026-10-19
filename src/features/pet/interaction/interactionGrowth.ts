@@ -1,3 +1,4 @@
+import { readPersistentState, writePersistentState } from "../../../lib/persistentState";
 import {
   GrowthManager,
   type AttributeType,
@@ -22,7 +23,7 @@ export interface GrowthSnapshot {
 }
 
 function canUseStorage() {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+  return typeof window !== "undefined";
 }
 
 function createDefaultGrowth(): PetGrowth {
@@ -33,7 +34,7 @@ export function loadGrowthState(): PetGrowth {
   if (!canUseStorage()) return createDefaultGrowth();
 
   try {
-    const raw = window.localStorage.getItem(GROWTH_STORAGE_KEY);
+    const raw = readPersistentState(GROWTH_STORAGE_KEY);
     if (!raw) return createDefaultGrowth();
     return { ...createDefaultGrowth(), ...JSON.parse(raw) } as PetGrowth;
   } catch (error) {
@@ -47,7 +48,7 @@ export function loadGrowthState(): PetGrowth {
 export function saveGrowthState(state: PetGrowth): void {
   if (!canUseStorage()) return;
   try {
-    window.localStorage.setItem(GROWTH_STORAGE_KEY, JSON.stringify(state));
+    writePersistentState(GROWTH_STORAGE_KEY, JSON.stringify(state));
     window.dispatchEvent(new CustomEvent<PetGrowth>("piko-growth-state-changed", { detail: state }));
   } catch (error) {
     // ignore persistence failures。

@@ -1,3 +1,5 @@
+import { ChatContextMenu } from "./ChatContextMenu";
+import { useWorkspaceSelection } from "./useWorkspaceSelection";
 import { useStableEvent } from "../../hooks/useStableEvent";
 import { HtmlFavoriteDialog } from "./HtmlFavoriteDialog";
 import { AgentActivity } from "./AgentActivity";
@@ -17,7 +19,7 @@ import {
   openModelSettings,
   textForSpeech,
 } from "./ChatPresentation";
-import { ArrowDown, ArrowUp, ChevronDown, FolderOpen, Mic, PanelRight, Paperclip, Plus, ScanLine, Square, Star, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Mic, PanelRight, Paperclip, Pin, Plus, ScanLine, Square, X } from "lucide-react";
 import { FormEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -56,6 +58,23 @@ const WHISPER_SAMPLE_RATE = 16000;
 export function BubbleWindow() {
   const toast = useToast();
   const [prompt, setPrompt] = useState("");
+  const [isPinned, setIsPinned] = useState(false);
+  const [voiceAvailable, setVoiceAvailable] = useState(true);
+  const [pinPending, setPinPending] = useState(false);
+
+  async function togglePinned() {
+    const next = !isPinned;
+    setPinPending(true);
+    try {
+      if (isTauriRuntime) await getCurrentWindow().setAlwaysOnTop(next);
+      setIsPinned(next);
+    } catch (error) {
+      toast.error(toUserMessage(error, "切换窗口置顶失败，请重试。"));
+    } finally {
+      setPinPending(false);
+    }
+  }
+
   const lastTypingAt = useRef(0);
   const [conversation, setConversation] = useState(loadConversation);
   const conversationRef = useRef(conversation);
@@ -243,7 +262,8 @@ export function BubbleWindow() {
   }, []);
 
   useEffect(() => {
-    void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
+    void void runCommand("get_data_health").then(health => setVoiceAvailable(health?.speechRecognition !== false)).catch(error => console.error("[capabilities]", error));
+    runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
       setCompanionName(settings.companionName);
       setTheme(settings.theme);
       setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
@@ -658,7 +678,7 @@ export function BubbleWindow() {
   function submitPrompt() {
     if (agentBusyRef.current) {
       const text = prompt.trim();
-      if (!text || steeringPending.current) return;
+      if (!text || steeringPending.current || !activeRequestId.current) return;
       steeringPending.current = true; setSendingSteering(true);
       void runCommand("agent_steer", { requestId: activeRequestId.current, text }).catch((error) => { steeringPending.current = false; setSendingSteering(false); toast.error(toUserMessage(error, "补充要求未送达，请重试")); });
       return;
@@ -689,21 +709,9 @@ export function BubbleWindow() {
     void runCommand("agent_cancel", { requestId }).catch((error) => toast.error(toUserMessage(error, "停止失败")));
   }
 
-  async function chooseWorkspace() {
-    try {
-      const path = await open({ directory: true, multiple: false, title: "选择工作目录" });
-      if (typeof path !== "string") return;
-      setConversation((current) => ({ ...current, cwd: path }));
-      if (workspaceRequired) {
-        await runCommand("agent_select_workspace", { requestId: activeRequestId.current, path });
-      }
-    } catch (error) { toast.error(toUserMessage(error, "选择目录失败")); }
-  }
-  async function cancelWorkspace() {
-    try { await runCommand("agent_select_workspace", { requestId: activeRequestId.current, path: null }); }
-    catch (error) { toast.error(toUserMessage(error, "取消失败")); }
-  }
+  const { chooseWorkspace, cancelWorkspace } = useWorkspaceSelection(requestId, workspaceRequired, setConversation);
   async function approveTool(id: string, allowed: boolean) {
+    if (!activeRequestId.current) return;
     try {
       await runCommand("agent_approve", { requestId: activeRequestId.current, approvalId: id, allowed });
     } catch (error) { toast.error(toUserMessage(error, "确认失败")); }
@@ -746,6 +754,8 @@ export function BubbleWindow() {
         await requestPermission();
       }
       if (businessAction.current) {
+      if (!activeRequestId.current) return;
+        if (!activeRequestId.current) return;
         await runCommand("agent_confirm_action", { requestId: activeRequestId.current, id: pendingAction.id, selectedIndexes: confirmationChoices.length ? selectedChoiceIndexes : undefined });
         return;
       }
@@ -776,6 +786,8 @@ export function BubbleWindow() {
     if (!pendingAction) return;
     try {
       if (businessAction.current) {
+      if (!activeRequestId.current) return;
+        if (!activeRequestId.current) return;
         await runCommand("agent_reject_action", { requestId: activeRequestId.current, id: pendingAction.id });
         return;
       }
@@ -1072,6 +1084,15 @@ export function BubbleWindow() {
           </span>
         </div>
         <div className="bubble-topbar__right">
+          <button
+            type="button"
+            className={`bubble-topbar__btn${isPinned ? " bubble-topbar__btn--active" : ""}`}
+            onClick={() => void togglePinned()}
+            disabled={pinPending}
+            aria-label="窗口置顶"
+            aria-pressed={isPinned}
+            title={isPinned ? "取消置顶" : "固定在其他窗口上方"}
+          ><Pin size={17} /></button>
           <button type="button" className="bubble-topbar__btn" disabled={isThinking || agentBusy} onClick={newConversation} aria-label="新对话" title="新对话"><Plus size={17} /></button>
           <button type="button" className="bubble-topbar__btn" onClick={() => void runCommand("open_panel")} aria-label="打开主面板" title="打开主面板"><PanelRight size={17} /></button>
           <button
@@ -1283,46 +1304,12 @@ export function BubbleWindow() {
             )}
           </div>
         )}
-        <div className="bubble-context-bar">
-          <button type="button" className="bubble-context-toggle" aria-expanded={contextOpen} aria-controls="bubble-context-options" onClick={() => setContextOpen(!contextOpen)}>
-            <FolderOpen size={13} /><span>{conversation.cwd ? conversation.cwd.split(/[\\/]/).filter(Boolean).pop() : "工作空间与收藏"}</span><ChevronDown size={12} />
-          </button>
-          <span className="bubble-input-hint">Enter 发送 · Shift+Enter 换行</span>
-        </div>
-        <div id="bubble-context-options" className="chat-workspace" aria-label="对话上下文" hidden={!contextOpen}>
-          <button type="button" className="chat-workspace__directory" title={conversation.cwd || "需要操作本地文件时再选择文件夹"} disabled={!isTauriRuntime || agentBusy} onClick={() => void chooseWorkspace()}>
-            <FolderOpen size={13} /> {conversation.cwd ? (conversation.cwd.split(/[\\/]/).filter(Boolean).pop() || conversation.cwd) : "选择工作目录（可选）"}
-          </button>
-          <button ref={favoritesButtonRef} type="button" className="chat-workspace__directory" title="收藏的 HTML 卡片" onClick={() => setFavoritesOpen((open) => !open)} aria-expanded={favoritesOpen}>
-            <Star size={13} /> 收藏卡片{favorites.length ? ` · ${favorites.length}` : ""}
-          </button>
-
-        </div>
-        {contextOpen && favoritesOpen && (
-          <div className="bubble-favorites" aria-label="收藏的 HTML 卡片">
-            {favorites.length === 0 ? (
-              <p>还没有收藏，在任意 HTML 卡片头部点 ★ 即可收藏</p>
-            ) : favorites.map((favorite) => (
-              <div key={favorite.id} className="bubble-favorites__item">
-                <button
-                  type="button"
-                  className="bubble-favorites__title"
-                  title={favorite.html}
-                  onClick={() => { setSelectedFavoriteId(favorite.id); setFavoritesOpen(false); }}
-                >
-                  {favorite.title}
-                </button>
-                <span className="bubble-favorites__actions">
-                  <button type="button" title="删除" onClick={() => void removeFavorite(favorite.id).then(() => {
-                    if (selectedFavoriteId === favorite.id) setSelectedFavoriteId(null);
-                  }).catch((error) => toast.error(toUserMessage(error, "删除失败，请重试。")))}>
-                    <X size={13} />
-                  </button>
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+        <ChatContextMenu cwd={conversation.cwd} disabled={!isTauriRuntime || agentBusy}
+          open={contextOpen} onToggle={() => setContextOpen(!contextOpen)} onChoose={() => void chooseWorkspace()}
+          favoritesOpen={favoritesOpen} onToggleFavorites={() => setFavoritesOpen(open => !open)}
+          favoritesButtonRef={favoritesButtonRef} favorites={favorites}
+          onSelect={id => { setSelectedFavoriteId(id); setFavoritesOpen(false); }}
+          onRemove={id => { void removeFavorite(id).then(() => { if (selectedFavoriteId === id) setSelectedFavoriteId(null); }).catch(error => toast.error(toUserMessage(error, "删除失败，请重试。"))); }} />
         {soulMessage && (
           <div className="bubble-soul-note" role="status" data-soul-id={soulMessage.id}>
             <div className="bubble-soul-note__body">
@@ -1363,7 +1350,7 @@ export function BubbleWindow() {
             <button
               type="button"
               className={isListening ? "is-active" : ""}
-              disabled={isTranscribingVoice}
+              disabled={isTranscribingVoice || !voiceAvailable}
               onClick={() => void toggleVoiceInput()}
               aria-label={isListening ? "停止语音输入" : isTranscribingVoice ? "正在转写语音" : "开始语音输入"}
               title={isListening ? "停止语音输入" : isTranscribingVoice ? "正在转写语音" : "语音输入"}

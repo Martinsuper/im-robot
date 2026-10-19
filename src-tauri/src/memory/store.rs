@@ -27,7 +27,7 @@ fn context_terms(query: &str) -> Vec<String> {
     terms
 }
 
-pub struct MemoryDb(pub Mutex<Connection>);
+pub struct MemoryDb(pub(crate) crate::data_gate::DataMutex<Connection>);
 
 pub fn memory_db_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path()
@@ -85,7 +85,7 @@ pub fn init_memory_db(app: &tauri::AppHandle) -> Result<MemoryDb, String> {
         eprintln!("Soul storage disabled: migration_failed");
     }
 
-    Ok(MemoryDb(Mutex::new(conn)))
+    Ok(MemoryDb(crate::data_gate::DataMutex::new(conn)))
 }
 
 /// 降级方案：主数据库初始化失败时打开进程内临时数据库，保证聊天与记忆命令
@@ -98,7 +98,7 @@ pub fn open_in_memory_db() -> Result<MemoryDb, String> {
 
     run_migrations(&conn)?;
 
-    Ok(MemoryDb(Mutex::new(conn)))
+    Ok(MemoryDb(crate::data_gate::DataMutex::new(conn)))
 }
 
 fn run_migrations(conn: &Connection) -> Result<(), String> {
@@ -662,7 +662,7 @@ impl MemoryDb {
     pub fn build_context(&self, input: BuildContextInput) -> Result<Vec<MemoryItem>, String> {
         let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
-        let limit = input.limit.unwrap_or(15).min(100) as usize;
+        let limit = input.limit.unwrap_or(15).min(100);
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -1197,7 +1197,7 @@ mod tests {
     fn test_db() -> MemoryDb {
         let conn = Connection::open_in_memory().expect("in-memory database should open");
         run_migrations(&conn).expect("memory migrations should run");
-        MemoryDb(Mutex::new(conn))
+        MemoryDb(crate::data_gate::DataMutex::new(conn))
     }
 
     fn memory_item(id: &str, memory_type: MemoryType, content: &str) -> MemoryItem {
@@ -1333,7 +1333,7 @@ mod tests {
         .expect("legacy row should insert");
         run_migrations(&conn).expect("normalizing migration should run");
 
-        let db = MemoryDb(Mutex::new(conn));
+        let db = MemoryDb(crate::data_gate::DataMutex::new(conn));
         let recent = db.get_recent(10).expect("legacy memory should deserialize");
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].memory_type, MemoryType::Profile);

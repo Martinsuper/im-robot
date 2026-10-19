@@ -63,7 +63,7 @@ export async function generatePetCompanionResponse(
   try {
     const result = await runCommand<PetCompanionGenerationOutput>(
       "generate_pet_companion_response",
-      { input: input as unknown as Record<string, unknown> },
+      { input },
       undefined
     );
     if (!result) return null;

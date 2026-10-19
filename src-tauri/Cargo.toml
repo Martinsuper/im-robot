@@ -4,6 +4,7 @@ version = "1.2.11"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+rust-version = "1.96"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,36 +15,43 @@ edition = "2021"
 name = "im_robot_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["speech-recognition", "wasm-plugins"]
+speech-recognition = ["dep:sherpa-onnx", "dep:bzip2", "dep:tar"]
+wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
 sha2 = "0.10"
-tokio = { version = "1", features = ["sync", "macros", "rt", "time", "process", "io-util"] }
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+tokio = { version = "1", features = ["sync", "macros", "rt", "time", "process", "io-util", "fs"] }
 tokio-util = "0.7"
 parking_lot = "0.12"
 tempfile = "3"
 tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.13", default-features = false, features = ["charset", "http2", "json", "multipart", "native-tls", "stream", "system-proxy"] }
 futures-util = "0.3"
-sherpa-onnx = { version = "1.13.2", default-features = false, features = ["static"] }
-bzip2 = "0.4"
-tar = "0.4"
+sherpa-onnx = { version = "1.13.2", default-features = false, features = ["static"], optional = true }
+bzip2 = { version = "0.4", optional = true }
+tar = { version = "0.4", optional = true }
 tauri-plugin-notification = "^2"
 tauri-plugin-autostart = "^2"
-screenshots = "0.8.10"
+xcap = "0.9.8"
 base64 = "0.22"
 tauri-plugin-dialog = "^2"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
 chrono = "0.4"
 chrono-tz = "0.10"
 iana-time-zone = "0.1"
-wasmtime = "45"
-wasmtime-wasi = "45"
+wasmtime = { version = "49.0.3", optional = true }
+wasmtime-wasi = { version = "49.0.3", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3"
@@ -58,3 +66,8 @@ windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Upstream 1.13.8 still requires zip 2; keep the FFI unchanged and upgrade
+# only its archive reader until upstream ships a fixed build dependency.
+[patch.crates-io]
+sherpa-onnx-sys = { path = "vendor/sherpa-onnx-sys" }

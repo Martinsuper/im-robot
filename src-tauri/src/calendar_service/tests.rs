@@ -1,14 +1,8 @@
 use super::{
-    icalendar::render_icalendar, scheduler::collect_due_calendar_events, service::*,
-    CalendarEvent,
+    icalendar::render_icalendar, scheduler::collect_due_calendar_events, service::*, CalendarEvent,
 };
 use chrono::{Duration as ChronoDuration, Local};
-use std::{
-    collections::HashSet,
-    fs,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashSet, fs, path::PathBuf};
 
 #[test]
 fn calendar_event_notices_fire_once_near_start_time() {
@@ -85,7 +79,7 @@ fn batch_delete_invalid_targets_never_mutate_events() {
 }
 #[test]
 fn overlapping_calendar_events_are_created_with_a_hint() {
-    let path = temp_calendar_events_path();
+    let (_directory, path) = temp_calendar_events_path();
     let now = Local::now() + ChronoDuration::days(1);
     let first = calendar_event_input_from_value(&serde_json::json!({
         "title": "已有日程",
@@ -131,7 +125,7 @@ fn calendar_conflicts_exclude_touching_boundaries() {
 }
 #[test]
 fn deletes_a_batch_of_calendar_events_atomically() {
-    let path = temp_calendar_events_path();
+    let (_directory, path) = temp_calendar_events_path();
     let now = Local::now() + ChronoDuration::days(1);
     let first = create_calendar_event_record_at_path(
         &path,
@@ -169,7 +163,7 @@ fn deletes_a_batch_of_calendar_events_atomically() {
 }
 #[test]
 fn keeps_calendar_events_when_a_batch_delete_target_is_missing() {
-    let path = temp_calendar_events_path();
+    let (_directory, path) = temp_calendar_events_path();
     let now = Local::now() + ChronoDuration::days(1);
     let existing = create_calendar_event_record_at_path(
         &path,
@@ -232,13 +226,8 @@ fn renders_icalendar_with_escaped_text() {
     assert!(calendar.contains("LOCATION:会议室\\;A"));
 }
 
-fn temp_calendar_events_path() -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "piko-calendar-events-{}-{}.json",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ))
+fn temp_calendar_events_path() -> (tempfile::TempDir, PathBuf) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("calendar-events.json");
+    (directory, path)
 }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const source = new URL('../src-tauri/src/', import.meta.url);
@@ -39,3 +39,11 @@ for (const entry of entries) {
 const names = entries.map(entry => entry.split('::').at(-1));
 assert.equal(new Set(names).size, names.length, 'IPC command names must be unique');
 console.log(`Architecture boundaries OK: ${modules.length} modules, ${entries.length} IPC commands.`);
+
+// Pi SDK ownership stays in one adapter; domain protocols and permissions must not import it.
+const agentDirectory = new URL('../agent/', import.meta.url);
+for (const file of await readdir(agentDirectory)) {
+  if (!file.endsWith('.mjs') || file.endsWith('.test.mjs') || file === 'sdk-adapter.mjs') continue;
+  const contents = await readFile(new URL(file, agentDirectory), 'utf8');
+  assert(!/from\s+["']@earendil-works\//.test(contents), `${file} must access the SDK through sdk-adapter.mjs`);
+}

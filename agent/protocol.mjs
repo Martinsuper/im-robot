@@ -1,5 +1,6 @@
 /** Private Rust ↔ Node protocol. Unversioned commands remain supported for CLI clients. */
-export const PROTOCOL_VERSION = 1;
+import { PROTOCOL_VERSION, EVENT_FIELDS } from "./wire-schema.mjs";
+export { PROTOCOL_VERSION };
 const commands = new Set(["start", "steer", "approval", "app-result", "cancel"]);
 const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
 
@@ -30,5 +31,7 @@ export function parseCommand(line, activeRequestId) {
 }
 
 export function eventEnvelope(event, requestId) {
+  const required=EVENT_FIELDS[event.type];
+  if (!required || required.some(field=>typeof event[field]!=="string")) throw new Error("Agent 事件不符合通信契约");
   return { ...event, protocolVersion: PROTOCOL_VERSION, ...(requestId ? { requestId } : {}) };
 }

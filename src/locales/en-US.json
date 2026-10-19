@@ -45,6 +45,15 @@
       "summarize": "Summarize",
       "translate": "Translate",
       "explain": "Explain"
+    },
+    "error": {
+      "title": "This page could not be displayed",
+      "description": "Try again or reload. If the problem persists, copy the diagnostics.",
+      "retry": "Try again",
+      "reload": "Reload",
+      "copy": "Copy diagnostics",
+      "copied": "Diagnostics copied",
+      "copyFailed": "Could not copy diagnostics. Try again."
     }
   },
   "pet": {
@@ -165,7 +174,40 @@
     "foregroundAppEnabled": "Enabled",
     "foregroundAppPaused": "Paused",
     "languageLabel": "Language",
-    "sectionsAriaLabel": "Settings sections"
+    "sectionsAriaLabel": "Settings sections",
+    "feedback": {
+      "modelReady": "is ready",
+      "autostartReadFailed": "Could not read startup status",
+      "autostartSaveFailed": "Could not save startup settings",
+      "previewSaved": "HTML preview settings updated",
+      "previewFailed": "Could not update HTML preview settings",
+      "onboardingReset": "Onboarding reset. Reopen the panel to start.",
+      "onboardingFailed": "Could not reset onboarding",
+      "shortcutSaved": "Shortcut updated",
+      "shortcutFailed": "Could not update shortcut. Try again.",
+      "clearFailed": "Cleanup failed; nothing was deleted.",
+      "exportSaved": "Data exported (without API keys)",
+      "exportFailed": "Export failed. Try again.",
+      "notificationFailed": "Could not request notification permission. Try again.",
+      "notificationSent": "Test notification submitted. Check Notification Center.",
+      "testNotificationFailed": "Could not send test notification. Try again.",
+      "autoApproveEnabled": "Command auto-approval enabled for the next task",
+      "autoApproveDisabled": "Per-command approval restored for the next task",
+      "permissionFailed": "Could not save command permissions",
+      "cleared": "Cleared {count} data categories. Backup is in backups."
+    },
+    "connection": {
+      "configured": "API key configured",
+      "dirty": "Unsaved AI settings",
+      "savedKey": "Settings saved with an API key",
+      "savedNoKey": "Settings saved without an API key",
+      "savingFailed": "Save failed",
+      "connecting": "Connecting...",
+      "connected": "Connected",
+      "empty": "Connected; no models found",
+      "failed": "Connection failed",
+      "idle": "Connection not tested"
+    }
   },
   "onboarding": {
     "title": "Welcome to Piko",
@@ -238,12 +280,21 @@
     "updateDownloadFailed": "Update download failed"
   },
   "update": {
-    "available": "New version {version} available",
-    "latest": "You're on the latest version",
-    "downloading": "Downloading update...",
+    "available": "Update available",
+    "latest": "Up to date",
+    "downloading": "Downloading…",
     "downloadComplete": "Download complete",
     "downloadFailed": "Download failed",
-    "restartPrompt": "Restart to install update?"
+    "restartPrompt": "Restart to install update?",
+    "checkFailed": "Could not check for updates",
+    "versionInfo": "Version",
+    "checking": "Checking for updates…",
+    "check": "Check for updates",
+    "download": "Download update",
+    "cancel": "Cancel download",
+    "noAsset": "No installer is available for this platform. Open the release page.",
+    "openRelease": "Open release page",
+    "openFile": "Open downloaded file"
   },
   "bubble": {
     "actionCancelled": "Action cancelled.",
@@ -598,7 +649,8 @@
       "themePeach": "Warm Peach",
       "themeSage": "Sage Green",
       "timeoutLabel": "Timeout (seconds)",
-      "waitingTest": "Awaiting Test"
+      "waitingTest": "Awaiting Test",
+      "providerLead": "Choose a provider, then enter the required connection details."
     },
     "status": {
       "aiChat": "AI Chat",
@@ -775,6 +827,37 @@
       "rollback": "Restore this version",
       "rollbackHint": "Restoring creates a new version and pauses new proposals. Turn evolution off and on to resume proposals.",
       "rollbackConfirm": "Restore this expression version? Your manual personality overrides will remain."
+    }
+  },
+  "data": {
+    "snapshot": {
+      "title": "Full backup and restore",
+      "description": "Includes chats, schedules, memories and pet growth. API keys, downloaded models and workspace files are excluded. Wait until active tasks finish.",
+      "create": "Create full backup",
+      "choose": "Restore full backup…",
+      "chooseDirectory": "Choose a backup folder",
+      "saved": "Full backup saved",
+      "savedDetails": "Backed up {count} files: {directory}",
+      "confirmLabel": "Restore confirmation",
+      "confirmDescription": "Restore {count} files and restart Piko. Current data will be backed up first. System calendars will not be changed.",
+      "confirm": "Restore and restart",
+      "cancel": "Cancel restore"
+    },
+    "diagnostics": {
+      "title": "Background task diagnostics",
+      "refresh": "Refresh task status",
+      "sqlite": "Database lock wait (µs)",
+      "json": "File lock wait (µs)"
+    },
+    "memory": {
+      "temporary": "Memories are temporary for this session and will be lost on restart. Check disk space and data-folder permissions."
+    },
+    "pet": {
+      "unavailable": "Pet data storage is unavailable",
+      "retry": "Reload data"
+    },
+    "restore": {
+      "pending": "Restoring and restarting Piko…"
     }
   }
 }

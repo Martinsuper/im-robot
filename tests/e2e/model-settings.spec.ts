@@ -23,6 +23,20 @@ async function installSettingsBackend(page: Page, mode: "persistent" | "lost" | 
       unregisterCallback() {},
       async invoke(command: string, args?: { input?: Record<string, unknown>; enabled?: boolean }) {
         calls.push({ command, args: JSON.parse(JSON.stringify(args ?? {})) });
+        if (["get_pet_state", "migrate_pet_state", "save_pet_state"].includes(command)) {
+          const owner = window as unknown as { __petWire?: { schemaVersion: number; initialized: boolean; entries: Record<string, { revision: number; value: string | null }> } };
+          const pet = owner.__petWire ??= { schemaVersion: 1, initialized: true, entries: {} };
+          const payload = (args ?? {}) as Record<string, unknown>;
+          if (command === "save_pet_state") {
+            const key = String(payload.key); const previous = pet.entries[key] ?? { revision: 0, value: null };
+            if (previous.revision !== payload.expectedRevision) throw new Error("pet state conflict");
+            return pet.entries[key] = { revision: previous.revision + 1, value: payload.value as string | null };
+          }
+          return structuredClone(pet);
+        }
+        if (command === "background_status") return [];
+        if (command === "get_data_health") return { memoryPersistent: true, sqlite: { acquisitions: 0, waitMicros: 0, holdMicros: 0 }, jsonLockAcquisitions: 0, jsonLockWaitMicros: 0, speechRecognition: true, wasmPlugins: true };
+
         if (command === "get_notification_status") return { platform: "macos", authorization: "authorized", alertsEnabled: true, soundsEnabled: true, alertStyle: "banner" };
         if (command === "get_settings") return structuredClone(state);
         if (command === "get_onboarding_status") return { required: false, completed: true, version: "1.0" };

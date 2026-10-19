@@ -26,7 +26,18 @@ use tauri::State;
 /// 只清用户内容（提醒 / 日程 / 备忘 / 对话 / 专注记录），**不动**设置与记忆库
 /// （设置是「怎么表现」，清掉会让人莫名其妙；记忆库属 04 模块，单独提供入口）。
 #[tauri::command]
-pub(crate) fn clear_my_data(app: AppHandle) -> Result<serde_json::Value, String> {
+pub(crate) async fn clear_my_data(
+    app: AppHandle,
+    db: State<'_, std::sync::Arc<crate::memory::MemoryDb>>,
+) -> Result<serde_json::Value, String> {
+    let db = db.inner().clone();
+    crate::background::SUPERVISOR
+        .blocking("clear-data", move || {
+            crate::data_snapshot::transaction(&app, &db, || clear_my_data_inner(app.clone()))
+        })
+        .await
+}
+fn clear_my_data_inner(app: AppHandle) -> Result<serde_json::Value, String> {
     let _transaction = storage::transaction();
 
     let files: Vec<(&str, Option<PathBuf>, serde_json::Value)> = vec![
@@ -133,13 +144,24 @@ pub(crate) fn preview_import(file_path: String) -> Result<serde_json::Value, Str
 }
 
 #[tauri::command]
-pub(crate) fn import_data(
+pub(crate) async fn import_data(
     app: AppHandle,
+    db: State<'_, std::sync::Arc<crate::memory::MemoryDb>>,
     focus: State<'_, FocusTimer>,
     file_path: String,
 ) -> Result<serde_json::Value, String> {
-    let path = std::path::Path::new(&file_path);
-    let result = crate::sync::import_export::import_from_file(&app, path)?;
+    let owned_app = app.clone();
+    let db = db.inner().clone();
+    let result = crate::background::SUPERVISOR
+        .blocking("import-data", move || {
+            crate::data_snapshot::transaction(&owned_app, &db, || {
+                crate::sync::import_export::import_from_file(
+                    &owned_app,
+                    std::path::Path::new(&file_path),
+                )
+            })
+        })
+        .await?;
     if result.chats_imported > 0 {
         let _ = app.emit_to("panel", "chat-history-updated", ());
     }

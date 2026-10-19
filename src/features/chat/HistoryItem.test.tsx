@@ -67,3 +67,9 @@ it("sets the selected history view explicitly and keeps repeated tab clicks idem
   expect(preview.getAttribute("aria-selected")).toBe("true");
   await waitFor(() => expect(screen.getByTitle("Piko HTML 预览").getAttribute("src")).toContain("/frame/history-frame"));
 });
+
+it("shows source when preview is disabled even if the fence follows inline prose", () => {
+  render(<HistoryItem {...props} htmlPreviewEnabled={false} entry={{ ...entry, response: '说明：```html\n<h1>History preview</h1>\n```' }} />);
+  expect(screen.getByText('<h1>History preview</h1>')).toBeTruthy();
+  expect(screen.queryByTitle("Piko HTML 预览")).toBeNull();
+});

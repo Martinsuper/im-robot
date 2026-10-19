@@ -1,16 +1,17 @@
+import { readPersistentState, writePersistentState } from "../../../lib/persistentState";
 import { DEFAULT_INTERACTION_STATS, type HumanInteractionEvent, type InteractionStats } from "./interactionTypes";
 
 const INTERACTION_STATS_KEY = "piko-interaction-stats";
 
 function canUseStorage() {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+  return typeof window !== "undefined";
 }
 
 export function loadInteractionStats(): InteractionStats {
   if (!canUseStorage()) return { ...DEFAULT_INTERACTION_STATS };
 
   try {
-    const raw = window.localStorage.getItem(INTERACTION_STATS_KEY);
+    const raw = readPersistentState(INTERACTION_STATS_KEY);
     if (!raw) return { ...DEFAULT_INTERACTION_STATS };
     const parsed = JSON.parse(raw) as Partial<InteractionStats>;
     return {
@@ -29,7 +30,7 @@ export function loadInteractionStats(): InteractionStats {
 export function saveInteractionStats(stats: InteractionStats): void {
   if (!canUseStorage()) return;
   try {
-    window.localStorage.setItem(INTERACTION_STATS_KEY, JSON.stringify(stats));
+    writePersistentState(INTERACTION_STATS_KEY, JSON.stringify(stats));
     window.dispatchEvent(new CustomEvent<InteractionStats>("piko-interaction-stats-changed", { detail: stats }));
   } catch (error) {
     // 忽略存储失败，交互不应被本地持久化错误阻断。

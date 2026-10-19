@@ -39,3 +39,5 @@ playwright-report
 /agent/node_modules/
 /src-tauri/agent-runtime/
 /src-tauri/binaries/piko-agent-node-*
+
+/tools/contracts/target/

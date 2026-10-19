@@ -1,10 +1,10 @@
 //! Text attachments and generated-text file operations.
 use crate::runtime_types::PetVisualEvent;
 use serde::Serialize;
-use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::{fs, io::Write};
 use tauri::AppHandle;
 use tauri::Emitter;
 use tauri::State;
@@ -51,10 +51,36 @@ pub(crate) fn save_generated_text(
 ) -> Result<(), String> {
     let path = PathBuf::from(path);
     validate_save_path(&path)?;
-    if path.exists() && !overwrite {
-        return Err("目标文件已存在，需要确认覆盖".to_string());
+    save_text_atomic(&path, &content, overwrite)
+}
+
+fn save_text_atomic(path: &Path, content: &str, overwrite: bool) -> Result<(), String> {
+    let directory = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(directory).map_err(|e| format!("保存文件失败：{e}"))?;
+    temporary
+        .write_all(content.as_bytes())
+        .map_err(|e| format!("保存文件失败：{e}"))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("保存文件失败：{e}"))?;
+    if overwrite {
+        temporary.persist(path)
+    } else {
+        temporary.persist_noclobber(path)
     }
-    fs::write(path, content).map_err(|error| format!("保存文件失败：{error}"))
+    .map_err(|e| {
+        if e.error.kind() == std::io::ErrorKind::AlreadyExists {
+            "目标文件已存在，需要确认覆盖".to_string()
+        } else {
+            format!("保存文件失败：{e}")
+        }
+    })?;
+    Ok(())
 }
 
 pub(crate) fn read_text_attachment(
@@ -129,4 +155,43 @@ pub(crate) fn clear_text_attachment(
         .lock()
         .map_err(|_| "无法清除附件状态".to_string())? = None;
     Ok(())
+}
+
+#[cfg(test)]
+mod atomic_save_tests {
+    use super::*;
+    #[test]
+    fn existing_files_require_explicit_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("answer.txt");
+        save_text_atomic(&path, "original", false).unwrap();
+        assert!(save_text_atomic(&path, "unexpected", false).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+        save_text_atomic(&path, "replacement", true).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "replacement");
+    }
+    #[test]
+    fn concurrent_exports_never_clobber_another_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("answer.txt");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let workers: Vec<_> = ["first", "second"]
+            .into_iter()
+            .map(|text| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    save_text_atomic(&path, text, false)
+                })
+            })
+            .collect();
+        assert_eq!(
+            workers
+                .into_iter()
+                .filter_map(|w| w.join().unwrap().ok())
+                .count(),
+            1
+        );
+    }
 }

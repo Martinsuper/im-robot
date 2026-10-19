@@ -25,6 +25,7 @@ export interface AppSettings {
   breakReminderQuietHoursEnd: string;
   ai: AiSettings;
   hasApiKey: boolean;
+  credentialError?: string;
   htmlPreviewEnabled: boolean;
   agentAutoApproveCommands: boolean;
   /** 全局快捷键（打开对话窗口）。格式如 CmdOrCtrl+Shift+Space。 */

@@ -98,13 +98,27 @@ pub fn get(conn: &mut Connection, now: i64) -> Result<SoulSettings, String> {
                 .get(name.as_str().unwrap())
                 .and_then(Value::as_bool)
                 .unwrap_or(policy.enabled);
-            let enabled_since=tx.query_row("SELECT enabled_since FROM soul_category_baselines WHERE category=?1",[name.as_str().unwrap()],|r|r.get::<_,i64>(0)).optional().map_err(|_| "ledger_unreadable")?;
-            categories.push(CategorySetting { enabled, enabled_since, ..policy });
+            let enabled_since = tx
+                .query_row(
+                    "SELECT enabled_since FROM soul_category_baselines WHERE category=?1",
+                    [name.as_str().unwrap()],
+                    |r| r.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|_| "ledger_unreadable")?;
+            categories.push(CategorySetting {
+                enabled,
+                enabled_since,
+                ..policy
+            });
         }
-        let (mood_enabled, evolution_enabled) = tx.query_row(
-            "SELECT mood_enabled,evolution_enabled FROM soul_control WHERE singleton=1", [],
-            |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
-        ).map_err(|_| "ledger_unreadable")?;
+        let (mood_enabled, evolution_enabled) = tx
+            .query_row(
+                "SELECT mood_enabled,evolution_enabled FROM soul_control WHERE singleton=1",
+                [],
+                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .map_err(|_| "ledger_unreadable")?;
         Ok(SoulSettings {
             revision,
             enabled: enabled == 1,
@@ -165,38 +179,72 @@ pub fn update(
                 if !available {
                     return Err("capability_unavailable".into());
                 }
-                if toggle.enabled && stored.get(&name).and_then(Value::as_bool)!=Some(true) {
+                if toggle.enabled && stored.get(&name).and_then(Value::as_bool) != Some(true) {
                     tx.execute("INSERT INTO soul_category_baselines VALUES(?1,?2) ON CONFLICT(category) DO UPDATE SET enabled_since=max(enabled_since,excluded.enabled_since)",rusqlite::params![name,now]).map_err(|_| "ledger_write_failed")?;
                 }
                 stored.insert(name, json!(toggle.enabled));
             }
         }
         if input.evolution_enabled == Some(true) {
-            let was:bool=tx.query_row("SELECT evolution_enabled FROM soul_control WHERE singleton=1",[],|r|r.get(0)).map_err(|_|"ledger_unreadable")?;
+            let was: bool = tx
+                .query_row(
+                    "SELECT evolution_enabled FROM soul_control WHERE singleton=1",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|_| "ledger_unreadable")?;
             if !was {
-                tx.execute("DELETE FROM soul_evolution_pauses",[]).map_err(|_|"ledger_write_failed")?;
-                tx.execute("DELETE FROM soul_evidence",[]).map_err(|_|"ledger_write_failed")?;
+                tx.execute("DELETE FROM soul_evolution_pauses", [])
+                    .map_err(|_| "ledger_write_failed")?;
+                tx.execute("DELETE FROM soul_evidence", [])
+                    .map_err(|_| "ledger_write_failed")?;
                 tx.execute("INSERT INTO soul_domain_baselines VALUES('evolution',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_|"ledger_write_failed")?;
             }
-            tx.execute("UPDATE soul_control SET evolution_enabled=1 WHERE singleton=1",[]).map_err(|_|"ledger_write_failed")?;
+            tx.execute(
+                "UPDATE soul_control SET evolution_enabled=1 WHERE singleton=1",
+                [],
+            )
+            .map_err(|_| "ledger_write_failed")?;
         }
         if input.mood_enabled == Some(true) {
-            let was_enabled: bool = tx.query_row("SELECT mood_enabled FROM soul_control WHERE singleton=1",[],|row|row.get(0)).map_err(|_| "ledger_unreadable")?;
+            let was_enabled: bool = tx
+                .query_row(
+                    "SELECT mood_enabled FROM soul_control WHERE singleton=1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|_| "ledger_unreadable")?;
             if !was_enabled {
-                tx.execute("DELETE FROM soul_mood_snapshot",[]).map_err(|_| "ledger_write_failed")?;
-                tx.execute("DELETE FROM soul_events WHERE kind LIKE 'mood:%'",[]).map_err(|_| "ledger_write_failed")?;
+                tx.execute("DELETE FROM soul_mood_snapshot", [])
+                    .map_err(|_| "ledger_write_failed")?;
+                tx.execute("DELETE FROM soul_events WHERE kind LIKE 'mood:%'", [])
+                    .map_err(|_| "ledger_write_failed")?;
                 tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| "ledger_write_failed")?;
             }
-            tx.execute("UPDATE soul_control SET mood_enabled=1 WHERE singleton=1",[]).map_err(|_| "ledger_write_failed")?;
+            tx.execute(
+                "UPDATE soul_control SET mood_enabled=1 WHERE singleton=1",
+                [],
+            )
+            .map_err(|_| "ledger_write_failed")?;
         }
         if input.mood_enabled == Some(false) {
-            tx.execute("UPDATE soul_control SET mood_enabled=0 WHERE singleton=1", []).map_err(|_| "ledger_write_failed")?;
-            tx.execute("DELETE FROM soul_mood_snapshot", []).map_err(|_| "ledger_write_failed")?;
-            tx.execute("DELETE FROM soul_events WHERE kind LIKE 'mood:%'", []).map_err(|_| "ledger_write_failed")?;
+            tx.execute(
+                "UPDATE soul_control SET mood_enabled=0 WHERE singleton=1",
+                [],
+            )
+            .map_err(|_| "ledger_write_failed")?;
+            tx.execute("DELETE FROM soul_mood_snapshot", [])
+                .map_err(|_| "ledger_write_failed")?;
+            tx.execute("DELETE FROM soul_events WHERE kind LIKE 'mood:%'", [])
+                .map_err(|_| "ledger_write_failed")?;
             tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| "ledger_write_failed")?;
         }
         if input.evolution_enabled == Some(false) {
-            tx.execute("UPDATE soul_control SET evolution_enabled=0 WHERE singleton=1", []).map_err(|_| "ledger_write_failed")?;
+            tx.execute(
+                "UPDATE soul_control SET evolution_enabled=0 WHERE singleton=1",
+                [],
+            )
+            .map_err(|_| "ledger_write_failed")?;
         }
         let enabled_since = if (!enabled_old && enabled) || (paused_old && !paused) {
             Some(now)
@@ -243,8 +291,10 @@ pub fn clear(conn: &mut Connection, scopes: &[SoulDataScope], now: i64) -> Resul
         for scope in scopes {
             match scope {
                 SoulDataScope::Profile => {
-                    tx.execute("DELETE FROM soul_evidence",[]).map_err(|_|"ledger_write_failed")?;
-                    tx.execute("DELETE FROM soul_candidates WHERE kind='evolution'",[]).map_err(|_|"ledger_write_failed")?;
+                    tx.execute("DELETE FROM soul_evidence", [])
+                        .map_err(|_| "ledger_write_failed")?;
+                    tx.execute("DELETE FROM soul_candidates WHERE kind='evolution'", [])
+                        .map_err(|_| "ledger_write_failed")?;
                     tx.execute("INSERT INTO soul_domain_baselines VALUES('evolution',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_|"ledger_write_failed")?;
                     tx.execute("DELETE FROM soul_profiles", [])
                         .map_err(|_| "ledger_write_failed".to_string())?;
@@ -252,7 +302,8 @@ pub fn clear(conn: &mut Connection, scopes: &[SoulDataScope], now: i64) -> Resul
                         .map_err(|_| "ledger_write_failed".to_string())?;
                 }
                 SoulDataScope::OpenLoops => {
-                    tx.execute("DELETE FROM soul_topic_responses",[]).map_err(|_|"ledger_write_failed")?;
+                    tx.execute("DELETE FROM soul_topic_responses", [])
+                        .map_err(|_| "ledger_write_failed")?;
                     tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='pattern' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|"ledger_write_failed")?;
                     tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('open_loops',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=excluded.cleared_through",[now]).map_err(|_| "ledger_write_failed")?;
                     tx.execute("INSERT OR IGNORE INTO soul_candidate_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_candidates WHERE kind='open_loop'",[now]).map_err(|_| "ledger_write_failed")?;
@@ -263,7 +314,8 @@ pub fn clear(conn: &mut Connection, scopes: &[SoulDataScope], now: i64) -> Resul
                         .map_err(|_| "ledger_write_failed".to_string())?;
                 }
                 SoulDataScope::Proactive => {
-                    tx.execute("DELETE FROM soul_output_observations",[]).map_err(|_|"ledger_write_failed")?;
+                    tx.execute("DELETE FROM soul_output_observations", [])
+                        .map_err(|_| "ledger_write_failed")?;
                     tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('proactive',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=excluded.cleared_through",[now]).map_err(|_| "ledger_write_failed")?;
                     tx.execute("INSERT OR IGNORE INTO soul_delivery_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_proactive_ledger",[now]).map_err(|_| "ledger_write_failed")?;
                     tx.execute("DELETE FROM soul_proactive_ledger", [])
@@ -273,14 +325,18 @@ pub fn clear(conn: &mut Connection, scopes: &[SoulDataScope], now: i64) -> Resul
                         .map_err(|_| "ledger_write_failed".to_string())?;
                 }
                 SoulDataScope::Mood => {
-                tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| "ledger_write_failed")?;
+                    tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| "ledger_write_failed")?;
                     tx.execute("DELETE FROM soul_mood_snapshot", [])
                         .map_err(|_| "ledger_write_failed".to_string())?;
-                    tx.execute("DELETE FROM soul_events WHERE kind='mood' OR kind LIKE 'mood:%'", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                    tx.execute(
+                        "DELETE FROM soul_events WHERE kind='mood' OR kind LIKE 'mood:%'",
+                        [],
+                    )
+                    .map_err(|_| "ledger_write_failed".to_string())?;
                 }
                 SoulDataScope::History => {
-                    tx.execute("DELETE FROM soul_continuity_control",[]).map_err(|_|"ledger_write_failed")?;
+                    tx.execute("DELETE FROM soul_continuity_control", [])
+                        .map_err(|_| "ledger_write_failed")?;
                     tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='milestone' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|"ledger_write_failed")?;
                     tx.execute("DELETE FROM soul_history_baseline", [])
                         .map_err(|_| "ledger_write_failed".to_string())?;
@@ -379,14 +435,13 @@ mod tests {
         let mut conn = migrated();
         seed_active_message(&conn, "m1", "pending");
         get(&mut conn, 100).unwrap();
-        let mut toggles = Vec::new();
-        toggles.push(CategorySetting {
+        let toggles = vec![CategorySetting {
             category: ProactiveCategory::Greeting,
             enabled: true,
             available: true,
             enabled_since: None,
             daily_limit: 2,
-        });
+        }];
         update(
             &mut conn,
             &UpdateSoulSettingsInput {
@@ -438,13 +493,38 @@ mod tests {
 
     #[test]
     fn stale_revision_rejected_and_client_limits_never_override_policy() {
-        let mut conn=migrated();get(&mut conn,100).unwrap();
-        let mut input=UpdateSoulSettingsInput{expected_revision:9,enabled:Some(true),paused:None,categories:None,mood_enabled:None,evolution_enabled:None};
-        assert_eq!(update(&mut conn,&input,100).unwrap_err(),"revision_conflict");
-        input.expected_revision=1;input.categories=Some(vec![CategorySetting{category:ProactiveCategory::OpenLoop,enabled:true,available:false,enabled_since:Some(0),daily_limit:999}]);
-        update(&mut conn,&input,100).unwrap();
-        let settings=get(&mut conn,100).unwrap();let topic=settings.categories.iter().find(|row|row.category==ProactiveCategory::OpenLoop).unwrap();
-        assert!(topic.available);assert_eq!(topic.daily_limit,1);assert_eq!(topic.enabled_since,Some(100));
+        let mut conn = migrated();
+        get(&mut conn, 100).unwrap();
+        let mut input = UpdateSoulSettingsInput {
+            expected_revision: 9,
+            enabled: Some(true),
+            paused: None,
+            categories: None,
+            mood_enabled: None,
+            evolution_enabled: None,
+        };
+        assert_eq!(
+            update(&mut conn, &input, 100).unwrap_err(),
+            "revision_conflict"
+        );
+        input.expected_revision = 1;
+        input.categories = Some(vec![CategorySetting {
+            category: ProactiveCategory::OpenLoop,
+            enabled: true,
+            available: false,
+            enabled_since: Some(0),
+            daily_limit: 999,
+        }]);
+        update(&mut conn, &input, 100).unwrap();
+        let settings = get(&mut conn, 100).unwrap();
+        let topic = settings
+            .categories
+            .iter()
+            .find(|row| row.category == ProactiveCategory::OpenLoop)
+            .unwrap();
+        assert!(topic.available);
+        assert_eq!(topic.daily_limit, 1);
+        assert_eq!(topic.enabled_since, Some(100));
     }
 
     #[test]
@@ -542,19 +622,35 @@ mod atomic_switch_tests {
     use super::*;
     #[test]
     fn revocation_failure_does_not_commit_the_switch_or_revision() {
-        let mut conn=Connection::open_in_memory().unwrap();store::migrate(&mut conn).unwrap();get(&mut conn,100).unwrap();
-        conn.execute("UPDATE soul_control SET enabled=1",[]).unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        store::migrate(&mut conn).unwrap();
+        get(&mut conn, 100).unwrap();
+        conn.execute("UPDATE soul_control SET enabled=1", [])
+            .unwrap();
         conn.execute_batch("INSERT INTO soul_proactive_ledger(id,category,source_ref,dedupe_key,template_id,valid_from,expires_at,state,created_at) VALUES('m','greeting','{}','k','greeting',100,200,'shown',100); CREATE TRIGGER revoke_error BEFORE UPDATE OF state ON soul_proactive_ledger BEGIN SELECT RAISE(ABORT,'test'); END;").unwrap();
-        let result=update(&mut conn,&UpdateSoulSettingsInput{expected_revision:1,enabled:Some(false),paused:None,categories:None,mood_enabled:None,evolution_enabled:None},150);
+        let result = update(
+            &mut conn,
+            &UpdateSoulSettingsInput {
+                expected_revision: 1,
+                enabled: Some(false),
+                paused: None,
+                categories: None,
+                mood_enabled: None,
+                evolution_enabled: None,
+            },
+            150,
+        );
         assert!(result.is_err());
-        let state=get(&mut conn,150).unwrap();assert!(state.enabled);assert_eq!(state.revision,1);
+        let state = get(&mut conn, 150).unwrap();
+        assert!(state.enabled);
+        assert_eq!(state.revision, 1);
     }
     #[test]
     fn pause_only_accepts_explicit_direct_commands() {
-        assert_eq!(pause_intent("不要说话。"),Some(true));
-        assert_eq!(pause_intent("恢复主动消息"),Some(false));
-        assert_eq!(pause_intent("例如：不要说话"),None);
-        assert_eq!(pause_intent("他说不要说话"),None);
+        assert_eq!(pause_intent("不要说话。"), Some(true));
+        assert_eq!(pause_intent("恢复主动消息"), Some(false));
+        assert_eq!(pause_intent("例如：不要说话"), None);
+        assert_eq!(pause_intent("他说不要说话"), None);
     }
 }
 
@@ -563,71 +659,175 @@ mod mood_switch_tests {
     use super::*;
     #[test]
     fn disabling_mood_clears_scores_and_prevents_same_second_replay() {
-        let mut conn=Connection::open_in_memory().unwrap();store::migrate(&mut conn).unwrap();get(&mut conn,100).unwrap();
-        conn.execute("UPDATE soul_control SET mood_enabled=1",[]).unwrap();
-        let source=SourceRef{kind:"agent_task".into(),id:"a".into(),revision:1};
-        super::super::mood::event(&mut conn,"task_success",&source,100,100).unwrap();
-        assert!(get(&mut conn,100).unwrap().mood_enabled);
-        update(&mut conn,&UpdateSoulSettingsInput{expected_revision:1,enabled:None,paused:None,categories:None,mood_enabled:Some(false),evolution_enabled:None},200).unwrap();
-        assert!(!get(&mut conn,200).unwrap().mood_enabled);
-        assert_eq!(conn.query_row("SELECT count(*) FROM soul_mood_snapshot",[],|row|row.get::<_,i64>(0)).unwrap(),0);
-        conn.execute("UPDATE soul_control SET mood_enabled=1",[]).unwrap();
-        super::super::mood::event(&mut conn,"task_success",&source,200,300).unwrap();
-        assert_eq!(conn.query_row("SELECT count(*) FROM soul_events WHERE kind LIKE 'mood:%'",[],|row|row.get::<_,i64>(0)).unwrap(),0);
+        let mut conn = Connection::open_in_memory().unwrap();
+        store::migrate(&mut conn).unwrap();
+        get(&mut conn, 100).unwrap();
+        conn.execute("UPDATE soul_control SET mood_enabled=1", [])
+            .unwrap();
+        let source = SourceRef {
+            kind: "agent_task".into(),
+            id: "a".into(),
+            revision: 1,
+        };
+        super::super::mood::event(&mut conn, "task_success", &source, 100, 100).unwrap();
+        assert!(get(&mut conn, 100).unwrap().mood_enabled);
+        update(
+            &mut conn,
+            &UpdateSoulSettingsInput {
+                expected_revision: 1,
+                enabled: None,
+                paused: None,
+                categories: None,
+                mood_enabled: Some(false),
+                evolution_enabled: None,
+            },
+            200,
+        )
+        .unwrap();
+        assert!(!get(&mut conn, 200).unwrap().mood_enabled);
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM soul_mood_snapshot", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        conn.execute("UPDATE soul_control SET mood_enabled=1", [])
+            .unwrap();
+        super::super::mood::event(&mut conn, "task_success", &source, 200, 300).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM soul_events WHERE kind LIKE 'mood:%'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
     }
 }
 
 #[cfg(test)]
 mod mood_enable_tests {
     use super::*;
-    fn patch(revision:i64, enabled:bool) -> UpdateSoulSettingsInput {
-        UpdateSoulSettingsInput{expected_revision:revision,enabled:None,paused:None,categories:None,mood_enabled:Some(enabled),evolution_enabled:None}
+    fn patch(revision: i64, enabled: bool) -> UpdateSoulSettingsInput {
+        UpdateSoulSettingsInput {
+            expected_revision: revision,
+            enabled: None,
+            paused: None,
+            categories: None,
+            mood_enabled: Some(enabled),
+            evolution_enabled: None,
+        }
     }
     #[test]
     fn enable_starts_fresh_repeated_enable_preserves_state_and_scoped_clear_rebases() {
-        let mut conn=Connection::open_in_memory().unwrap(); store::migrate(&mut conn).unwrap(); get(&mut conn,100).unwrap();
-        update(&mut conn,&patch(1,true),200).unwrap();
-        let source=SourceRef{kind:"agent_task".into(),id:"a".into(),revision:1};
-        super::super::mood::event(&mut conn,"task_success",&source,199,201).unwrap();
-        assert_eq!(conn.query_row("SELECT count(*) FROM soul_events",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-        super::super::mood::event(&mut conn,"task_success",&source,201,201).unwrap();
-        update(&mut conn,&patch(2,true),202).unwrap();
-        assert_eq!(conn.query_row("SELECT count(*) FROM soul_events",[],|r|r.get::<_,i64>(0)).unwrap(),1);
-        clear(&mut conn,&[SoulDataScope::Mood],300).unwrap();
-        super::super::mood::event(&mut conn,"task_success",&source,201,301).unwrap();
-        assert_eq!(conn.query_row("SELECT count(*) FROM soul_events",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-        clear(&mut conn,&[SoulDataScope::All],400).unwrap();
-        assert!(!get(&mut conn,401).unwrap().mood_enabled);
+        let mut conn = Connection::open_in_memory().unwrap();
+        store::migrate(&mut conn).unwrap();
+        get(&mut conn, 100).unwrap();
+        update(&mut conn, &patch(1, true), 200).unwrap();
+        let source = SourceRef {
+            kind: "agent_task".into(),
+            id: "a".into(),
+            revision: 1,
+        };
+        super::super::mood::event(&mut conn, "task_success", &source, 199, 201).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM soul_events", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        super::super::mood::event(&mut conn, "task_success", &source, 201, 201).unwrap();
+        update(&mut conn, &patch(2, true), 202).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM soul_events", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        clear(&mut conn, &[SoulDataScope::Mood], 300).unwrap();
+        super::super::mood::event(&mut conn, "task_success", &source, 201, 301).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM soul_events", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        clear(&mut conn, &[SoulDataScope::All], 400).unwrap();
+        assert!(!get(&mut conn, 401).unwrap().mood_enabled);
     }
 }
 
 /// Per-category content cleanup retains the global and category quota bucket.
-pub fn clear_category(conn:&mut Connection,category:ProactiveCategory,revision:i64,now:i64)->Result<(),String>{
- let name=serde_json::to_value(category).map_err(|_|"invalid_category")?.as_str().ok_or("invalid_category")?.to_string();
- store::transaction(conn,|tx|{
-  if tx.execute("UPDATE soul_control SET revision=revision+1 WHERE singleton=1 AND revision=?1",[revision]).map_err(|_|"ledger_write_failed")?!=1{return Err("revision_conflict".into());}
-  tx.execute("INSERT INTO soul_category_baselines VALUES(?1,?2) ON CONFLICT(category) DO UPDATE SET enabled_since=max(enabled_since,excluded.enabled_since)",rusqlite::params![name,now]).map_err(|_|"ledger_write_failed")?;
-  tx.execute("INSERT OR IGNORE INTO soul_delivery_tombstones SELECT dedupe_key,source_ref,?2 FROM soul_proactive_ledger WHERE category=?1",rusqlite::params![name,now]).map_err(|_|"ledger_write_failed")?;
-  tx.execute("DELETE FROM soul_proactive_ledger WHERE category=?1",[&name]).map_err(|_|"ledger_write_failed")?;
-  tx.execute("DELETE FROM soul_backoff WHERE category=?1",[&name]).map_err(|_|"ledger_write_failed")?;
-  if category==ProactiveCategory::OutputFeedback{tx.execute("DELETE FROM soul_output_observations",[]).map_err(|_|"ledger_write_failed")?;}
-  Ok(())
- })
+pub fn clear_category(
+    conn: &mut Connection,
+    category: ProactiveCategory,
+    revision: i64,
+    now: i64,
+) -> Result<(), String> {
+    let name = serde_json::to_value(category)
+        .map_err(|_| "invalid_category")?
+        .as_str()
+        .ok_or("invalid_category")?
+        .to_string();
+    store::transaction(conn, |tx| {
+        if tx
+            .execute(
+                "UPDATE soul_control SET revision=revision+1 WHERE singleton=1 AND revision=?1",
+                [revision],
+            )
+            .map_err(|_| "ledger_write_failed")?
+            != 1
+        {
+            return Err("revision_conflict".into());
+        }
+        tx.execute("INSERT INTO soul_category_baselines VALUES(?1,?2) ON CONFLICT(category) DO UPDATE SET enabled_since=max(enabled_since,excluded.enabled_since)",rusqlite::params![name,now]).map_err(|_|"ledger_write_failed")?;
+        tx.execute("INSERT OR IGNORE INTO soul_delivery_tombstones SELECT dedupe_key,source_ref,?2 FROM soul_proactive_ledger WHERE category=?1",rusqlite::params![name,now]).map_err(|_|"ledger_write_failed")?;
+        tx.execute(
+            "DELETE FROM soul_proactive_ledger WHERE category=?1",
+            [&name],
+        )
+        .map_err(|_| "ledger_write_failed")?;
+        tx.execute("DELETE FROM soul_backoff WHERE category=?1", [&name])
+            .map_err(|_| "ledger_write_failed")?;
+        if category == ProactiveCategory::OutputFeedback {
+            tx.execute("DELETE FROM soul_output_observations", [])
+                .map_err(|_| "ledger_write_failed")?;
+        }
+        Ok(())
+    })
 }
 
 #[cfg(test)]
-mod quota_cleanup_tests{
- use super::*;
- #[test]
- fn category_and_all_cleanup_do_not_refund_quota_or_delete_business_topics(){
-  let mut conn=Connection::open_in_memory().unwrap();store::migrate(&mut conn).unwrap();get(&mut conn,100).unwrap();
-  conn.execute("INSERT INTO soul_quota VALUES(1,'2026-10-17','UTC',100,86500,2,'{\"greeting\":1,\"task_unresolved\":1}',100)",[]).unwrap();
-  conn.execute("INSERT INTO soul_proactive_ledger(id,category,source_ref,dedupe_key,template_id,valid_from,expires_at,state,created_at) VALUES('g','greeting','{\"kind\":\"app_event\",\"id\":\"event\",\"revision\":1}','g','greeting',100,1000,'pending',100)",[]).unwrap();
-  clear_category(&mut conn,ProactiveCategory::Greeting,1,101).unwrap();
-  assert_eq!(conn.query_row("SELECT count(*) FROM soul_proactive_ledger",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-  assert_eq!(conn.query_row("SELECT total_used FROM soul_quota",[],|r|r.get::<_,i64>(0)).unwrap(),2);
-  clear(&mut conn,&[SoulDataScope::All],102).unwrap();
-  assert_eq!(conn.query_row("SELECT total_used FROM soul_quota",[],|r|r.get::<_,i64>(0)).unwrap(),2);
-  assert!(!get(&mut conn,103).unwrap().enabled);
- }
+mod quota_cleanup_tests {
+    use super::*;
+    #[test]
+    fn category_and_all_cleanup_do_not_refund_quota_or_delete_business_topics() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        store::migrate(&mut conn).unwrap();
+        get(&mut conn, 100).unwrap();
+        conn.execute("INSERT INTO soul_quota VALUES(1,'2026-10-17','UTC',100,86500,2,'{\"greeting\":1,\"task_unresolved\":1}',100)",[]).unwrap();
+        conn.execute("INSERT INTO soul_proactive_ledger(id,category,source_ref,dedupe_key,template_id,valid_from,expires_at,state,created_at) VALUES('g','greeting','{\"kind\":\"app_event\",\"id\":\"event\",\"revision\":1}','g','greeting',100,1000,'pending',100)",[]).unwrap();
+        clear_category(&mut conn, ProactiveCategory::Greeting, 1, 101).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM soul_proactive_ledger", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT total_used FROM soul_quota", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        clear(&mut conn, &[SoulDataScope::All], 102).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT total_used FROM soul_quota", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert!(!get(&mut conn, 103).unwrap().enabled);
+    }
 }

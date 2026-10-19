@@ -329,10 +329,22 @@ fn reserve_quota(
         params![name, clock.unix_now], |row| row.get(0),
     ).optional().map_err(|_| "ledger_unreadable")?.unwrap_or(false);
     if backed_off {
-        let last: Option<i64> = tx.query_row("SELECT max(dispatching_at) FROM soul_proactive_ledger WHERE category=?1", [&name], |row| row.get(0)).map_err(|_| "ledger_unreadable")?;
-        if last.is_some_and(|at| clock.unix_now.saturating_sub(at) < COOLDOWN_SECONDS * 2) { return Ok(None); }
+        let last: Option<i64> = tx
+            .query_row(
+                "SELECT max(dispatching_at) FROM soul_proactive_ledger WHERE category=?1",
+                [&name],
+                |row| row.get(0),
+            )
+            .map_err(|_| "ledger_unreadable")?;
+        if last.is_some_and(|at| clock.unix_now.saturating_sub(at) < COOLDOWN_SECONDS * 2) {
+            return Ok(None);
+        }
     }
-    let category_limit = if backed_off { (message.category.daily_limit() / 2).max(1) } else { message.category.daily_limit() };
+    let category_limit = if backed_off {
+        (message.category.daily_limit() / 2).max(1)
+    } else {
+        message.category.daily_limit()
+    };
     if used >= category_limit as i64 {
         return Ok(None);
     }
@@ -392,7 +404,11 @@ pub fn recover_restart(conn: &mut Connection, now: i64) -> Result<u64, String> {
                 params![now],
             )
             .map_err(|_| "ledger_unreadable".to_string())?;
-        tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE state='shown'",[now]).map_err(|_| "ledger_unreadable")?;
+        tx.execute(
+            "UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE state='shown'",
+            [now],
+        )
+        .map_err(|_| "ledger_unreadable")?;
         Ok(u64::try_from(changed).unwrap_or(0))
     })
 }
@@ -526,16 +542,47 @@ mod tests {
 
     #[test]
     fn backoff_halves_category_quota_until_recovery_without_refunding_global_quota() {
-        let mut conn=migrated(); gate_on(&conn);
-        let mut cooldown=cooldown_ready();
-        store::transaction(&mut conn, |tx| queue(tx,message("a",ProactiveCategory::Greeting,"a",100,100000),100)).unwrap();
-        assert!(reserve(&mut conn,&mut cooldown,time(100,0)).unwrap().is_some());
-        store::transaction(&mut conn, |tx| queue(tx,message("b",ProactiveCategory::Greeting,"b",100,100000),100)).unwrap();
-        conn.execute("INSERT INTO soul_backoff VALUES('greeting',3,100,604900)",[]).unwrap();
-        assert!(reserve(&mut conn,&mut cooldown,time(14500,14400)).unwrap().is_none());
-        conn.execute("UPDATE soul_backoff SET recover_after=14500",[]).unwrap();
-        assert!(reserve(&mut conn,&mut cooldown,time(14500,14400)).unwrap().is_some());
-        assert_eq!(conn.query_row("SELECT total_used FROM soul_quota",[],|row|row.get::<_,i64>(0)).unwrap(),2);
+        let mut conn = migrated();
+        gate_on(&conn);
+        let mut cooldown = cooldown_ready();
+        store::transaction(&mut conn, |tx| {
+            queue(
+                tx,
+                message("a", ProactiveCategory::Greeting, "a", 100, 100000),
+                100,
+            )
+        })
+        .unwrap();
+        assert!(reserve(&mut conn, &mut cooldown, time(100, 0))
+            .unwrap()
+            .is_some());
+        store::transaction(&mut conn, |tx| {
+            queue(
+                tx,
+                message("b", ProactiveCategory::Greeting, "b", 100, 100000),
+                100,
+            )
+        })
+        .unwrap();
+        conn.execute(
+            "INSERT INTO soul_backoff VALUES('greeting',3,100,604900)",
+            [],
+        )
+        .unwrap();
+        assert!(reserve(&mut conn, &mut cooldown, time(14500, 14400))
+            .unwrap()
+            .is_none());
+        conn.execute("UPDATE soul_backoff SET recover_after=14500", [])
+            .unwrap();
+        assert!(reserve(&mut conn, &mut cooldown, time(14500, 14400))
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            conn.query_row("SELECT total_used FROM soul_quota", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
     }
 
     fn migrated() -> Connection {
@@ -1107,10 +1154,28 @@ pub fn event_allowed(
     if !enabled || paused || event_at < baseline {
         return Ok(false);
     }
-    let name=category_name(category);
-    let category_baseline:i64=tx.query_row("SELECT enabled_since FROM soul_category_baselines WHERE category=?1",[&name],|r|r.get(0)).optional().map_err(|_| "ledger_unreadable")?.unwrap_or(0);
-    let cleared:i64=tx.query_row("SELECT cleared_through FROM soul_domain_baselines WHERE domain='proactive'",[],|r|r.get(0)).optional().map_err(|_| "ledger_unreadable")?.unwrap_or(0);
-    if event_at<category_baseline || event_at<=cleared {return Ok(false);}
+    let name = category_name(category);
+    let category_baseline: i64 = tx
+        .query_row(
+            "SELECT enabled_since FROM soul_category_baselines WHERE category=?1",
+            [&name],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| "ledger_unreadable")?
+        .unwrap_or(0);
+    let cleared: i64 = tx
+        .query_row(
+            "SELECT cleared_through FROM soul_domain_baselines WHERE domain='proactive'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|_| "ledger_unreadable")?
+        .unwrap_or(0);
+    if event_at < category_baseline || event_at <= cleared {
+        return Ok(false);
+    }
     let categories: Vec<Value> = serde_json::from_str(&raw).map_err(|_| "ledger_unreadable")?;
     let name = serde_json::to_value(category).map_err(|_| "invalid_category")?;
     Ok(categories
@@ -1119,20 +1184,38 @@ pub fn event_allowed(
 }
 
 /// Only a continuous backend-timed visible interval counts as ignored.
-pub fn expire_visible(conn: &mut Connection, registry: &ShownRegistry, now: i64, monotonic: Instant) -> Result<usize, String> {
-    let mut shown=registry.0.lock().map_err(|_| "ledger_unreadable")?;
-    let due: Vec<String>=shown.iter().filter(|(_,at)| monotonic.saturating_duration_since(**at)>=Duration::from_secs(20)).map(|(id,_)|id.clone()).collect();
+pub fn expire_visible(
+    conn: &mut Connection,
+    registry: &ShownRegistry,
+    now: i64,
+    monotonic: Instant,
+) -> Result<usize, String> {
+    let mut shown = registry.0.lock().map_err(|_| "ledger_unreadable")?;
+    let due: Vec<String> = shown
+        .iter()
+        .filter(|(_, at)| monotonic.saturating_duration_since(**at) >= Duration::from_secs(20))
+        .map(|(id, _)| id.clone())
+        .collect();
     store::transaction(conn, |tx| {
         for id in &due {
-            let category: Option<String>=tx.query_row("SELECT category FROM soul_proactive_ledger WHERE id=?1 AND state='shown'",[id],|row|row.get(0)).optional().map_err(|_| "ledger_unreadable")?;
-            if let Some(category)=category {
+            let category: Option<String> = tx
+                .query_row(
+                    "SELECT category FROM soul_proactive_ledger WHERE id=?1 AND state='shown'",
+                    [id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|_| "ledger_unreadable")?;
+            if let Some(category) = category {
                 tx.execute("UPDATE soul_proactive_ledger SET state='ignored',receipt_at=?2,visible_seconds=visible_seconds+20 WHERE id=?1 AND state='shown'",params![id,now]).map_err(|_| "ledger_write_failed")?;
                 tx.execute("INSERT INTO soul_backoff(category,consecutive_ignored,last_ignored_at,recover_after) VALUES(?1,1,?2,?3) ON CONFLICT(category) DO UPDATE SET consecutive_ignored=CASE WHEN recover_after<=?2 THEN 1 ELSE consecutive_ignored+1 END,last_ignored_at=?2,recover_after=?3",params![category,now,now+7*DAY]).map_err(|_| "ledger_write_failed")?;
             }
         }
         Ok(())
     })?;
-    for id in &due { shown.remove(id); }
+    for id in &due {
+        shown.remove(id);
+    }
     Ok(due.len())
 }
 
@@ -1140,7 +1223,7 @@ pub fn expire_visible(conn: &mut Connection, registry: &ShownRegistry, now: i64,
 mod ignore_tests {
     use super::*;
     fn setup() -> (Connection, ShownRegistry, Instant) {
-        let mut conn=Connection::open_in_memory().unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
         store::migrate(&mut conn).unwrap();
         (conn, ShownRegistry::default(), Instant::now())
     }
@@ -1150,49 +1233,165 @@ mod ignore_tests {
     }
     #[test]
     fn receipt_write_failure_keeps_registry_consistent_with_disk() {
-        let (mut conn,registry,at)=setup();seed(&conn,&registry,"one",at);
+        let (mut conn, registry, at) = setup();
+        seed(&conn, &registry, "one", at);
         conn.execute_batch("CREATE TRIGGER fail_receipt BEFORE UPDATE ON soul_proactive_ledger BEGIN SELECT RAISE(ABORT,'test'); END;").unwrap();
-        assert!(acknowledge(&mut conn,&registry,&MessageReceipt{message_id:"one".into(),kind:ReceiptKind::Hidden,visible_seconds:0},at+Duration::from_secs(5),105).is_err());
+        assert!(acknowledge(
+            &mut conn,
+            &registry,
+            &MessageReceipt {
+                message_id: "one".into(),
+                kind: ReceiptKind::Hidden,
+                visible_seconds: 0
+            },
+            at + Duration::from_secs(5),
+            105
+        )
+        .is_err());
         assert!(registry.0.lock().unwrap().contains_key("one"));
-        conn.execute_batch("DROP TRIGGER fail_receipt; UPDATE soul_proactive_ledger SET state='dispatching';").unwrap();
+        conn.execute_batch(
+            "DROP TRIGGER fail_receipt; UPDATE soul_proactive_ledger SET state='dispatching';",
+        )
+        .unwrap();
         registry.0.lock().unwrap().clear();
         conn.execute_batch("CREATE TRIGGER fail_receipt BEFORE UPDATE ON soul_proactive_ledger BEGIN SELECT RAISE(ABORT,'test'); END;").unwrap();
-        assert!(acknowledge(&mut conn,&registry,&MessageReceipt{message_id:"one".into(),kind:ReceiptKind::Shown,visible_seconds:0},at,100).is_err());
+        assert!(acknowledge(
+            &mut conn,
+            &registry,
+            &MessageReceipt {
+                message_id: "one".into(),
+                kind: ReceiptKind::Shown,
+                visible_seconds: 0
+            },
+            at,
+            100
+        )
+        .is_err());
         assert!(registry.0.lock().unwrap().is_empty());
     }
     #[test]
     fn twenty_seconds_must_be_continuous_and_ignore_is_idempotent() {
-        let (mut conn,registry,at)=setup(); seed(&conn,&registry,"one",at);
-        assert_eq!(expire_visible(&mut conn,&registry,100,at+Duration::from_secs(19)).unwrap(),0);
-        acknowledge(&mut conn,&registry,&MessageReceipt{message_id:"one".into(),kind:ReceiptKind::Hidden,visible_seconds:999},at+Duration::from_secs(19),101).unwrap();
-        assert_eq!(expire_visible(&mut conn,&registry,200,at+Duration::from_secs(200)).unwrap(),0);
-        acknowledge(&mut conn,&registry,&MessageReceipt{message_id:"one".into(),kind:ReceiptKind::Shown,visible_seconds:999},at+Duration::from_secs(201),201).unwrap();
-        assert_eq!(expire_visible(&mut conn,&registry,220,at+Duration::from_secs(220)).unwrap(),0);
-        assert_eq!(expire_visible(&mut conn,&registry,221,at+Duration::from_secs(221)).unwrap(),1);
-        assert_eq!(expire_visible(&mut conn,&registry,222,at+Duration::from_secs(222)).unwrap(),0);
-        let row:(String,i64)=conn.query_row("SELECT state,visible_seconds FROM soul_proactive_ledger WHERE id='one'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
-        assert_eq!(row,("ignored".into(),39));
+        let (mut conn, registry, at) = setup();
+        seed(&conn, &registry, "one", at);
+        assert_eq!(
+            expire_visible(&mut conn, &registry, 100, at + Duration::from_secs(19)).unwrap(),
+            0
+        );
+        acknowledge(
+            &mut conn,
+            &registry,
+            &MessageReceipt {
+                message_id: "one".into(),
+                kind: ReceiptKind::Hidden,
+                visible_seconds: 999,
+            },
+            at + Duration::from_secs(19),
+            101,
+        )
+        .unwrap();
+        assert_eq!(
+            expire_visible(&mut conn, &registry, 200, at + Duration::from_secs(200)).unwrap(),
+            0
+        );
+        acknowledge(
+            &mut conn,
+            &registry,
+            &MessageReceipt {
+                message_id: "one".into(),
+                kind: ReceiptKind::Shown,
+                visible_seconds: 999,
+            },
+            at + Duration::from_secs(201),
+            201,
+        )
+        .unwrap();
+        assert_eq!(
+            expire_visible(&mut conn, &registry, 220, at + Duration::from_secs(220)).unwrap(),
+            0
+        );
+        assert_eq!(
+            expire_visible(&mut conn, &registry, 221, at + Duration::from_secs(221)).unwrap(),
+            1
+        );
+        assert_eq!(
+            expire_visible(&mut conn, &registry, 222, at + Duration::from_secs(222)).unwrap(),
+            0
+        );
+        let row: (String, i64) = conn
+            .query_row(
+                "SELECT state,visible_seconds FROM soul_proactive_ledger WHERE id='one'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("ignored".into(), 39));
     }
     #[test]
     fn write_failure_keeps_timer_and_does_not_spend_ignore() {
-        let (mut conn,registry,at)=setup();seed(&conn,&registry,"one",at);
+        let (mut conn, registry, at) = setup();
+        seed(&conn, &registry, "one", at);
         conn.execute_batch("CREATE TRIGGER fail_ignore BEFORE INSERT ON soul_backoff BEGIN SELECT RAISE(ABORT,'test'); END;").unwrap();
-        assert!(expire_visible(&mut conn,&registry,100,at+Duration::from_secs(20)).is_err());
+        assert!(expire_visible(&mut conn, &registry, 100, at + Duration::from_secs(20)).is_err());
         assert!(registry.0.lock().unwrap().contains_key("one"));
-        assert_eq!(conn.query_row("SELECT state FROM soul_proactive_ledger",[],|r|r.get::<_,String>(0)).unwrap(),"shown");
+        assert_eq!(
+            conn.query_row("SELECT state FROM soul_proactive_ledger", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "shown"
+        );
         conn.execute_batch("DROP TRIGGER fail_ignore").unwrap();
-        assert_eq!(expire_visible(&mut conn,&registry,101,at+Duration::from_secs(21)).unwrap(),1);
+        assert_eq!(
+            expire_visible(&mut conn, &registry, 101, at + Duration::from_secs(21)).unwrap(),
+            1
+        );
     }
     #[test]
     fn three_ignores_persist_and_response_or_seven_days_restore_category() {
-        let (mut conn,registry,at)=setup();
-        for i in 0..3 {seed(&conn,&registry,&format!("m{i}"),at);expire_visible(&mut conn,&registry,100+i,at+Duration::from_secs(20)).unwrap();}
-        assert_eq!(conn.query_row("SELECT consecutive_ignored FROM soul_backoff",[],|r|r.get::<_,i64>(0)).unwrap(),3);
-        seed(&conn,&registry,"reply",at);
-        acknowledge(&mut conn,&registry,&MessageReceipt{message_id:"reply".into(),kind:ReceiptKind::Responded,visible_seconds:0},at,200).unwrap();
-        assert_eq!(conn.query_row("SELECT count(*) FROM soul_backoff",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-        seed(&conn,&registry,"later",at);expire_visible(&mut conn,&registry,300,at+Duration::from_secs(20)).unwrap();
-        seed(&conn,&registry,"week",at);expire_visible(&mut conn,&registry,300+7*DAY,at+Duration::from_secs(20)).unwrap();
-        assert_eq!(conn.query_row("SELECT consecutive_ignored FROM soul_backoff",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+        let (mut conn, registry, at) = setup();
+        for i in 0..3 {
+            seed(&conn, &registry, &format!("m{i}"), at);
+            expire_visible(&mut conn, &registry, 100 + i, at + Duration::from_secs(20)).unwrap();
+        }
+        assert_eq!(
+            conn.query_row("SELECT consecutive_ignored FROM soul_backoff", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            3
+        );
+        seed(&conn, &registry, "reply", at);
+        acknowledge(
+            &mut conn,
+            &registry,
+            &MessageReceipt {
+                message_id: "reply".into(),
+                kind: ReceiptKind::Responded,
+                visible_seconds: 0,
+            },
+            at,
+            200,
+        )
+        .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM soul_backoff", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        seed(&conn, &registry, "later", at);
+        expire_visible(&mut conn, &registry, 300, at + Duration::from_secs(20)).unwrap();
+        seed(&conn, &registry, "week", at);
+        expire_visible(
+            &mut conn,
+            &registry,
+            300 + 7 * DAY,
+            at + Duration::from_secs(20),
+        )
+        .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT consecutive_ignored FROM soul_backoff", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
     }
 }

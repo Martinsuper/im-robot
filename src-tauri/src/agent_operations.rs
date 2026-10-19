@@ -240,27 +240,24 @@ mod tests {
         .unwrap();
         assert!(created);
         let (again, created) = scoped_mode("operation", true, || {
-            crate::calendar_service::checkpoint_calendar_event(std::slice::from_ref(&first), make_input())
+            crate::calendar_service::checkpoint_calendar_event(
+                std::slice::from_ref(&first),
+                make_input(),
+            )
         })
         .unwrap();
         assert!(!created);
         assert_eq!(first, again);
         let mut changed = first;
         changed.title = "用户已修改".into();
-        assert!(
-            scoped_mode("operation", true, || crate::calendar_service::checkpoint_calendar_event(
-                &[changed],
-                make_input()
-            ))
-            .is_err()
-        );
-        assert!(
-            scoped_mode("operation", true, || crate::calendar_service::checkpoint_calendar_event(
-                &[],
-                make_input()
-            ))
-            .is_err()
-        );
+        assert!(scoped_mode("operation", true, || {
+            crate::calendar_service::checkpoint_calendar_event(&[changed], make_input())
+        })
+        .is_err());
+        assert!(scoped_mode("operation", true, || {
+            crate::calendar_service::checkpoint_calendar_event(&[], make_input())
+        })
+        .is_err());
     }
 
     #[test]

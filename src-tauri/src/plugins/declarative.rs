@@ -8,8 +8,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tauri::{AppHandle, Manager};
-use wasmtime::{Engine, Linker, Module, Store};
-use wasmtime_wasi::WasiCtxBuilder;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,8 +88,18 @@ pub(crate) fn validate_declarative_plugin(
     if runtime == "wasm" && package.module.as_deref().unwrap_or("").is_empty() {
         return Err("WASM 插件必须指定 module 文件".to_string());
     }
+    if runtime == "wasm" && !cfg!(feature = "wasm-plugins") {
+        return Err("此构建未启用 WASM 插件".into());
+    }
     if runtime == "wasm" {
         let module = package.module.as_deref().unwrap_or("");
+        if Path::new(module).is_absolute()
+            || Path::new(module)
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err("WASM 模块路径不能越过插件目录".into());
+        }
         if !module.ends_with(".wasm") {
             return Err("WASM 插件 module 必须以 .wasm 结尾".to_string());
         }
@@ -122,15 +130,6 @@ pub(crate) fn execute_wasm_plugin(
     input: Value,
 ) -> Result<Value, String> {
     let module_name = package.module.as_deref().unwrap_or("plugin.wasm");
-    let module_path = directory.join(module_name);
-    if !module_path.exists() {
-        return Err(format!("WASM 插件模块不存在：{}", module_path.display()));
-    }
-
-    let engine = Engine::default();
-    let module = Module::from_file(&engine, &module_path).map_err(|e| e.to_string())?;
-    let mut linker = Linker::<wasmtime_wasi::p1::WasiP1Ctx>::new(&engine);
-    wasmtime_wasi::p1::add_to_linker_sync(&mut linker, |ctx| ctx).map_err(|e| e.to_string())?;
     let plugin_id = package.manifest.id.clone();
     let manifest = package.manifest.clone();
 
@@ -141,26 +140,8 @@ pub(crate) fn execute_wasm_plugin(
         "manifest": manifest,
     }))
     .map_err(|e| e.to_string())?;
-    let stdin = wasmtime_wasi::p2::pipe::MemoryInputPipe::new(stdin_payload);
-    let stdout = wasmtime_wasi::p2::pipe::MemoryOutputPipe::new(1024 * 1024);
-    let stderr = wasmtime_wasi::p2::pipe::MemoryOutputPipe::new(256 * 1024);
-
-    let wasi = WasiCtxBuilder::new()
-        .stdin(stdin)
-        .stdout(stdout.clone())
-        .stderr(stderr.clone())
-        .build_p1();
-    let mut store = Store::new(&engine, wasi);
-    let instance = linker
-        .instantiate(&mut store, &module)
-        .map_err(|e| e.to_string())?;
-    let start = instance
-        .get_typed_func::<(), ()>(&mut store, "_start")
-        .map_err(|e| e.to_string())?;
-    start.call(&mut store, ()).map_err(|e| e.to_string())?;
-
-    let stdout_text = String::from_utf8(stdout.contents().to_vec()).map_err(|e| e.to_string())?;
-    let stderr_text = String::from_utf8(stderr.contents().to_vec()).unwrap_or_default();
+    let (stdout_text, stderr_text) =
+        super::wasm_runtime::execute(directory, module_name, stdin_payload)?;
     let output = stdout_text.trim();
     if output.is_empty() {
         return Ok(json!({

@@ -45,6 +45,15 @@
       "summarize": "要約",
       "translate": "翻訳",
       "explain": "説明"
+    },
+    "error": {
+      "title": "ページを表示できません",
+      "description": "再試行するか再読み込みしてください。問題が続く場合は診断情報をコピーしてください。",
+      "retry": "再試行",
+      "reload": "再読み込み",
+      "copy": "診断情報をコピー",
+      "copied": "診断情報をコピーしました",
+      "copyFailed": "診断情報をコピーできませんでした。再試行してください。"
     }
   },
   "pet": {
@@ -165,7 +174,40 @@
     "foregroundAppEnabled": "有効",
     "foregroundAppPaused": "一時停止中",
     "languageLabel": "表示言語",
-    "sectionsAriaLabel": "設定セクション"
+    "sectionsAriaLabel": "設定セクション",
+    "feedback": {
+      "modelReady": "利用可能です",
+      "autostartReadFailed": "自動起動の状態を取得できませんでした",
+      "autostartSaveFailed": "自動起動の設定を保存できませんでした",
+      "previewSaved": "HTMLプレビューの設定を更新しました",
+      "previewFailed": "HTMLプレビューの設定を更新できませんでした",
+      "onboardingReset": "初期設定をリセットしました。パネルを開き直してください。",
+      "onboardingFailed": "初期設定をリセットできませんでした",
+      "shortcutSaved": "ショートカットを更新しました",
+      "shortcutFailed": "ショートカットを更新できませんでした。再試行してください。",
+      "clearFailed": "消去に失敗しました。データは削除されていません。",
+      "exportSaved": "データをエクスポートしました（APIキーは含みません）",
+      "exportFailed": "エクスポートに失敗しました。再試行してください。",
+      "notificationFailed": "通知の許可を要求できませんでした。再試行してください。",
+      "notificationSent": "テスト通知を送信しました。通知センターを確認してください。",
+      "testNotificationFailed": "テスト通知を送信できませんでした。再試行してください。",
+      "autoApproveEnabled": "次のタスクからコマンドを自動承認します",
+      "autoApproveDisabled": "次のタスクから毎回確認します",
+      "permissionFailed": "コマンドの権限を保存できませんでした",
+      "cleared": "{count}種類のデータを消去しました。バックアップはbackupsにあります。"
+    },
+    "connection": {
+      "configured": "APIキーを設定済み",
+      "dirty": "AI設定に未保存の変更があります",
+      "savedKey": "APIキーと設定を保存しました",
+      "savedNoKey": "設定を保存しました。APIキーは未設定です",
+      "savingFailed": "保存失敗",
+      "connecting": "接続中...",
+      "connected": "接続済み",
+      "empty": "接続しましたがモデルが見つかりません",
+      "failed": "接続失敗",
+      "idle": "接続をテストしていません"
+    }
   },
   "onboarding": {
     "title": "Piko へようこそ",
@@ -238,12 +280,21 @@
     "updateDownloadFailed": "アップデートのダウンロードに失敗しました"
   },
   "update": {
-    "available": "新しいバージョン {version} があります",
+    "available": "新しいバージョンがあります",
     "latest": "最新バージョンです",
-    "downloading": "アップデートをダウンロード中...",
+    "downloading": "ダウンロード中…",
     "downloadComplete": "ダウンロード完了",
     "downloadFailed": "ダウンロード失敗",
-    "restartPrompt": "アップデートをインストールするために再起動しますか？"
+    "restartPrompt": "アップデートをインストールするために再起動しますか？",
+    "checkFailed": "更新を確認できませんでした",
+    "versionInfo": "バージョン情報",
+    "checking": "更新を確認中…",
+    "check": "更新を確認",
+    "download": "更新をダウンロード",
+    "cancel": "ダウンロードをキャンセル",
+    "noAsset": "この環境用のインストーラーがありません。リリースページを開いてください。",
+    "openRelease": "ダウンロードページを開く",
+    "openFile": "ダウンロード済みファイルを開く"
   },
   "bubble": {
     "actionCancelled": "操作を取り消しました。",
@@ -598,7 +649,8 @@
       "themePeach": "ウォームピーチ",
       "themeSage": "セージグリーン",
       "timeoutLabel": "タイムアウト（秒）",
-      "waitingTest": "テスト待ち"
+      "waitingTest": "テスト待ち",
+      "providerLead": "サービスを選択して、必要な接続情報を入力してください。"
     },
     "status": {
       "aiChat": "AI チャット",
@@ -775,6 +827,37 @@
       "rollback": "このバージョンに戻す",
       "rollbackHint": "戻すと新しいバージョンを作り、提案を一時停止します。再開には演化を無効にしてから有効にしてください。",
       "rollbackConfirm": "この表現に戻しますか？手動の性格設定は保持します。"
+    }
+  },
+  "data": {
+    "snapshot": {
+      "title": "完全バックアップと復元",
+      "description": "会話、予定、記憶、ペットの成長を含みます。APIキー、ダウンロードしたモデル、作業フォルダーの元ファイルは含みません。実行中のタスクが終了してからお試しください。",
+      "create": "完全バックアップを作成",
+      "choose": "完全バックアップを復元…",
+      "chooseDirectory": "バックアップフォルダーを選択",
+      "saved": "完全バックアップを保存しました",
+      "savedDetails": "{count}個のファイルをバックアップしました：{directory}",
+      "confirmLabel": "復元の確認",
+      "confirmDescription": "{count}個のファイルを復元してPikoを再起動します。現在のデータは事前にバックアップされます。システムのカレンダーは変更されません。",
+      "confirm": "復元して再起動",
+      "cancel": "復元をキャンセル"
+    },
+    "diagnostics": {
+      "title": "バックグラウンドタスクの診断",
+      "refresh": "タスクの状態を更新",
+      "sqlite": "データベースロック待機（µs）",
+      "json": "ファイルロック待機（µs）"
+    },
+    "memory": {
+      "temporary": "記憶はこのセッションのみ保持され、再起動すると失われます。ディスク容量とデータフォルダーの権限を確認してください。"
+    },
+    "pet": {
+      "unavailable": "ペットのデータを保存できません",
+      "retry": "データを再読み込み"
+    },
+    "restore": {
+      "pending": "復元してPikoを再起動しています…"
     }
   }
 }

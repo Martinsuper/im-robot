@@ -1,27 +1,24 @@
+import { DataSettings } from "../DataSettings";
+import { connectionMessage, type ModelConnectionStatus } from "../modelConnectionStatus";
 import "./settings.css";
 import { SoulDiagnostics } from "../../soul/SoulDiagnostics";
 import { SoulSettings } from "../../soul/SoulSettings";
 import { useEffect, useRef, useState } from "react";
 import { BellRing, Info, MessageCircle, PawPrint, ShieldCheck, SlidersHorizontal, Volume2 } from "lucide-react";
-import { version as appVersion } from "../../../../package.json";
+import { useStableEvent } from "../../../hooks/useStableEvent";
+import { VersionSettings } from "../VersionSettings";
+import { useTranslation } from "../../i18n/I18nProvider";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { notificationPermissionLabel, type NotificationStatus } from "../notificationStatus";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { SettingsGroup } from "../PanelChrome";
 import { EmptyState, ErrorState } from "../../../components/feedback/States";
-import { useToast, type ToastTone } from "../../../components/feedback/toastStore";
+import { useToast } from "../../../components/feedback/toastStore";
 import { toUserMessage } from "../../../lib/errors";
-import { useAutoSave } from "../../../hooks/useAutoSave";
+import { usePreferenceDrafts } from "../usePreferenceDrafts";
 import { useAppSettings } from "../settingsStore";
-import {
-  isWorkRhythmDraftValid,
-  toPreferencesDraft,
-  toWorkRhythmDraft,
-  type PreferencesDraft,
-  type WorkRhythmDraft,
-} from "../settingsDrafts";
+
 import {
   loadGrowthSnapshot,
   loadInteractionStats,
@@ -37,7 +34,6 @@ import type {
   SpeechModelDownloadProgress,
   SpeechModelStatus,
   Theme,
-  UpdateStatus,
 } from "../../../types/appTypes";
 import {
   clearCustomPetImagePath,
@@ -55,17 +51,6 @@ import {
 import { isTauriRuntime, runCommand } from "../../app/appRuntime";
 
 /**
- * 瞬时状态文案 → Toast 语气。
- * Why 用关键字集中判断，而不是让 20 个写入点各自选 tone：逐处改造既容易漏，
- * 也会把语气逻辑撒满整个文件。
- */
-function toneFromStatus(text: string, fallback: ToastTone = "info"): ToastTone {
-  if (/失败|错误|异常|无法/.test(text)) return "error";
-  if (/已保存|已同步|已可用|已是最新|下载完成|已更新|已配置/.test(text)) return "success";
-  return fallback;
-}
-
-/**
  * 「设置」Tab（05 模块）。
  *
  * 只负责设置本身：分组、控件、即时保存。面板外壳（导航 / 主题 / 引导门禁）与
@@ -77,27 +62,13 @@ function toneFromStatus(text: string, fallback: ToastTone = "info"): ToastTone {
  */
 export function SettingsTab() {
   const toast = useToast();
+  const { t } = useTranslation();
+  const statusLabels = useStableEvent(() => t);
   const { settings, applyServer } = useAppSettings();
-  const autoSave = useAutoSave();
 
-  // 偏好与休息提醒改为「草稿 + 已保存基线」两个来源：
-  // 只有服务端返回值会更新基线，用户改动只动草稿，自动保存因此不会误判。
-  const [preferences, setPreferences] = useState<PreferencesDraft>(() => toPreferencesDraft(settings));
-  const preferencesRef = useRef(preferences);
-  const savedPreferencesRef = useRef(preferences);
-  const { companionName, theme, sensingPaused } = preferences;
-  const [workRhythm, setWorkRhythm] = useState<WorkRhythmDraft>(() => toWorkRhythmDraft(settings));
-  const workRhythmRef = useRef(workRhythm);
-  const savedWorkRhythmRef = useRef(workRhythm);
-  const {
-    breakRemindersEnabled,
-    breakReminderIntervalMinutes,
-    breakReminderCooldownMinutes,
-    breakReminderQuietHoursEnabled,
-    breakReminderQuietHoursStart,
-    breakReminderQuietHoursEnd,
-  } = workRhythm;
-
+  const { companionName, theme, sensingPaused, breakRemindersEnabled, breakReminderIntervalMinutes,
+    breakReminderCooldownMinutes, breakReminderQuietHoursEnabled, breakReminderQuietHoursStart,
+    breakReminderQuietHoursEnd, updatePreferences, updateWorkRhythm } = usePreferenceDrafts(settings);
   const [quietMode, setQuietMode] = useState<QuietMode>(settings.quietMode);
   const [aiSettings, setAiSettings] = useState<AiSettings>(settings.ai);
   const [agentAutoApproveCommands, setAgentAutoApproveCommands] = useState(settings.agentAutoApproveCommands ?? false);
@@ -108,7 +79,8 @@ export function SettingsTab() {
   const [apiKeyClearRequested, setApiKeyClearRequested] = useState(false);
   const [savedAiSettings, setSavedAiSettings] = useState<AiSettings>(settings.ai);
   const [savedHasApiKey, setSavedHasApiKey] = useState(settings.hasApiKey);
-  const [connectionStatus, setConnectionStatus] = useState("尚未测试连接");
+  const [connectionStatus, setConnectionStatus] = useState<ModelConnectionStatus>({ kind: "idle" });
+  const connectionText = connectionMessage(connectionStatus, t);
   const [isSavingAi, setIsSavingAi] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
@@ -122,15 +94,9 @@ export function SettingsTab() {
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [notificationQueryError, setNotificationQueryError] = useState("");
   const [screenCapturePermission, setScreenCapturePermission] = useState("截图时按需申请");
-  const [preferencesStatus, setPreferencesStatus] = useState("");
-  const [updateStatus, setUpdateStatus] = useState("");
-  const [updateUrl, setUpdateUrl] = useState("");
-  const [downloadedUpdatePath, setDownloadedUpdatePath] = useState("");
-  const [isDownloadingUpdate, setIsDownloadingUpdate] = useState(false);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const [speechModelProgress, setSpeechModelProgress] = useState<Record<string, SpeechModelDownloadProgress>>({});
   const [downloadingSpeechModelId, setDownloadingSpeechModelId] = useState("");
-  const [speechModelNotice, setSpeechModelNotice] = useState("");
   const [externalPlugins, setExternalPlugins] = useState<InstalledPlugin[]>([]);
   const [interactionStats, setInteractionStats] = useState<InteractionStats>(() => loadInteractionStats());
   const [growthSnapshot, setGrowthSnapshot] = useState<GrowthSnapshot>(() => loadGrowthSnapshot());
@@ -154,12 +120,6 @@ export function SettingsTab() {
     const isFirstLoad = appliedSettingsRef.current === null;
     appliedSettingsRef.current = settings;
 
-    if (isFirstLoad || preferencesRef.current === savedPreferencesRef.current) {
-      applyPreferences(settings);
-    }
-    if (isFirstLoad || workRhythmRef.current === savedWorkRhythmRef.current) {
-      applyWorkRhythm(settings);
-    }
     setQuietMode(settings.quietMode);
     setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
     setAgentAutoApproveCommands(settings.agentAutoApproveCommands ?? false);
@@ -168,27 +128,9 @@ export function SettingsTab() {
       setAiSettings(settings.ai);
       setSavedAiSettings(settings.ai);
       setSavedHasApiKey(settings.hasApiKey);
-      setConnectionStatus(settings.hasApiKey ? "已配置密钥" : "等待测试");
+      setConnectionStatus({ kind: settings.hasApiKey ? "configured" : "idle" });
     }
   }, [settings]);
-
-  /**
-   * 瞬时状态 → Toast 桥接。
-   * 这 3 个 state 只用于一次性反馈（已保存 / 失败 / 正在下载…），没有内联渲染点。
-   */
-  useEffect(() => {
-    const channels = [
-      { value: updateStatus, tone: toneFromStatus(updateStatus), reset: () => setUpdateStatus("") },
-      { value: preferencesStatus, tone: toneFromStatus(preferencesStatus), reset: () => setPreferencesStatus("") },
-      { value: speechModelNotice, tone: toneFromStatus(speechModelNotice, "success"), reset: () => setSpeechModelNotice("") },
-    ];
-    const pending = channels.filter((channel) => channel.value);
-    if (!pending.length) return;
-    for (const channel of pending) {
-      toast.show({ message: channel.value, tone: channel.tone });
-      channel.reset();
-    }
-  }, [preferencesStatus, speechModelNotice, toast, updateStatus]);
 
   // 本 Tab 自己持有的两段数据：语音模型（高级 → 语音）与外部插件（高级 → 插件）。
   useEffect(() => {
@@ -201,7 +143,7 @@ export function SettingsTab() {
       .catch(() => setScreenCapturePermission("读取失败"));
     if (isTauriRuntime) {
       void isEnabled().then(setAutostartEnabled).catch((error) => {
-        setPreferencesStatus(`开机启动状态读取失败：${toUserMessage(error)}`);
+        toast.error(`${statusLabels()("settings.feedback.autostartReadFailed", "开机启动状态读取失败")}：${toUserMessage(error)}`);
       });
       void refreshNotificationStatus();
     }
@@ -233,79 +175,7 @@ export function SettingsTab() {
       void unlistenGrowth.then((dispose) => dispose()).catch(() => undefined);
       window.removeEventListener("storage", refreshInteraction);
     };
-  }, []);
-
-  /**
-   * 服务端返回的设置是唯一权威值（00 §5.8）：只有这里会推进「已保存基线」。
-   *
-   * 不调 `applyServer`：草稿本来就是从同一份 `AppSettings` 收敛出来的，再广播一次
-   * 会让 store 重新 publish 同一个对象，从而把上面那条 effect 又唤醒一轮。写入命令
-   * 都已在服务端落库，其它 Tab 由 `settings-updated` 事件驱动。
-   */
-  function applyPreferences(next: AppSettings) {
-    const draft = toPreferencesDraft(next);
-    savedPreferencesRef.current = draft;
-    preferencesRef.current = draft;
-    setPreferences(draft);
-  }
-
-  function applyWorkRhythm(next: AppSettings) {
-    const draft = toWorkRhythmDraft(next);
-    savedWorkRhythmRef.current = draft;
-    workRhythmRef.current = draft;
-    setWorkRhythm(draft);
-  }
-
-  function updatePreferences(patch: Partial<PreferencesDraft>) {
-    const next = { ...preferencesRef.current, ...patch };
-    preferencesRef.current = next;
-    setPreferences(next);
-    // update_preferences 是整组替换，必须带上组内全部字段，不能只传改动的那个。
-    autoSave.schedule(
-      () =>
-        runCommand<AppSettings>("update_preferences", { input: next }, {
-          ...defaultAppSettings,
-          ...next,
-          ai: aiSettings,
-        }),
-      {
-        rollback: () => {
-          const saved = savedPreferencesRef.current;
-          preferencesRef.current = saved;
-          setPreferences(saved);
-        },
-        onSuccess: applyPreferences,
-        errorFallback: "个性化设置保存失败，请重试。",
-      },
-    );
-  }
-
-  function updateWorkRhythm(patch: Partial<WorkRhythmDraft>) {
-    const next = { ...workRhythmRef.current, ...patch };
-    workRhythmRef.current = next;
-    setWorkRhythm(next);
-    if (!isWorkRhythmDraftValid(next)) {
-      autoSave.cancel();
-      return;
-    }
-    autoSave.schedule(
-      () =>
-        runCommand<AppSettings>("update_work_rhythm_preferences", { input: next }, {
-          ...defaultAppSettings,
-          ...next,
-          ai: aiSettings,
-        }),
-      {
-        rollback: () => {
-          const saved = savedWorkRhythmRef.current;
-          workRhythmRef.current = saved;
-          setWorkRhythm(saved);
-        },
-        onSuccess: applyWorkRhythm,
-        errorFallback: "休息提醒设置保存失败，请重试。",
-      },
-    );
-  }
+  }, [toast, statusLabels]);
 
   function updateQuietMode(mode: QuietMode) {
     setQuietMode(mode);
@@ -318,7 +188,7 @@ export function SettingsTab() {
 
   function updateAiField<Key extends keyof AiSettings>(key: Key, value: AiSettings[Key]) {
     setAiSettings((current) => ({ ...current, [key]: value }));
-    setConnectionStatus("有未保存的 AI 设置");
+    setConnectionStatus({ kind: "dirty" });
   }
 
   function updateProvider(provider: string) {
@@ -334,7 +204,7 @@ export function SettingsTab() {
         ...(canApplyPreset && preset ? { baseUrl: preset.baseUrl, model: preset.model } : {}),
       };
     });
-    setConnectionStatus("有未保存的 AI 设置");
+    setConnectionStatus({ kind: "dirty" });
   }
 
   async function saveAiSettings() {
@@ -355,7 +225,7 @@ export function SettingsTab() {
       setSavedHasApiKey(next.hasApiKey);
       setApiKey("");
       setApiKeyClearRequested(false);
-      setConnectionStatus(next.hasApiKey ? "已配置密钥，设置已保存" : "设置已保存，未配置密钥");
+      setConnectionStatus({ kind: next.hasApiKey ? "savedKey" : "savedNoKey" });
       return next;
     } finally {
       setIsSavingAi(false);
@@ -372,7 +242,7 @@ export function SettingsTab() {
     try {
       await saveAiSettings();
     } catch (error) {
-      setConnectionStatus(`保存失败：${toUserMessage(error)}`);
+      setConnectionStatus({ kind: "savingFailed", detail: toUserMessage(error) });
     }
   }
 
@@ -391,16 +261,15 @@ export function SettingsTab() {
   }
 
   async function downloadSpeechModel(modelId: string) {
-    setSpeechModelNotice("");
     setDownloadingSpeechModelId(modelId);
     try {
       const model = await runCommand<SpeechModelStatus>("download_speech_model", {
         input: { modelId },
       });
       setSpeechModels((current) => current.map((item) => (item.id === model.id ? model : item)));
-      setSpeechModelNotice(`${model.name} 已可用`);
+      toast.success(`${model.name} ${t("settings.feedback.modelReady", "已可用")}`);
     } catch (error) {
-      setSpeechModelNotice(toUserMessage(error));
+      toast.error(toUserMessage(error));
     } finally {
       setDownloadingSpeechModelId("");
       void loadSpeechModels();
@@ -410,16 +279,16 @@ export function SettingsTab() {
   /** 动作型提交：AI 参数是唯一需要点按钮才生效的一组（05 §1「没有保存按钮」的例外）。 */
   async function testConnection() {
     setIsTesting(true);
-    setConnectionStatus("正在连接...");
+    setConnectionStatus({ kind: "connecting" });
     try {
       await saveAiSettings();
       const models = await runCommand<ModelInfo[]>("list_models", undefined, [
         { id: aiSettings.model },
       ]);
       const modelNames = models.map((model) => model.id).join("、");
-      setConnectionStatus(models.length ? `已连接：${modelNames}` : "已连接，未发现模型");
+      setConnectionStatus({ kind: models.length ? "connected" : "empty", detail: modelNames });
     } catch (error) {
-      setConnectionStatus(`连接失败：${toUserMessage(error)}`);
+      setConnectionStatus({ kind: "failed", detail: toUserMessage(error) });
     } finally {
       setIsTesting(false);
     }
@@ -458,9 +327,9 @@ export function SettingsTab() {
     try {
       await runCommand("update_global_shortcut", { shortcut: next });
       setShortcutDraft(null);
-      toast.success("快捷键已更新");
+      toast.success(t("settings.feedback.shortcutSaved", "快捷键已更新"));
     } catch (error) {
-      toast.error(toUserMessage(error, "快捷键更新失败，请重试。"));
+      toast.error(toUserMessage(error, t("settings.feedback.shortcutFailed", "快捷键更新失败，请重试。")));
       setShortcutDraft(null);
     } finally {
       setIsSavingShortcut(false);
@@ -475,14 +344,14 @@ export function SettingsTab() {
         cleared: [],
       });
       toast.show({
-        message: `已清空 ${result?.cleared.length ?? 0} 类数据，备份在 backups 目录`,
+        message: t("settings.feedback.cleared", "已清空 {count} 类数据，备份在 backups 目录").replace("{count}", String(result?.cleared.length ?? 0)),
         tone: "success",
       });
       setConfirmClear(false);
       // 记录 Tab 监听 memos-updated / chat-history-updated，会自己刷新
 
     } catch (error) {
-      toast.error(toUserMessage(error, "清空失败，未做任何删除。"));
+      toast.error(toUserMessage(error, t("settings.feedback.clearFailed", "清空失败，未做任何删除。")));
     } finally {
       setIsClearing(false);
     }
@@ -496,9 +365,9 @@ export function SettingsTab() {
       });
       if (!path) return;
       await runCommand("export_to_file", { filePath: path });
-      toast.show({ message: "数据已导出（不含 API Key）", tone: "success" });
+      toast.show({ message: t("settings.feedback.exportSaved", "数据已导出（不含 API Key）"), tone: "success" });
     } catch (error) {
-      toast.error(toUserMessage(error, "导出失败，请重试。"));
+      toast.error(toUserMessage(error, t("settings.feedback.exportFailed", "导出失败，请重试。")));
     }
   }
 
@@ -511,7 +380,7 @@ export function SettingsTab() {
       }
       setAutostartEnabled(!autostartEnabled);
     } catch (error) {
-      setPreferencesStatus(`开机启动设置失败：${toUserMessage(error)}`);
+      toast.error(`${t("settings.feedback.autostartSaveFailed", "开机启动设置失败")}：${toUserMessage(error)}`);
     }
   }
 
@@ -534,7 +403,7 @@ export function SettingsTab() {
       setNotificationDetails(status);
       setNotificationPermission(notificationPermissionLabel(status));
     } catch (error) {
-      toast.error(toUserMessage(error, "通知权限申请失败，请重试。"));
+      toast.error(toUserMessage(error, t("settings.feedback.notificationFailed", "通知权限申请失败，请重试。")));
     } finally { setNotificationBusy(false); }
   }
 
@@ -542,9 +411,9 @@ export function SettingsTab() {
     setNotificationBusy(true);
     try {
       await runCommand("send_test_notification");
-      toast.success("测试通知已提交，请检查屏幕右上角或通知中心。");
+      toast.success(t("settings.feedback.notificationSent", "测试通知已提交，请检查屏幕右上角或通知中心。"));
     } catch (error) {
-      toast.error(toUserMessage(error, "测试通知发送失败，请重试。"));
+      toast.error(toUserMessage(error, t("settings.feedback.testNotificationFailed", "测试通知发送失败，请重试。")));
     } finally {
       await refreshNotificationStatus();
       setNotificationBusy(false);
@@ -559,10 +428,10 @@ export function SettingsTab() {
         ...settings, agentAutoApproveCommands: enabled,
       });
       applyServer(next);
-      toast.success(enabled ? "已开启命令自动批准，下次任务起生效" : "已恢复逐次确认，下次任务起生效");
+      toast.success(enabled ? t("settings.feedback.autoApproveEnabled", "已开启命令自动批准，下次任务起生效") : t("settings.feedback.autoApproveDisabled", "已恢复逐次确认，下次任务起生效"));
     } catch (error) {
       setAgentAutoApproveCommands(settings.agentAutoApproveCommands ?? false);
-      toast.error(toUserMessage(error, "命令权限设置保存失败"));
+      toast.error(toUserMessage(error, t("settings.feedback.permissionFailed", "命令权限设置保存失败")));
     } finally {
       setSavingCommandPermission(false);
     }
@@ -576,61 +445,9 @@ export function SettingsTab() {
         { ...defaultAppSettings, htmlPreviewEnabled: enabled, ai: aiSettings },
       );
       setHtmlPreviewEnabled(next.htmlPreviewEnabled);
-      setPreferencesStatus("HTML 预览插件已更新");
+      toast.success(t("settings.feedback.previewSaved", "HTML 预览插件已更新"));
     } catch (error) {
-      setPreferencesStatus(`HTML 预览插件更新失败：${toUserMessage(error)}`);
-    }
-  }
-
-  async function checkForUpdates() {
-    setUpdateStatus("正在检查更新...");
-    setUpdateUrl("");
-    setDownloadedUpdatePath("");
-    try {
-      const update = await runCommand<UpdateStatus>("check_for_updates_extended", undefined, {
-        currentVersion: "0.1.0",
-        latestVersion: "0.1.0",
-        available: false,
-        releaseUrl: "",
-        releaseNotes: null,
-        downloadUrl: null,
-        assetName: null,
-      });
-      setUpdateStatus(update.available ? `发现新版本：${update.latestVersion}` : `已是最新版本：${update.currentVersion}`);
-      setUpdateUrl(update.releaseUrl);
-    } catch (error) {
-      setUpdateStatus(`检查更新失败：${toUserMessage(error)}`);
-    }
-  }
-
-  async function downloadUpdate() {
-    if (!updateUrl) return;
-    setIsDownloadingUpdate(true);
-    setUpdateStatus("正在下载更新...");
-    try {
-      const update = await runCommand<UpdateStatus>("check_for_updates_extended", undefined, {
-        currentVersion: "0.1.0",
-        latestVersion: "0.1.0",
-        available: false,
-        releaseUrl: updateUrl,
-        releaseNotes: null,
-        downloadUrl: null,
-        assetName: null,
-      });
-      if (!update.downloadUrl) {
-        setUpdateStatus("未找到可下载的安装包，请打开发布页手动下载。");
-        return;
-      }
-      const downloaded = await runCommand<{ filePath: string; fileName: string; downloadedBytes: number }>(
-        "download_update_asset",
-        { downloadUrl: update.downloadUrl, assetName: update.assetName },
-      );
-      setDownloadedUpdatePath(downloaded.filePath);
-      setUpdateStatus(`下载完成：${downloaded.fileName}`);
-    } catch (error) {
-      setUpdateStatus(`更新下载失败：${toUserMessage(error)}`);
-    } finally {
-      setIsDownloadingUpdate(false);
+      toast.error(`${t("settings.feedback.previewFailed", "HTML 预览插件更新失败")}：${toUserMessage(error)}`);
     }
   }
 
@@ -642,9 +459,9 @@ export function SettingsTab() {
         companionName,
         ai: aiSettings,
       });
-      setPreferencesStatus("引导已重置，重新打开面板后生效。");
+      toast.success(t("settings.feedback.onboardingReset", "引导已重置，重新打开面板后生效。"));
     } catch (error) {
-      setPreferencesStatus(`重置引导失败：${toUserMessage(error)}`);
+      toast.error(`${t("settings.feedback.onboardingFailed", "重置引导失败")}：${toUserMessage(error)}`);
     }
   }
 
@@ -838,7 +655,7 @@ export function SettingsTab() {
                 onChange={(event) => {
                   setApiKey(event.currentTarget.value);
                   setApiKeyClearRequested(false);
-                  setConnectionStatus("有未保存的 AI 设置");
+                  setConnectionStatus({ kind: "dirty" });
                 }}
                 placeholder={savedHasApiKey ? "已配置密钥，输入新密钥可替换" : "本地 Ollama 可留空"}
           />
@@ -853,7 +670,7 @@ export function SettingsTab() {
                 onClick={() => {
                   setApiKey("");
                   setApiKeyClearRequested(true);
-                  setConnectionStatus("有未保存的 AI 设置");
+                  setConnectionStatus({ kind: "dirty" });
                 }}
               >
                 清除已保存的 API Key
@@ -902,14 +719,15 @@ export function SettingsTab() {
               </button>
             </div>
             {hasUnsavedAiSettings() && <p className="settings-note">模型设置有未保存修改</p>}
-            {connectionStatus.startsWith("连接失败") ? (
+            {settings.credentialError && <p role="alert">{settings.credentialError}</p>}
+          {connectionStatus.kind === "failed" ? (
               <ErrorState
-                message={connectionStatus}
+                message={connectionText}
                 onRetry={() => void testConnection()}
-                onDismiss={() => setConnectionStatus("尚未测试连接")}
+                onDismiss={() => setConnectionStatus({ kind: "idle" })}
               />
             ) : (
-              <p className="feedback-status">{connectionStatus}</p>
+              <p className="feedback-status">{connectionText}</p>
             )}
           </div>
         </section>
@@ -1104,6 +922,7 @@ export function SettingsTab() {
         </section>
       </SettingsGroup>
 
+      <DataSettings />
       <SoulSettings />
       <SoulDiagnostics />
 
@@ -1118,32 +937,7 @@ export function SettingsTab() {
           </div>
         </section>
 
-        <section className="panel-card">
-          <div className="section-heading">
-            <div>
-              <h2>版本信息</h2>
-            </div>
-            <div className="section-heading__actions">
-              <button type="button" onClick={() => void checkForUpdates()}>
-                检查更新
-              </button>
-              {updateUrl && <button type="button" disabled={isDownloadingUpdate} onClick={() => void downloadUpdate()}>
-                {isDownloadingUpdate ? "正在下载..." : "下载更新"}
-              </button>}
-            </div>
-          </div>
-          <p className="settings-note">Piko Desktop Companion · v{appVersion}</p>
-          {updateUrl && (
-            <button className="release-link" type="button" onClick={() => void openUrl(updateUrl)}>
-              打开下载页
-            </button>
-          )}
-          {downloadedUpdatePath && (
-            <button className="release-link" type="button" onClick={() => void openPath(downloadedUpdatePath)}>
-              打开已下载文件
-            </button>
-          )}
-        </section>
+        <VersionSettings />
 
         <section className="panel-card">
           <h2>重新运行引导</h2>

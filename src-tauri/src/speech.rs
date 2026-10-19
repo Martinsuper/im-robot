@@ -2,17 +2,21 @@
 use crate::common::parse_data_url;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
+#[cfg(feature = "speech-recognition")]
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
+#[cfg(feature = "speech-recognition")]
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::sync::Mutex;
+#[cfg(feature = "speech-recognition")]
 use std::time::Duration;
 use tauri::AppHandle;
+#[cfg(feature = "speech-recognition")]
 use tauri::Emitter;
 use tauri::Manager;
 use tauri::State;
@@ -49,6 +53,7 @@ pub(crate) struct DownloadSpeechModelInput {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(feature = "speech-recognition")]
 pub(crate) struct SpeechModelDownloadProgress {
     pub(crate) model_id: String,
     pub(crate) downloaded_bytes: u64,
@@ -78,6 +83,7 @@ pub(crate) fn speech_model_definitions() -> &'static [SpeechModelDefinition] {
     }]
 }
 
+#[cfg(feature = "speech-recognition")]
 pub(crate) fn speech_model_definition(model_id: &str) -> Option<&'static SpeechModelDefinition> {
     speech_model_definitions()
         .iter()
@@ -225,6 +231,7 @@ pub(crate) fn resample_to_16khz(sample_rate: u32, samples: &[f32]) -> Vec<f32> {
     output
 }
 
+#[cfg(feature = "speech-recognition")]
 pub(crate) fn transcribe_with_sense_voice(
     model_path: PathBuf,
     tokens_path: PathBuf,
@@ -341,12 +348,16 @@ pub(crate) fn stop_local_speech(tts: State<'_, LocalTts>) -> Result<(), String> 
 
 #[tauri::command]
 pub(crate) fn get_speech_model_status(app: AppHandle) -> Vec<SpeechModelStatus> {
+    if !cfg!(feature = "speech-recognition") {
+        return Vec::new();
+    }
     speech_model_definitions()
         .iter()
         .map(|definition| speech_model_status(&app, definition))
         .collect()
 }
 
+#[cfg(feature = "speech-recognition")]
 #[tauri::command]
 pub(crate) async fn download_speech_model(
     app: AppHandle,
@@ -452,14 +463,34 @@ pub(crate) async fn transcribe_voice_input(
     let audio = resample_to_16khz(sample_rate, &samples);
     let model_path = speech_model_path(&app, definition)?;
     let tokens_path = sense_voice_tokens_path(&app, definition)?;
-    let text = tauri::async_runtime::spawn_blocking(move || {
-        transcribe_with_sense_voice(model_path, tokens_path, audio, 16_000)
-    })
-    .await
-    .map_err(|error| format!("本地语音转写任务失败：{error}"))??;
+    let text = crate::background::SUPERVISOR
+        .blocking("speech-transcription", move || {
+            transcribe_with_sense_voice(model_path, tokens_path, audio, 16_000)
+        })
+        .await
+        .map_err(|error| format!("本地语音转写任务失败：{error}"))?;
 
     if text.is_empty() {
         return Err("语音模型没有识别到文字。".to_string());
     }
     Ok(VoiceTranscriptionOutput { text })
+}
+
+#[cfg(not(feature = "speech-recognition"))]
+pub(crate) fn transcribe_with_sense_voice(
+    _: PathBuf,
+    _: PathBuf,
+    _: Vec<f32>,
+    _: i32,
+) -> Result<String, String> {
+    Err("此构建未启用语音识别".into())
+}
+#[cfg(not(feature = "speech-recognition"))]
+#[tauri::command]
+pub(crate) async fn download_speech_model(
+    app: AppHandle,
+    input: DownloadSpeechModelInput,
+) -> Result<SpeechModelStatus, String> {
+    let _ = (app, input.model_id);
+    Err("此构建未启用语音识别".into())
 }

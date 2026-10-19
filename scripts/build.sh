@@ -125,7 +125,7 @@ success "tauri-cli → ${TAURI_VER}"
 
 # macOS 特殊检查
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-10.15}"
+  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
   export CXXFLAGS="${CXXFLAGS:-} -D_LIBCPP_DISABLE_AVAILABILITY"
   info "macOS Deployment Target: ${MACOSX_DEPLOYMENT_TARGET}"
   if xcode-select -p &>/dev/null; then

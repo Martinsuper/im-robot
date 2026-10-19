@@ -17,6 +17,6 @@ pub mod notifications;
 
 pub mod mood;
 
-pub mod engagement;
 pub mod continuity;
+pub mod engagement;
 pub mod observations;

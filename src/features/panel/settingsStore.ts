@@ -21,37 +21,52 @@ import { isTauriRuntime, runCommand } from "../app/appRuntime";
 
 let cache: AppSettings = defaultAppSettings;
 let loadPromise: Promise<void> | undefined;
-let eventSubscription: UnlistenFn | undefined;
+let eventSubscription: Promise<UnlistenFn> | undefined;
+let revision = 0;
+let loadGeneration = 0;
 const listeners = new Set<() => void>();
 
 function publish(next: AppSettings) {
+  revision += 1;
   cache = next;
   for (const listener of listeners) listener();
 }
 
-function ensureLoaded(): Promise<void> {
-  loadPromise ??= runCommand<AppSettings>("get_settings", undefined, defaultAppSettings)
-    .then(publish)
-    .catch((error: unknown) => {
-      // 读取失败时把 promise 清掉，让下一次挂载可以重试；否则一次失败会永久生效。
-      loadPromise = undefined;
-      throw error;
-    });
+async function ensureLoaded(): Promise<void> {
+  // Subscribe before reading so updates cannot fall in the registration gap.
+  if (isTauriRuntime) await ensureEventSubscription();
+  if (!loadPromise) {
+    const startedAt = revision;
+    const generation = ++loadGeneration;
+    loadPromise = runCommand<AppSettings>(
+      "get_settings",
+      undefined,
+      defaultAppSettings,
+    )
+      .then((next) => {
+        if (generation === loadGeneration && revision === startedAt)
+          publish(next);
+      })
+      .catch((error: unknown) => {
+        if (generation === loadGeneration) loadPromise = undefined;
+        throw error;
+      });
+  }
   return loadPromise;
 }
 
-function ensureEventSubscription() {
-  if (eventSubscription || !isTauriRuntime) return;
-  // 订阅与面板进程同生命周期，因此刻意不做 unlisten：
-  // 对已注销的监听再调一次 unlisten 会抛未处理的 rejection（见 09 文档 NEW-15）。
-  void listen<AppSettings>("settings-updated", (event) => publish(event.payload)).then((unlisten) => {
-    eventSubscription = unlisten;
+function ensureEventSubscription(): Promise<UnlistenFn> {
+  eventSubscription ??= listen<AppSettings>("settings-updated", (event) =>
+    publish(event.payload),
+  ).catch((error: unknown) => {
+    eventSubscription = undefined;
+    throw error;
   });
+  return eventSubscription;
 }
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
-  ensureEventSubscription();
   void ensureLoaded().catch((error: unknown) => {
     console.error("[settings] 读取设置失败", error);
   });
@@ -78,6 +93,7 @@ export function useAppSettings(): AppSettingsApi {
     settings,
     applyServer: publish,
     reload: () => {
+      loadGeneration += 1;
       loadPromise = undefined;
       return ensureLoaded();
     },

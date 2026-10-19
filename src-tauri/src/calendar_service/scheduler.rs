@@ -1,8 +1,8 @@
 use super::{service::read_calendar_events, CalendarEvent, CalendarNotificationCache};
-use crate::storage;
 use crate::common::unix_timestamp;
 use crate::runtime_types::PetVisualEvent;
-use std::{collections::HashSet, thread, time::Duration};
+use crate::storage;
+use std::{collections::HashSet, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub(crate) fn collect_due_calendar_events(
@@ -61,18 +61,28 @@ pub(crate) fn process_due_calendar_events(app: &AppHandle) -> Result<Vec<Calenda
 
 pub(crate) fn watch_calendar_events(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || loop {
-        let revision = storage::revision();
-        if let Err(error) = process_due_calendar_events(&app) {
-            eprintln!("[calendar] {error}");
+    crate::background::SUPERVISOR.spawn("calendar-events", move |worker| {
+        while !worker.cancelled() {
+            let revision = storage::revision();
+            let result = process_due_calendar_events(&app);
+            worker.health(result.as_ref().map(|_| ()).map_err(Clone::clone));
+            if let Err(error) = result {
+                eprintln!("[calendar] {error}");
+            }
+            if worker.cancelled() {
+                break;
+            }
+            let now = unix_timestamp();
+            let delay = read_calendar_events(&app)
+                .iter()
+                .filter(|item| item.start_at > now)
+                .map(|item| item.start_at.saturating_sub(now).clamp(1, 60))
+                .min()
+                .unwrap_or(60);
+            storage::wait_for_change_until(revision, Duration::from_secs(delay), || {
+                worker.cancelled()
+            });
         }
-        let now = unix_timestamp();
-        let delay = read_calendar_events(&app)
-            .iter()
-            .filter(|item| item.start_at > now)
-            .map(|item| item.start_at.saturating_sub(now).clamp(1, 60))
-            .min()
-            .unwrap_or(60);
-        storage::wait_for_change(revision, Duration::from_secs(delay));
+        Ok(())
     });
 }

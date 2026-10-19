@@ -1,8 +1,11 @@
 //! Legacy confirmation/rejection facade, shared by interactive chat and Agent execution.
-use crate::calendar_service::{calendar_conflict_note, calendar_event_batch_input_from_value, calendar_event_input_from_value, read_calendar_events};
 use super::selection::selected_calendar_batch_events;
 use super::store::DraftStoreError;
 use super::{ActionDrafts, ActionExecution};
+use crate::calendar_service::{
+    calendar_conflict_note, calendar_event_batch_input_from_value, calendar_event_input_from_value,
+    read_calendar_events,
+};
 use crate::plugins::{PluginRegistry, ToolCall};
 use tauri::{AppHandle, State};
 

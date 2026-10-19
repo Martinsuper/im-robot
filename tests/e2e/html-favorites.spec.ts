@@ -25,6 +25,20 @@ async function installBackend(page: Page) {
       unregisterCallback(id: number) { callbacks.delete(id); },
       async invoke(command: string, args: Record<string, unknown> = {}) {
         state.calls.push({ command, args });
+        if (["get_pet_state", "migrate_pet_state", "save_pet_state"].includes(command)) {
+          const owner = window as unknown as { __petWire?: { schemaVersion: number; initialized: boolean; entries: Record<string, { revision: number; value: string | null }> } };
+          const pet = owner.__petWire ??= { schemaVersion: 1, initialized: true, entries: {} };
+          const payload = (args ?? {}) as Record<string, unknown>;
+          if (command === "save_pet_state") {
+            const key = String(payload.key); const previous = pet.entries[key] ?? { revision: 0, value: null };
+            if (previous.revision !== payload.expectedRevision) throw new Error("pet state conflict");
+            return pet.entries[key] = { revision: previous.revision + 1, value: payload.value as string | null };
+          }
+          return structuredClone(pet);
+        }
+        if (command === "background_status") return [];
+        if (command === "get_data_health") return { memoryPersistent: true, sqlite: { acquisitions: 0, waitMicros: 0, holdMicros: 0 }, jsonLockAcquisitions: 0, jsonLockWaitMicros: 0, speechRecognition: true, wasmPlugins: true };
+
         if (command === "plugin:event|listen") {
           const id = ++sequence;
           listeners.set(id, { topic: String(args.event), handler: Number(args.handler) });
@@ -55,6 +69,8 @@ async function installBackend(page: Page) {
 }
 
 async function selectFavorite(page: Page) {
+  const context = page.getByTestId("chat-context-toggle");
+  if (await context.getAttribute("aria-expanded") !== "true") await context.click();
   await page.getByRole("button", { name: /收藏卡片/ }).click();
   await page.getByRole("button", { name: "Saved calculator", exact: true }).click();
   const favorite = page.getByRole("dialog", { name: "收藏卡片预览" });

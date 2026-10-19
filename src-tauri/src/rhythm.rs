@@ -1,17 +1,17 @@
 //! Focus timers and work-rhythm reporting. Owns its state, storage, commands, and watchers.
-use crate::app_settings::AppSettings;
-use crate::settings::{persist_settings, read_settings};
-use crate::app_awareness;
 use crate::ambient::idle_threshold_seconds;
-use crate::storage;
 use crate::ambient::system_idle_seconds;
-use crate::typing_activity;
+use crate::app_awareness;
+use crate::app_settings::AppSettings;
 use crate::common::unix_timestamp;
 use crate::runtime_types::ChatRequests;
 use crate::runtime_types::PetVisualEvent;
+use crate::settings::{persist_settings, read_settings};
+use crate::storage;
+use crate::typing_activity;
 use chrono::{Local, TimeZone, Timelike};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Mutex, thread, time::Duration};
+use std::{path::PathBuf, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Debug, Deserialize)]
@@ -488,19 +488,29 @@ fn process_focus_timer(app: &AppHandle, focus: &FocusTimer) -> Result<bool, Stri
 
 pub(crate) fn watch_focus_timer(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || loop {
-        let focus = app.state::<FocusTimer>();
-        let _ = process_focus_timer(&app, &focus);
-        thread::sleep(Duration::from_secs(1));
+    crate::background::SUPERVISOR.spawn("focus-timer", move |worker| {
+        while !worker.cancelled() {
+            let focus = app.state::<FocusTimer>();
+            worker.health(process_focus_timer(&app, &focus).map(|_| ()));
+            if !worker.wait(Duration::from_secs(1)) {
+                break;
+            }
+        }
+        Ok(())
     });
 }
 
 pub(crate) fn watch_work_rhythm(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || loop {
-        emit_work_rhythm_updated(&app);
-        maybe_emit_break_reminder(&app);
-        thread::sleep(Duration::from_secs(2));
+    crate::background::SUPERVISOR.spawn("work-rhythm", move |worker| {
+        while !worker.cancelled() {
+            emit_work_rhythm_updated(&app);
+            maybe_emit_break_reminder(&app);
+            if !worker.wait(Duration::from_secs(2)) {
+                break;
+            }
+        }
+        Ok(())
     });
 }
 

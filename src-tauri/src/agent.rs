@@ -7,8 +7,8 @@ pub(crate) mod journal;
 mod protocol;
 #[path = "agent_snapshot.rs"]
 mod snapshot;
-use snapshot::TaskSnapshot;
 use journal::TaskJournal;
+use snapshot::TaskSnapshot;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -33,10 +33,13 @@ async fn next_agent_line<R: AsyncBufRead + Unpin>(
     idle_timeout: std::time::Duration,
 ) -> Result<Option<String>, String> {
     let until = deadline.min(tokio::time::Instant::now() + idle_timeout);
-    tokio::time::timeout_at(until, lines.next_line())
-        .await
-        .map_err(|_| TIMEOUT_MESSAGE.to_string())?
-        .map_err(|_| "Agent 通信中断。此前可能已有部分操作完成，请检查结果。".to_string())
+    let shutdown = crate::background::SUPERVISOR.token();
+    tokio::select! { biased;
+        _=shutdown.cancelled()=>Err("应用正在退出，任务已停止".into()),
+        result=tokio::time::timeout_at(until,lines.next_line())=>result
+            .map_err(|_|TIMEOUT_MESSAGE.to_string())?
+            .map_err(|_|"Agent 通信中断。此前可能已有部分操作完成，请检查结果。".to_string()),
+    }
 }
 
 #[derive(Default)]
@@ -46,19 +49,20 @@ pub struct AgentRuntime(
 );
 
 impl AgentRuntime {
-    pub(crate) fn activity(&self) -> Option<(bool,bool)> {
-        let active=self.0.try_lock().ok()?;
+    pub(crate) fn activity(&self) -> Option<(bool, bool)> {
+        let active = self.0.try_lock().ok()?;
         match active.as_ref() {
-            None => Some((false,false)),
+            None => Some((false, false)),
             Some(task) => {
-                let pending=task.pending_actions.try_lock().ok()?;
-                Some((true,!pending.is_empty() || task.workspace_call.is_some()))
+                let pending = task.pending_actions.try_lock().ok()?;
+                Some((true, !pending.is_empty() || task.workspace_call.is_some()))
             }
         }
     }
 }
 
 struct RunningTask {
+    _data_lease: crate::data_gate::ReadLease,
     request_id: String,
     stdin: Arc<Mutex<ChildStdin>>,
     child: Arc<Mutex<Child>>,
@@ -151,14 +155,24 @@ fn emit(app: &AppHandle, request_id: &str, mut event: Value) {
     event["requestId"] = json!(request_id);
     let runtime = app.state::<AgentRuntime>();
     let mut current = runtime.1.lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(snapshot) = current.as_mut().filter(|snapshot| snapshot.request_id == request_id) {
-        if matches!(event["type"].as_str(), Some("started" | "completed" | "failed" | "cancelled")) {
+    if let Some(snapshot) = current
+        .as_mut()
+        .filter(|snapshot| snapshot.request_id == request_id)
+    {
+        if matches!(
+            event["type"].as_str(),
+            Some("started" | "completed" | "failed" | "cancelled")
+        ) {
             event["conversationId"] = json!(snapshot.conversation_id);
             event["prompt"] = json!(snapshot.prompt);
             event["cwd"] = json!(snapshot.cwd);
-            if event["type"] != "started" { event["response"] = json!(snapshot.response); }
+            if event["type"] != "started" {
+                event["response"] = json!(snapshot.response);
+            }
         }
-        if !snapshot.record(&mut event) { return; }
+        if !snapshot.record(&mut event) {
+            return;
+        }
     }
     // Publish under the snapshot lock: recovery reads and the live stream have one ordering.
     let _ = app.emit("agent-event", event);
@@ -166,7 +180,11 @@ fn emit(app: &AppHandle, request_id: &str, mut event: Value) {
 
 #[tauri::command]
 pub fn agent_get_task_snapshot(runtime: State<'_, AgentRuntime>) -> Option<TaskSnapshot> {
-    runtime.1.lock().unwrap_or_else(|error| error.into_inner()).clone()
+    runtime
+        .1
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
 }
 
 async fn write_command(stdin: &Arc<Mutex<ChildStdin>>, command: Value) -> Result<(), String> {
@@ -235,6 +253,7 @@ pub async fn agent_start(
     {
         return Err("请选择文件夹作为工作目录".into());
     }
+    let data_lease = crate::data_gate::try_read()?;
     let data_dir = app
         .path()
         .app_data_dir()
@@ -248,7 +267,7 @@ pub async fn agent_start(
     } else {
         selected_workspace.clone().ok_or("请选择工作目录")?
     };
-    crate::memory::soul::settings::apply_pause_intent(&app,&input.prompt);
+    crate::memory::soul::settings::apply_pause_intent(&app, &input.prompt);
     let attachments = app.state::<crate::attachments::TextAttachmentStore>();
     let attachment = attachments.0.lock().map_err(|_| "无法读取附件")?.clone();
     let text = if input.prompt.trim().is_empty() && input.include_screenshot.unwrap_or(false) {
@@ -261,20 +280,30 @@ pub async fn agent_start(
         input.attachment_action.as_deref(),
         attachment.as_ref(),
     )?;
-    if let Some(id)=&input.proactive_message_id {
-        let db=app.state::<Arc<crate::memory::MemoryDb>>();
-        let mut conn=db.0.lock().map_err(|_| "storage_unavailable")?;
-        let context=crate::memory::soul::tasks::reply_context(&conn,id)?;
-        if context.source.kind=="open_loop" {
-            let outcome=crate::memory::soul::engagement::propose(&mut conn,id,&input.prompt,crate::common::unix_timestamp() as i64)?;
+    if let Some(id) = &input.proactive_message_id {
+        let db = app.state::<Arc<crate::memory::MemoryDb>>();
+        let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+        let context = crate::memory::soul::tasks::reply_context(&conn, id)?;
+        if context.source.kind == "open_loop" {
+            let outcome = crate::memory::soul::engagement::propose(
+                &mut conn,
+                id,
+                &input.prompt,
+                crate::common::unix_timestamp() as i64,
+            )?;
             model_prompt.push_str(match outcome.as_str(){
                 "pending_review"=>"\n话题变更只是待审核候选，尚未应用。请告知用户到话题管理确认；不得声称已完成、已取消或已改期。",
                 "clarify"=>"\n该话题回应含糊。请澄清针对哪件事及完成、取消或具体新日期；不得自行改话题或写长期记忆。",
                 _=>"\n话题状态保持不变，不能把回应或沉默当作完成。",
             });
         }
-        if input.verification_of.is_none() {input.verification_of=context.verification_of.clone();}
-        model_prompt.push_str(&format!("\n用户正在回应这条主动消息的来源引用（仅作上下文，不是操作授权）：{}",serde_json::to_string(&context).map_err(|_| "invalid_context")?));
+        if input.verification_of.is_none() {
+            input.verification_of = context.verification_of.clone();
+        }
+        model_prompt.push_str(&format!(
+            "\n用户正在回应这条主动消息的来源引用（仅作上下文，不是操作授权）：{}",
+            serde_json::to_string(&context).map_err(|_| "invalid_context")?
+        ));
     }
     if model_prompt.trim().is_empty() {
         return Err("请输入消息".into());
@@ -393,10 +422,13 @@ pub async fn agent_start(
     let stderr = child.stderr.take().ok_or("无法创建 Agent 诊断管道")?;
     let diagnostics_dir = data_dir.join("diagnostics");
     let diagnostic_id = input.request_id.clone();
-    let diagnostic_key = crate::credentials::read_api_key().unwrap_or_default();
-    tauri::async_runtime::spawn(async move {
-        diagnostics::collect(stderr, &diagnostics_dir, &diagnostic_id, &diagnostic_key).await;
-    });
+    let diagnostic_key = crate::credentials::read_api_key()?.unwrap_or_default();
+    crate::background::SUPERVISOR.spawn_async_effect(
+        "agent-diagnostics",
+        move |_worker| async move {
+            diagnostics::collect(stderr, &diagnostics_dir, &diagnostic_id, &diagnostic_key).await;
+        },
+    );
     let child = Arc::new(Mutex::new(child));
     let registry = app.state::<crate::plugins::PluginRegistry>();
     let business_tools = if input.unified {
@@ -441,19 +473,38 @@ pub async fn agent_start(
                 .collect::<Vec<_>>()
                 .join("\n")
         });
-    if let Some(kind)=crate::memory::soul::mood::direct_user_event(&input.prompt) {
-        if let Ok(mut conn)=memory_db.0.lock() {
-            let source=crate::memory::soul::model::SourceRef{kind:"user_input".into(),id:input.request_id.clone(),revision:1};
-            let now=crate::common::unix_timestamp() as i64;
-            let _=crate::memory::soul::mood::event(&mut conn,kind,&source,now,now);
+    if let Some(kind) = crate::memory::soul::mood::direct_user_event(&input.prompt) {
+        if let Ok(mut conn) = memory_db.0.lock() {
+            let source = crate::memory::soul::model::SourceRef {
+                kind: "user_input".into(),
+                id: input.request_id.clone(),
+                revision: 1,
+            };
+            let now = crate::common::unix_timestamp() as i64;
+            let _ = crate::memory::soul::mood::event(&mut conn, kind, &source, now, now);
         }
     }
-    if let Ok(mut conn)=memory_db.0.lock(){
-        let source=crate::memory::soul::model::SourceRef{kind:"chat_session".into(),id:input.conversation_id.clone(),revision:1};
-        let now=crate::common::unix_timestamp() as i64;
-        let _=crate::memory::soul::continuity::observe_preference(&mut conn,&input.conversation_id,&source,&input.prompt,now);
-        if matches!(input.prompt.trim().trim_end_matches(['。','.','!','！']),"谢谢"|"谢谢你"|"thank you"|"ありがとう"){
-            let _=crate::memory::soul::continuity::record_event(&mut conn,"thanks",&source,now,now);
+    if let Ok(mut conn) = memory_db.0.lock() {
+        let source = crate::memory::soul::model::SourceRef {
+            kind: "chat_session".into(),
+            id: input.conversation_id.clone(),
+            revision: 1,
+        };
+        let now = crate::common::unix_timestamp() as i64;
+        let _ = crate::memory::soul::continuity::observe_preference(
+            &mut conn,
+            &input.conversation_id,
+            &source,
+            &input.prompt,
+            now,
+        );
+        if matches!(
+            input.prompt.trim().trim_end_matches(['。', '.', '!', '！']),
+            "谢谢" | "谢谢你" | "thank you" | "ありがとう"
+        ) {
+            let _ = crate::memory::soul::continuity::record_event(
+                &mut conn, "thanks", &source, now, now,
+            );
         }
     }
     let role = crate::memory::soul::profile::for_request(&app, &memory_db, &settings.language);
@@ -471,7 +522,7 @@ pub async fn agent_start(
         "conversationId": conversation_id,
         "requestId": input.request_id, "resumeRoot":resume_root, "dataDir": data_dir,
         "provider": settings.ai.provider, "baseUrl": settings.ai.base_url,
-        "model": settings.ai.model, "apiKey": crate::credentials::read_api_key().unwrap_or_default(),
+        "model": settings.ai.model, "apiKey": crate::credentials::read_api_key()?.unwrap_or_default(),
         "autoApproveCommands":settings.agent_auto_approve_commands,
         "readOnly":read_only,
         "contextWindow":settings.ai.context_window,"maxOutputTokens":settings.ai.max_output_tokens,"timeoutSeconds":settings.ai.timeout_seconds,
@@ -492,13 +543,19 @@ pub async fn agent_start(
         return Err(error);
     }
     *runtime.1.lock().unwrap_or_else(|error| error.into_inner()) = Some(TaskSnapshot::new(
-        input.request_id.clone(), input.conversation_id.clone(),
-        selected_workspace.as_ref().map(|path| path.to_string_lossy().into_owned()), history_prompt.clone(),
+        input.request_id.clone(),
+        input.conversation_id.clone(),
+        selected_workspace
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
+        history_prompt.clone(),
     ));
     let request_id = input.request_id;
     let history_prompt = Arc::new(Mutex::new(history_prompt));
     let pending_actions = Arc::new(Mutex::new(HashMap::new()));
+    let shutdown_stdin = stdin.clone();
     *slot = Some(RunningTask {
+        _data_lease: data_lease,
         request_id: request_id.clone(),
         stdin: stdin.clone(),
         child: child.clone(),
@@ -510,7 +567,7 @@ pub async fn agent_start(
         reuse_authorization: true,
     });
     drop(slot);
-    tauri::async_runtime::spawn(async move {
+    crate::background::SUPERVISOR.spawn_async_effect("agent-stream", move |_worker| async move {
         let mut lines = BufReader::new(stdout).lines();
         let deadline = tokio::time::Instant::now() + AGENT_TASK_TIMEOUT;
         let mut response = String::new();
@@ -555,15 +612,17 @@ pub async fn agent_start(
                     response: response.clone(),
                     created_at: crate::common::unix_timestamp(),
                 };
-                let saved = crate::chat_session::repository::append_chat_history(&app, entry.clone()).and_then(|_| {
-                    let context = app.state::<crate::runtime_types::ChatContext>();
-                    let mut history = context
-                        .0
-                        .lock()
-                        .map_err(|_| "无法更新对话上下文".to_string())?;
-                    crate::runtime_types::append_session_chat_history(&mut history, entry);
-                    Ok(())
-                });
+                let saved =
+                    crate::chat_session::repository::append_chat_history(&app, entry.clone())
+                        .and_then(|_| {
+                            let context = app.state::<crate::runtime_types::ChatContext>();
+                            let mut history = context
+                                .0
+                                .lock()
+                                .map_err(|_| "无法更新对话上下文".to_string())?;
+                            crate::runtime_types::append_session_chat_history(&mut history, entry);
+                            Ok(())
+                        });
                 if saved.is_err() {
                     event = json!({"type":"failed", "message":"任务已执行，但保存聊天记录失败。请检查结果，不要重复执行。"});
                 }
@@ -577,7 +636,11 @@ pub async fn agent_start(
             }
             emit(&app, &request_id, event);
         };
-        let _ = child.lock().await.kill().await;
+        if crate::background::SUPERVISOR.token().is_cancelled() {
+                let _=tokio::time::timeout(std::time::Duration::from_millis(100),write_command(&shutdown_stdin,json!({"type":"cancel"}))).await;
+                let mut process=child.lock().await;
+                if tokio::time::timeout(std::time::Duration::from_millis(500),process.wait()).await.is_err(){let _=process.kill().await;}
+            } else { let _=child.lock().await.kill().await; }
         remove_drafts(&app, &pending_actions).await;
         // S09：任务终态时把 failed/interrupted 放进次日晨提醒队列（额度门控照常生效）。
         crate::memory::soul::tasks::on_task_terminal(&app, &request_id);
@@ -588,7 +651,11 @@ pub async fn agent_start(
             .is_some_and(|task| task.request_id == request_id);
         if owned {
             if journal
-                .event(&request_id, &terminal_event, crate::common::unix_timestamp())
+                .event(
+                    &request_id,
+                    &terminal_event,
+                    crate::common::unix_timestamp(),
+                )
                 .is_err()
             {
                 terminal_event = json!({"type":"failed", "message":"任务已结束，但执行状态保存失败。请核对实际结果，不要直接重复执行。"});
@@ -644,7 +711,11 @@ pub async fn agent_approve(
         json!({"type": "approval", "approvalId": approval_id, "allowed": allowed}),
     )
     .await?;
-    emit(&app, &request_id, json!({"type":"approval-resolved", "approvalId":approval_id, "allowed":allowed}));
+    emit(
+        &app,
+        &request_id,
+        json!({"type":"approval-resolved", "approvalId":approval_id, "allowed":allowed}),
+    );
     Ok(())
 }
 
@@ -664,8 +735,8 @@ pub async fn agent_cancel(
     let pending_actions = task.pending_actions.clone();
     drop(slot);
     // Cooperative cancellation first; kill a stalled model request after five seconds.
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    crate::background::SUPERVISOR.spawn_async_effect("agent-cancel-watchdog", move |worker| async move {
+        if !worker.sleep(std::time::Duration::from_secs(5)).await { return; }
         let state = app.state::<AgentRuntime>();
         let mut slot = state.0.lock().await;
         if slot
@@ -766,7 +837,11 @@ async fn handle_app_tool(
         if manifest.confirmation != "never"
             || matches!(manifest.risk.as_str(), "write" | "sensitive")
         {
-            let draft = crate::actions::drafts::action_draft_from_tool_call_with_locale(&call, chrono::Local::now(),&crate::settings::read_settings(app).language)?;
+            let draft = crate::actions::drafts::action_draft_from_tool_call_with_locale(
+                &call,
+                chrono::Local::now(),
+                &crate::settings::read_settings(app).language,
+            )?;
             app.state::<crate::actions::ActionDrafts>()
                 .insert(draft.clone())
                 .map_err(|_| "无法保存待确认操作")?;
@@ -825,7 +900,11 @@ pub async fn agent_select_workspace(
     write_command(&task.stdin, json!({"type":"app-result", "callId":call_id,
         "result":result.as_ref().map(|path| json!({"path":path})),
         "error":if result.is_none() { Some("用户取消选择工作目录，不要操作本地文件") } else { None } })).await?;
-    emit(&app, &request_id, json!({"type":"workspace-resolved", "cwd":result.as_ref().map(|path| path.to_string_lossy().into_owned())}));
+    emit(
+        &app,
+        &request_id,
+        json!({"type":"workspace-resolved", "cwd":result.as_ref().map(|path| path.to_string_lossy().into_owned())}),
+    );
     Ok(())
 }
 
@@ -851,9 +930,14 @@ pub async fn agent_confirm_action(
             .ok_or("确认卡片已失效")?;
         (task.stdin.clone(), call_id, task.operation_root.clone())
     };
-    emit(&app, &request_id, json!({"type":"action-resolved", "allowed":true}));
+    emit(
+        &app,
+        &request_id,
+        json!({"type":"action-resolved", "allowed":true}),
+    );
     let prepare = (|| -> Result<_, String> {
-        let draft = app.state::<crate::actions::ActionDrafts>()
+        let draft = app
+            .state::<crate::actions::ActionDrafts>()
             .get(&id)
             .map_err(|_| "无法读取确认记录")?;
         let operation = draft
@@ -865,10 +949,11 @@ pub async fn agent_confirm_action(
                     draft.tool_name.as_str(),
                     "create_event_batch" | "delete_event_batch"
                 ) {
-                    arguments["events"] = crate::actions::selection::selected_calendar_batch_events(
-                        &arguments["events"],
-                        selected_indexes.clone(),
-                    )?;
+                    arguments["events"] =
+                        crate::actions::selection::selected_calendar_batch_events(
+                            &arguments["events"],
+                            selected_indexes.clone(),
+                        )?;
                 }
                 let call = crate::plugins::ToolCall {
                     plugin_id: draft.plugin_id.clone(),
@@ -895,10 +980,22 @@ pub async fn agent_confirm_action(
     };
     let execution = if let Some(key) = operation.as_ref() {
         crate::agent_operations::with_authorized_scope(key, || {
-            crate::actions::commands::confirm_chat_action(app.clone(), app.state(), app.state(), id, selected_indexes)
+            crate::actions::commands::confirm_chat_action(
+                app.clone(),
+                app.state(),
+                app.state(),
+                id,
+                selected_indexes,
+            )
         })
     } else {
-        crate::actions::commands::confirm_chat_action(app.clone(), app.state(), app.state(), id, selected_indexes)
+        crate::actions::commands::confirm_chat_action(
+            app.clone(),
+            app.state(),
+            app.state(),
+            id,
+            selected_indexes,
+        )
     };
     match execution {
         Ok(execution) => {
@@ -956,7 +1053,11 @@ pub async fn agent_reject_action(
         .remove(&id)
         .ok_or("确认卡片已失效")?;
     crate::actions::commands::reject_chat_action(app.state(), id)?;
-    emit(&app, &request_id, json!({"type":"action-resolved", "allowed":false}));
+    emit(
+        &app,
+        &request_id,
+        json!({"type":"action-resolved", "allowed":false}),
+    );
     write_command(
         &task.stdin,
         json!({"type":"app-result", "callId":call_id, "result":{

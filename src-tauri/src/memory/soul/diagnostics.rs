@@ -118,10 +118,15 @@ pub fn inspect(conn: &Connection, boot_ok: bool) -> SoulDiagnostics {
         profile_valid: profile_ok,
         ledger_readable: ledger_ok,
         // S12 is the rollout gate; no settings row can bypass it.
-        proactive_enabled: storage_ok && ledger_ok && conn.query_row(
-            "SELECT enabled=1 AND paused=0 FROM soul_control WHERE singleton=1",
-            [], |row| row.get::<_, bool>(0),
-        ).unwrap_or(false),
+        proactive_enabled: storage_ok
+            && ledger_ok
+            && conn
+                .query_row(
+                    "SELECT enabled=1 AND paused=0 FROM soul_control WHERE singleton=1",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap_or(false),
         issues,
     }
 }
@@ -208,10 +213,12 @@ mod control_state_tests {
         store::migrate(&mut conn).unwrap();
         super::super::settings::get(&mut conn, 100).unwrap();
         assert!(!inspect(&conn, true).proactive_enabled);
-        conn.execute("UPDATE soul_control SET enabled=1", []).unwrap();
+        conn.execute("UPDATE soul_control SET enabled=1", [])
+            .unwrap();
         assert!(inspect(&conn, true).proactive_enabled);
         assert!(!inspect(&conn, false).proactive_enabled);
-        conn.execute("UPDATE soul_control SET paused=1", []).unwrap();
+        conn.execute("UPDATE soul_control SET paused=1", [])
+            .unwrap();
         assert!(!inspect(&conn, true).proactive_enabled);
     }
 }

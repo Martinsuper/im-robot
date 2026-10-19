@@ -191,14 +191,14 @@ export function HistoryItem({
               <HtmlPreviewFrame
                 sourceChatId={entry.id}
                 source={(htmlPreviewSource ?? rawPreviewSource) as string}
-                view={previewAsSource ? "source" : "preview"}
+                view={htmlPreviewSource ? "preview" : "source"}
                 onViewChange={onPreviewViewChange}
                 isFavorited={isFavorited}
                 onToggleFavorite={onToggleFavorite}
               />
             ) : (
               <div className="bubble-thread__ai-content">
-                <MarkdownContent>{entry.response}</MarkdownContent>
+                <MarkdownContent>{rawPreviewSource && !htmlPreviewEnabled ? `\`\`\`html\n${rawPreviewSource}\n\`\`\`` : entry.response}</MarkdownContent>
               </div>
             )}
           </div>

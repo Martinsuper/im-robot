@@ -72,15 +72,31 @@ pub(crate) fn task_candidate(
 }
 
 #[cfg(test)]
-pub fn queue_task_reminder(conn: &mut Connection, records: &[TaskRecord], request_id: &str, offset: i64, now: i64) -> Result<(), String> {
+pub fn queue_task_reminder(
+    conn: &mut Connection,
+    records: &[TaskRecord],
+    request_id: &str,
+    offset: i64,
+    now: i64,
+) -> Result<(), String> {
     queue_task_reminder_at(conn, records, request_id, offset, now, None)
 }
 
-fn queue_task_reminder_local(conn: &mut Connection, records: &[TaskRecord], request_id: &str, offset: i64, now: i64) -> Result<(), String> {
-    let due = records.iter().find(|record| record.request_id == request_id)
+fn queue_task_reminder_local(
+    conn: &mut Connection,
+    records: &[TaskRecord],
+    request_id: &str,
+    offset: i64,
+    now: i64,
+) -> Result<(), String> {
+    let due = records
+        .iter()
+        .find(|record| record.request_id == request_id)
         .and_then(|record| i64::try_from(record.updated_at).ok())
         .and_then(|unix| next_nine_in_zone(unix, &chrono::Local));
-    if due.is_none() { return Err("invalid_task_time".into()); }
+    if due.is_none() {
+        return Err("invalid_task_time".into());
+    }
     queue_task_reminder_at(conn, records, request_id, offset, now, due)
 }
 
@@ -200,7 +216,9 @@ fn reminder_candidates_offset(unix: i64) -> i64 {
 
 fn reminder_offset_in_zone<T: chrono::TimeZone>(unix: i64, zone: &T) -> Option<i64> {
     use chrono::Offset;
-    let target = zone.timestamp_opt(next_nine_in_zone(unix, zone)?, 0).single()?;
+    let target = zone
+        .timestamp_opt(next_nine_in_zone(unix, zone)?, 0)
+        .single()?;
     Some(i64::from(target.offset().fix().local_minus_utc()))
 }
 
@@ -214,7 +232,11 @@ fn next_nine_in_zone<T: chrono::TimeZone>(unix: i64, zone: &T) -> Option<i64> {
 /// and queues the start greeting. Delivery stays behind the category gates.
 pub fn on_boot(app: &AppHandle) {
     let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::background::SUPERVISOR.spawn_effect("soul-task-recovery", move |worker| {
+        if worker.cancelled() {
+            return;
+        }
+        let _lease = crate::data_gate::read();
         if !handle
             .try_state::<model::SoulBootStatus>()
             .is_some_and(|status| status.0)
@@ -265,7 +287,11 @@ pub fn on_boot(app: &AppHandle) {
 pub fn on_task_terminal(app: &AppHandle, request_id: &str) {
     let handle = app.clone();
     let request_id = request_id.to_string();
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::background::SUPERVISOR.spawn_effect("soul-task-outcome", move |worker| {
+        if worker.cancelled() {
+            return;
+        }
+        let _lease = crate::data_gate::read();
         if !handle
             .try_state::<model::SoulBootStatus>()
             .is_some_and(|status| status.0)
@@ -282,20 +308,51 @@ pub fn on_task_terminal(app: &AppHandle, request_id: &str) {
         let Ok(mut conn) = db.0.lock() else {
             return;
         };
-        if let Some(record)=records.iter().find(|record|record.request_id==request_id) {
-            let kind=match record.status.as_str(){"completed"=>Some("task_success"),"failed"=>Some("task_failure"),"interrupted"=>Some("task_interrupted"),_=>None};
-            if let Some(kind)=kind {
-                let source=model::SourceRef{kind:"agent_task".into(),id:request_id.clone(),revision:1};
-                let _=super::mood::event(&mut conn,kind,&source,record.updated_at as i64,crate::common::unix_timestamp() as i64);
-                if record.status=="completed"{let _=super::continuity::record_event(&mut conn,"task_completed",&source,record.updated_at as i64,crate::common::unix_timestamp() as i64);}
-
+        if let Some(record) = records
+            .iter()
+            .find(|record| record.request_id == request_id)
+        {
+            let kind = match record.status.as_str() {
+                "completed" => Some("task_success"),
+                "failed" => Some("task_failure"),
+                "interrupted" => Some("task_interrupted"),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                let source = model::SourceRef {
+                    kind: "agent_task".into(),
+                    id: request_id.clone(),
+                    revision: 1,
+                };
+                let _ = super::mood::event(
+                    &mut conn,
+                    kind,
+                    &source,
+                    record.updated_at as i64,
+                    crate::common::unix_timestamp() as i64,
+                );
+                if record.status == "completed" {
+                    let _ = super::continuity::record_event(
+                        &mut conn,
+                        "task_completed",
+                        &source,
+                        record.updated_at as i64,
+                        crate::common::unix_timestamp() as i64,
+                    );
+                }
             }
         }
         let _ = queue_task_reminder_local(
             &mut conn,
             &records,
             &request_id,
-            reminder_candidates_offset(records.iter().find(|r| r.request_id == request_id).and_then(|r| i64::try_from(r.updated_at).ok()).unwrap_or(0)),
+            reminder_candidates_offset(
+                records
+                    .iter()
+                    .find(|r| r.request_id == request_id)
+                    .and_then(|r| i64::try_from(r.updated_at).ok())
+                    .unwrap_or(0),
+            ),
             i64::try_from(crate::common::unix_timestamp()).unwrap_or(0),
         );
     });
@@ -509,7 +566,7 @@ mod closure_tests {
         conn.execute("UPDATE soul_control SET enabled=0", [])
             .unwrap();
         let first = record("old", "failed", None, 100);
-        queue_task_reminder(&mut conn, &[first.clone()], "old", 0, 100).unwrap();
+        queue_task_reminder(&mut conn, std::slice::from_ref(&first), "old", 0, 100).unwrap();
         queue_greeting(&mut conn, "old-start", 100).unwrap();
         conn.execute("UPDATE soul_control SET enabled=1,enabled_since=200", [])
             .unwrap();
@@ -556,14 +613,24 @@ mod timezone_tests {
     fn next_day_nine_uses_target_date_dst_offset() {
         let zone = chrono_tz::America::New_York;
         for (date, expected_hours) in [((2026, 3, 7), 23), ((2026, 10, 31), 25)] {
-            let source = zone.with_ymd_and_hms(date.0,date.1,date.2,9,0,0).unwrap();
+            let source = zone
+                .with_ymd_and_hms(date.0, date.1, date.2, 9, 0, 0)
+                .unwrap();
             let due = next_nine_in_zone(source.timestamp(), &zone).unwrap();
-            assert_eq!(due-source.timestamp(), expected_hours*3600);
-            let local = zone.timestamp_opt(due,0).unwrap();
-            assert_eq!(local.time(), chrono::NaiveTime::from_hms_opt(9,0,0).unwrap());
+            assert_eq!(due - source.timestamp(), expected_hours * 3600);
+            let local = zone.timestamp_opt(due, 0).unwrap();
+            assert_eq!(
+                local.time(),
+                chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap()
+            );
         }
-        let source=zone.with_ymd_and_hms(2026,3,7,23,30,0).unwrap();
-        let due=zone.timestamp_opt(next_nine_in_zone(source.timestamp(), &zone).unwrap(),0).unwrap();
-        assert_eq!(due.date_naive(),chrono::NaiveDate::from_ymd_opt(2026,3,8).unwrap());
+        let source = zone.with_ymd_and_hms(2026, 3, 7, 23, 30, 0).unwrap();
+        let due = zone
+            .timestamp_opt(next_nine_in_zone(source.timestamp(), &zone).unwrap(), 0)
+            .unwrap();
+        assert_eq!(
+            due.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 8).unwrap()
+        );
     }
 }

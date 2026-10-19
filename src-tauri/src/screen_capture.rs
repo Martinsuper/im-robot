@@ -2,8 +2,6 @@
 use crate::desktop::show_and_focus;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use screenshots::image::DynamicImage;
-use screenshots::Screen;
 use serde::Deserialize;
 use serde::Serialize;
 use std::io::Cursor;
@@ -15,6 +13,8 @@ use tauri::Emitter;
 use tauri::Manager;
 use tauri::PhysicalPosition;
 use tauri::State;
+use xcap::image::DynamicImage;
+use xcap::Monitor;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ScreenCapture {
@@ -139,18 +139,20 @@ pub(crate) fn confirm_screen_capture(
     thread::sleep(Duration::from_millis(140));
 
     let png = (|| {
-        let screen = Screen::from_point(x, y).map_err(|error| format!("无法读取屏幕：{error}"))?;
+        let screen = Monitor::from_point(x, y).map_err(|error| format!("无法读取屏幕：{error}"))?;
         let image = screen
-            .capture_area(
-                x - screen.display_info.x,
-                y - screen.display_info.y,
+            .capture_region(
+                u32::try_from(x - screen.x().map_err(|error| error.to_string())?)
+                    .map_err(|_| "截图横坐标超出屏幕")?,
+                u32::try_from(y - screen.y().map_err(|error| error.to_string())?)
+                    .map_err(|_| "截图纵坐标超出屏幕")?,
                 width,
                 height,
             )
             .map_err(|error| format!("截图失败，请检查屏幕录制权限：{error}"))?;
         let mut png = Cursor::new(Vec::new());
         DynamicImage::ImageRgba8(image)
-            .write_to(&mut png, screenshots::image::ImageOutputFormat::Png)
+            .write_to(&mut png, xcap::image::ImageFormat::Png)
             .map_err(|error| format!("无法生成截图预览：{error}"))?;
         Ok::<_, String>(png.into_inner())
     })();

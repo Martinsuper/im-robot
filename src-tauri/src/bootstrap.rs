@@ -47,7 +47,6 @@ use crate::providers;
 use crate::reminder_service;
 use crate::reminder_service::watch_reminders;
 use crate::rhythm;
-use crate::rhythm::start_break;
 use crate::rhythm::watch_focus_timer;
 use crate::rhythm::watch_work_rhythm;
 use crate::rhythm::FocusTimer;
@@ -73,6 +72,9 @@ use tauri_plugin_autostart::MacosLauncher;
 
 pub(crate) fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            desktop::open_panel(app.clone(), None);
+        }))
         .manage(html_preview::HtmlPreviewStore::default())
         .register_uri_scheme_protocol("preview", |context, request| {
             html_preview::response(context.app_handle(), request.uri().path())
@@ -100,7 +102,8 @@ pub(crate) fn run() {
             None,
         ))
         .setup(|app| {
-            credentials::initialize(app.path().app_data_dir()?)?;
+            crate::data_snapshot::recover_before_start(app.handle())?;
+            credentials::initialize(app.path().app_data_dir()?, &app.config().identifier)?;
             for config in &app.config().app.windows {
                 tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
                     .on_navigation(html_preview::local_preview_navigation)
@@ -108,18 +111,23 @@ pub(crate) fn run() {
             }
             // 初始化记忆数据库失败时降级到进程内数据库，避免阻断应用启动；
             // 同时记录并通知用户，明确说明记忆不会持久化。
+            let mut memory_persistent = true;
             let memory_db = match memory::init_memory_db(app.handle()) {
                 Ok(db) => db,
                 Err(error) => {
+                    memory_persistent = false;
                     eprintln!("[memory] 持久化数据库初始化失败，降级为本次会话记忆：{error}");
-                    let _ = crate::notifications::send(app.handle(), "记忆功能已降级", &format!(
-                            "记忆数据库初始化失败，本次启动不会持久化记忆：{error}"
-                        ));
+                    let _ = crate::notifications::send(
+                        app.handle(),
+                        "记忆功能已降级",
+                        &format!("记忆数据库初始化失败，本次启动不会持久化记忆：{error}"),
+                    );
                     memory::open_in_memory_db().map_err(|fallback_error| {
                         format!("记忆数据库初始化失败，且无法启用本次会话记忆：{fallback_error}")
                     })?
                 }
             };
+            app.manage(crate::data_snapshot::MemoryPersistence(memory_persistent));
             app.manage(Arc::new(memory_db));
             app.manage(memory::CandidateCache::default());
             memory::extraction::start(app.handle().clone());
@@ -203,11 +211,9 @@ pub(crate) fn run() {
             app.handle()
                 .on_menu_event(|app_handle, event| match event.id.as_ref() {
                     "pet_ctx_chat" => show_bubble(app_handle.clone()),
-                    "pet_ctx_break" => {
-                        let timer = app_handle.state::<FocusTimer>();
-                        let _ = start_break(app_handle.clone(), timer, 5);
-                    }
                     "pet_ctx_panel" => open_panel(app_handle.clone(), None),
+                    "pet_ctx_hide" => desktop::hide_pet(app_handle.clone()),
+                    "pet_ctx_quit" => app_handle.exit(0),
                     _ => {}
                 });
             watch_idle_detection(app.handle());
@@ -246,6 +252,14 @@ pub(crate) fn run() {
             desktop::get_pet_position,
             settings::commands::get_settings,
             screen_capture::screen_capture_permission_status,
+            crate::background::background_status,
+            crate::data_snapshot::get_data_health,
+            crate::data_snapshot::create_data_snapshot,
+            crate::data_snapshot::preview_data_snapshot,
+            crate::data_snapshot::restore_data_snapshot,
+            crate::pet_state::get_pet_state,
+            crate::pet_state::save_pet_state,
+            crate::pet_state::migrate_pet_state,
             app_updates::check_for_updates,
             app_updates::check_for_updates_extended,
             chat_session::commands::list_chat_history,
@@ -354,6 +368,7 @@ pub(crate) fn run() {
             sync::commands::sync_calendar_to_system,
             sync::commands::sync_calendar_from_system,
             app_updates::download_update_asset,
+            app_updates::cancel_update_download,
             // Memory system (Phase 1)
             memory::list_memories,
             memory::get_memory_detail,
@@ -391,6 +406,31 @@ pub(crate) fn run() {
             memory::memory_preview_import,
             memory::import_memories
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Piko desktop application");
+        .build(tauri::generate_context!())
+        .expect("error while building Piko desktop application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(tts) = app.try_state::<LocalTts>() {
+                    if let Ok(mut active) = tts.0.try_lock() {
+                        if let Some(mut child) = active.take() {
+                            let _ = child.kill();
+                        }
+                    }
+                }
+                let closing = app.clone();
+                crate::background::SUPERVISOR.spawn_effect("shutdown-flush", move |_| {
+                    if let Some(state) = closing.try_state::<typing_activity::TypingActivityState>()
+                    {
+                        let now = crate::common::unix_timestamp();
+                        let _ = state.finalize_stale_session(&closing, now);
+                        let _ = state.flush_snapshot_if_needed(&closing, now);
+                    }
+                });
+                let unfinished =
+                    crate::background::SUPERVISOR.shutdown(std::time::Duration::from_secs(3));
+                if !unfinished.is_empty() {
+                    eprintln!("[shutdown] workers did not finish: {unfinished:?}");
+                }
+            }
+        });
 }

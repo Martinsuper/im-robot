@@ -140,3 +140,8 @@
 .bubble-shell button:focus-visible { outline: 2px solid var(--piko-accent); outline-offset: 2px; }
 @media (max-width: 400px) { .bubble-topbar__subtitle { display: none; } .bubble-input-hint { font-size: 9px; } .bubble-context-toggle span { max-width: 130px; } }
 @media (max-height: 380px) { .bubble-shell { gap: 6px; padding: 8px 10px; } .bubble-welcome .pet-sprite { display: none; } .bubble-welcome { gap: 6px; padding: 2px; } .bubble-shell .prompt-form textarea { min-height: 32px; } .bubble-topbar__subtitle { display: none; } }
+
+.bubble-topbar__btn--active {
+  color: var(--piko-accent);
+  background: var(--piko-soft);
+}

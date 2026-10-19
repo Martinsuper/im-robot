@@ -10,9 +10,13 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 pub fn log_gate(reason: &str) {
     #[cfg(all(target_os = "macos", debug_assertions))]
     {
-        extern "C" { fn piko_soul_log_gate(reason: *const c_char); }
+        extern "C" {
+            fn piko_soul_log_gate(reason: *const c_char);
+        }
         if let Ok(reason) = CString::new(reason) {
-            unsafe { piko_soul_log_gate(reason.as_ptr()); }
+            unsafe {
+                piko_soul_log_gate(reason.as_ptr());
+            }
         }
     }
     #[cfg(not(all(target_os = "macos", debug_assertions)))]
@@ -92,22 +96,40 @@ pub fn reconcile(ids: &[String]) {
 }
 
 #[cfg(target_os = "macos")]
-static PERMISSION_REQUEST: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>> = std::sync::Mutex::new(None);
+static PERMISSION_REQUEST: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>> =
+    std::sync::Mutex::new(None);
 #[cfg(target_os = "macos")]
-extern "C" fn permission_result(granted:bool){
-    if let Ok(mut pending)=PERMISSION_REQUEST.lock(){if let Some(sender)=pending.take(){let _=sender.send(granted);}}
+extern "C" fn permission_result(granted: bool) {
+    if let Ok(mut pending) = PERMISSION_REQUEST.lock() {
+        if let Some(sender) = pending.take() {
+            let _ = sender.send(granted);
+        }
+    }
 }
 /// Permission is requested only following a user's explicit settings action.
-pub async fn request_permission()->Result<bool,String>{
-    #[cfg(target_os="macos")]
+pub async fn request_permission() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
     {
-        extern "C" {fn piko_soul_request_notification_permission(completion:extern "C" fn(bool));}
-        let(sender,receiver)=tokio::sync::oneshot::channel();
-        {let mut pending=PERMISSION_REQUEST.lock().map_err(|_|"permission_unavailable")?;
-         if pending.is_some(){return Err("permission_request_pending".into());}*pending=Some(sender);}
-        unsafe{piko_soul_request_notification_permission(permission_result);}
-        receiver.await.map_err(|_|"permission_unavailable".into())
+        extern "C" {
+            fn piko_soul_request_notification_permission(completion: extern "C" fn(bool));
+        }
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut pending = PERMISSION_REQUEST
+                .lock()
+                .map_err(|_| "permission_unavailable")?;
+            if pending.is_some() {
+                return Err("permission_request_pending".into());
+            }
+            *pending = Some(sender);
+        }
+        unsafe {
+            piko_soul_request_notification_permission(permission_result);
+        }
+        receiver.await.map_err(|_| "permission_unavailable".into())
     }
-    #[cfg(not(target_os="macos"))]
-    {Ok(false)}
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(false)
+    }
 }

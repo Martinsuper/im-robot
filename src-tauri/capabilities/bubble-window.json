@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "bubble-window",
+  "description": "Allow the chat window to toggle its always-on-top state",
+  "windows": ["bubble"],
+  "permissions": ["core:window:allow-set-always-on-top"]
+}

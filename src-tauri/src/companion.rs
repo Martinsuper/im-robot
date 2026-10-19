@@ -89,7 +89,7 @@ pub(crate) async fn generate_pet_companion_response(
         &settings.ai,
         reqwest::Method::POST,
         pet_companion_generation_url(&settings.ai)?,
-    )
+    )?
     .json(&request_body)
     .send()
     .await

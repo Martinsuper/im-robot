@@ -2,8 +2,8 @@
 use super::{persist_settings, read_settings};
 use crate::app_settings::{default_speech_model, AiSettings, AiSettingsInput, AppSettings};
 use crate::credentials::{read_api_key, update_api_key};
-use crate::rhythm::emit_work_rhythm_updated;
 use crate::providers::{normalize_base_url, validate_ai_settings};
+use crate::rhythm::emit_work_rhythm_updated;
 use crate::{app_awareness, storage};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
@@ -116,7 +116,8 @@ pub(crate) fn update_ai_settings(
 
     let mut settings = read_settings(&app);
     settings.ai = ai;
-    settings.has_api_key = read_api_key().is_some();
+    settings.has_api_key = read_api_key()?.is_some();
+    settings.credential_error = None;
     persist_settings(&app, &settings)?;
     let _ = app.emit_to("panel", "settings-updated", &settings);
     let _ = app.emit_to("pet", "settings-updated", &settings);

@@ -1,4 +1,3 @@
-use crate::storage;
 /// System calendar bidirectional sync module.
 ///
 /// The local calendar store remains the source of truth. On macOS we mirror
@@ -9,6 +8,7 @@ use crate::storage;
 /// linked directly into the binary. This avoids the osascript / AppleEvents
 /// path which requires a separate TCC permission that is easy to deny.
 use crate::calendar_service::CalendarEvent;
+use crate::storage;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{

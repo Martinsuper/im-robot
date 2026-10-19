@@ -109,7 +109,7 @@ test("textual approval after a workspace tool still triggers a real operation", 
   const f = await fixture(t, (_req, res, requests) => {
     if (requests.length === 1) toolResponse(res, "piko_select_workspace", {});
     else if (requests.length === 2) say(res, "请批准执行以下命令：pwd");
-    else if (requests.length === 3) toolResponse(res, "bash", { command: "pwd" });
+    else if (requests.length === 3) toolResponse(res, process.platform === "win32" ? "powershell" : "bash", { command: "pwd" });
     else say(res);
   });
   const events = await f.run({ unified: true, workspace: null, onEvent(event, send) {

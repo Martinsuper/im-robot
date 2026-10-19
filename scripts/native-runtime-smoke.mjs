@@ -1,0 +1,23 @@
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+const rust = spawnSync('rustc', ['-vV'], { encoding: 'utf8' });
+if (rust.status !== 0) throw new Error(rust.stderr || 'rustc unavailable');
+const host = rust.stdout.match(/^host: (.+)$/m)?.[1];
+if (!host) throw new Error('Missing native target');
+const binary = path.resolve(`src-tauri/binaries/piko-agent-node-${host}${process.platform === 'win32' ? '.exe' : ''}`);
+const expected = JSON.parse(readFileSync('agent/package.json', 'utf8')).dependencies['@earendil-works/pi-coding-agent'];
+const result = spawnSync(binary, ['--input-type=module', '-e', `
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+const sdk = await import('@earendil-works/pi-coding-agent');
+assert.equal(typeof sdk.createAgentSession, 'function');
+assert.equal(process.platform, ${JSON.stringify(process.platform)});
+assert.equal(process.arch, ${JSON.stringify(process.arch)});
+const pkg = JSON.parse(await readFile('node_modules/@earendil-works/pi-coding-agent/package.json', 'utf8'));
+assert.equal(pkg.version, ${JSON.stringify(expected)});
+console.log('Native agent runtime OK:', process.platform, process.arch, process.version);
+`], { cwd: path.resolve('src-tauri/agent-runtime'), encoding: 'utf8', timeout: 30000 });
+if (result.error) throw result.error;
+if (result.status !== 0) throw new Error(result.stderr || result.stdout || 'Native runtime failed');
+console.log(result.stdout.trim());

@@ -1,17 +1,51 @@
+import { flushPersistentState } from "../../lib/persistentState";
+import {
+  commandNames,
+  IpcFailure,
+  invokeCommand,
+  type CommandInvoker,
+  type CommandName,
+  type CommandMap,
+} from "../../generated/ipc";
 import { invoke } from "@tauri-apps/api/core";
 
-export const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+export const isTauriRuntime =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-export function runCommand<T>(command: string, args?: Record<string, unknown>, fallback?: T) {
-  return isTauriRuntime ? invoke<T>(command, args) : Promise.resolve(fallback as T);
-}
+export const runCommand: CommandInvoker = async <T>(
+  command: string,
+  args?: Record<string, unknown>,
+  fallback?: T,
+): Promise<T> => {
+  if (!(commandNames as readonly string[]).includes(command))
+    return Promise.reject(new Error(`Unknown IPC command: ${command}`));
+  if (["export_data", "import_data", "clear_my_data"].includes(command))
+    await flushPersistentState();
+  return isTauriRuntime
+    ? invoke<T>(command, args).catch((error: unknown) => {
+        throw new IpcFailure(
+          command,
+          "backend_error",
+          error instanceof Error ? error.message : String(error),
+        );
+      })
+    : (fallback as T);
+};
 
 /**
  * Fire-and-forget 调用：失败时上报到 console 而不是产生 unhandled rejection。
  * 适用于不关心返回值、也不需要在 UI 上反馈失败的命令。
  */
-export function runCommandQuiet(command: string, args?: Record<string, unknown>): void {
-  runCommand(command, args).catch(reportCommandError(command));
+export function runCommandQuiet<K extends CommandName>(
+  command: K,
+  ...args: {} extends CommandMap[K]["args"]
+    ? [args?: CommandMap[K]["args"]]
+    : [args: CommandMap[K]["args"]]
+): void {
+  if (!isTauriRuntime) return;
+  void invokeCommand(command, args[0] ?? ({} as CommandMap[K]["args"])).catch(
+    reportCommandError(command),
+  );
 }
 
 /** 生成 `.catch` 用的错误上报函数：`.then(handler).catch(reportCommandError("cmd"))` */
@@ -21,15 +55,14 @@ export function reportCommandError(command: string): (error: unknown) => void {
   };
 }
 
-export async function runCommandAndRefresh<T>(
-  command: string,
-  args: Record<string, unknown> | undefined,
+export async function runCommandAndRefresh<K extends CommandName>(
+  command: K,
+  args: CommandMap[K]["args"],
   refreshers: Array<() => Promise<void> | void>,
-  fallback?: T,
+  fallback?: CommandMap[K]["result"],
 ) {
-  const result = await runCommand<T>(command, args, fallback);
-  if (!isTauriRuntime) {
+  const result = isTauriRuntime ? await invokeCommand(command, args) : fallback;
+  if (!isTauriRuntime)
     await Promise.all(refreshers.map((refresh) => Promise.resolve(refresh())));
-  }
   return result;
 }

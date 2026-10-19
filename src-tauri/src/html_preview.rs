@@ -47,11 +47,19 @@ pub fn create_html_preview_frame(
     html: String,
     allow_network: Option<bool>,
 ) -> Result<String, String> {
-    let token=store.insert_with_policy(html, allow_network.unwrap_or(false))?;
-    if let Some(source)=source_chat_id {
-        if matches!(window.label(),"bubble"|"panel") {
-            if let Some(db)=app.try_state::<std::sync::Arc<crate::memory::MemoryDb>>() {
-                if let Ok(mut conn)=db.0.lock(){let _=crate::memory::soul::observations::register_preview(&mut conn,&token,window.label(),&source,crate::common::unix_timestamp() as i64);}
+    let token = store.insert_with_policy(html, allow_network.unwrap_or(false))?;
+    if let Some(source) = source_chat_id {
+        if matches!(window.label(), "bubble" | "panel") {
+            if let Some(db) = app.try_state::<std::sync::Arc<crate::memory::MemoryDb>>() {
+                if let Ok(mut conn) = db.0.lock() {
+                    let _ = crate::memory::soul::observations::register_preview(
+                        &mut conn,
+                        &token,
+                        window.label(),
+                        &source,
+                        crate::common::unix_timestamp() as i64,
+                    );
+                }
             }
         }
     }
@@ -93,9 +101,17 @@ pub async fn open_html_preview_window(
             builder = builder.position(x, y);
         }
     }
-    if let Some(source)=source_chat_id {
-        if let Some(db)=app.try_state::<std::sync::Arc<crate::memory::MemoryDb>>() {
-            if let Ok(mut conn)=db.0.lock(){let _=crate::memory::soul::observations::register_preview(&mut conn,&token,&label,&source,crate::common::unix_timestamp() as i64);}
+    if let Some(source) = source_chat_id {
+        if let Some(db) = app.try_state::<std::sync::Arc<crate::memory::MemoryDb>>() {
+            if let Ok(mut conn) = db.0.lock() {
+                let _ = crate::memory::soul::observations::register_preview(
+                    &mut conn,
+                    &token,
+                    &label,
+                    &source,
+                    crate::common::unix_timestamp() as i64,
+                );
+            }
         }
     }
     let window = match builder.build() {

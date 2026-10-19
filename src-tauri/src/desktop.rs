@@ -7,7 +7,6 @@ use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::thread;
 use std::time::Duration;
 use tauri::menu::ContextMenu;
 use tauri::menu::Menu;
@@ -439,8 +438,10 @@ pub(crate) fn focus_pet_after_bubble_show(app: &AppHandle) {
     }
 
     let app = app.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(40));
+    crate::background::SUPERVISOR.spawn_effect("pet-refocus", move |worker| {
+        if !worker.wait(Duration::from_millis(40)) {
+            return;
+        }
         if let Some(pet_window) = app.get_webview_window("pet") {
             let _ = pet_window.set_focus();
         }
@@ -518,12 +519,18 @@ pub(crate) fn show_pet_context_menu(app: AppHandle) -> Result<(), String> {
 
     let chat_item = MenuItem::with_id(&app, "pet_ctx_chat", "对话", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let break_item = MenuItem::with_id(&app, "pet_ctx_break", "休息 5 分钟", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
     let panel_item = MenuItem::with_id(&app, "pet_ctx_panel", "打开面板", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(&app, &[&chat_item, &break_item, &panel_item])
+    let hide_item = MenuItem::with_id(&app, "pet_ctx_hide", "隐藏", true, None::<&str>)
         .map_err(|e| e.to_string())?;
+    let quit_item = MenuItem::with_id(&app, "pet_ctx_quit", "退出", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let separator = PredefinedMenuItem::separator(&app).map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(
+        &app,
+        &[&chat_item, &panel_item, &separator, &hide_item, &quit_item],
+    )
+    .map_err(|e| e.to_string())?;
 
     // 菜单必须在 popup 之后继续存活，否则 macOS 上会立刻消失。
     // 注意：Manager::manage 对已存在的类型不会覆盖，所以这里用 State slot 替换。
@@ -542,7 +549,7 @@ pub(crate) fn show_pet_context_menu(app: AppHandle) -> Result<(), String> {
         //  - 「弹出中」必须打在 popup 之前；
         //  - 上面那把 Mutex guard 会横跨整个菜单生命期。这里没有死锁风险，
         //    因为菜单是模态的，期间不会有第二次调用。
-        println!("[pet-menu] 弹出右键菜单：对话 / 休息 5 分钟 / 打开面板");
+        println!("[pet-menu] 弹出右键菜单：对话 / 打开面板 / 隐藏 / 退出");
         match menu.popup(window) {
             Ok(()) => println!("[pet-menu] 菜单已关闭"),
             Err(error) => eprintln!("[pet-menu] 弹出右键菜单失败：{error}"),
@@ -619,10 +626,21 @@ pub(crate) fn configure_tray(
     let separator1 = PredefinedMenuItem::separator(app)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let separator3 = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[
-        &open_chat, &capture, &separator1, &open_panel, &records, &settings,
-        &separator2, &show_pet, &separator3, &quit,
-    ])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &open_chat,
+            &capture,
+            &separator1,
+            &open_panel,
+            &records,
+            &settings,
+            &separator2,
+            &show_pet,
+            &separator3,
+            &quit,
+        ],
+    )?;
     let tray_icon = TrayIconBuilder::new()
         .icon(app.default_window_icon().expect("application icon").clone())
         .tooltip("Piko · 点击打开对话与快捷操作")

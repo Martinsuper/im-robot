@@ -1,8 +1,8 @@
 use super::{Memo, MemoInput, MEMO_CATEGORIES};
 use crate::agent_operations;
-use crate::storage;
 use crate::common::truncate_text;
 use crate::common::unix_timestamp;
+use crate::storage;
 use serde_json::Value;
 use std::{
     path::PathBuf,

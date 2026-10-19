@@ -1,9 +1,9 @@
 use super::{service::*, Reminder};
-use crate::reminder_schedule::next_repeat_due;
-use crate::storage;
 use crate::common::unix_timestamp;
+use crate::reminder_schedule::next_repeat_due;
 use crate::runtime_types::PetVisualEvent;
-use std::{thread, time::Duration};
+use crate::storage;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 pub(crate) fn collect_due_reminders(reminders: &mut [Reminder], now: u64) -> Vec<Reminder> {
@@ -47,18 +47,28 @@ pub(crate) fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, St
 
 pub(crate) fn watch_reminders(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || loop {
-        let revision = storage::revision();
-        if let Err(error) = process_due_reminders(&app) {
-            eprintln!("[reminders] {error}");
+    crate::background::SUPERVISOR.spawn("reminders", move |worker| {
+        while !worker.cancelled() {
+            let revision = storage::revision();
+            let result = process_due_reminders(&app);
+            worker.health(result.as_ref().map(|_| ()).map_err(Clone::clone));
+            if let Err(error) = result {
+                eprintln!("[reminders] {error}");
+            }
+            if worker.cancelled() {
+                break;
+            }
+            let now = unix_timestamp();
+            let delay = read_reminders(&app)
+                .iter()
+                .filter(|item| item.status == "pending")
+                .map(|item| item.due_at.saturating_sub(now).clamp(1, 60))
+                .min()
+                .unwrap_or(60);
+            storage::wait_for_change_until(revision, Duration::from_secs(delay), || {
+                worker.cancelled()
+            });
         }
-        let now = unix_timestamp();
-        let delay = read_reminders(&app)
-            .iter()
-            .filter(|item| item.status == "pending")
-            .map(|item| item.due_at.saturating_sub(now).clamp(1, 60))
-            .min()
-            .unwrap_or(60);
-        storage::wait_for_change(revision, Duration::from_secs(delay));
+        Ok(())
     });
 }

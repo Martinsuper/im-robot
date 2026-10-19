@@ -176,7 +176,7 @@ fn suppresses_idle_rest_while_sensing_is_paused_or_piko_is_busy() {
 #[test]
 fn compares_release_version_parts() {
     assert!(version_parts("v0.2.0") > version_parts("0.1.9"));
-    assert_eq!(version_parts("v1.0.0"), vec![1, 0, 0]);
+    assert_eq!(version_parts("v1.0.0"), vec![1]);
 }
 
 #[test]

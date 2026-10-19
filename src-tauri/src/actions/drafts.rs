@@ -1,10 +1,17 @@
 //! Business-action previews; creating a draft never executes its tool.
-use crate::calendar_service::{calendar_delete_batch_input_from_value, calendar_delete_input_from_value, calendar_event_batch_input_from_value, calendar_event_input_from_value};
-use crate::reminder_service::{reminder_delete_input_from_value, reminder_input_from_value, repeat_rule_label};
-use crate::memos::{infer_memo_category, memo_category_label, memo_input_from_value, summarize_memo};
 use super::ActionDraft;
-use crate::plugins::ToolCall;
+use crate::calendar_service::{
+    calendar_delete_batch_input_from_value, calendar_delete_input_from_value,
+    calendar_event_batch_input_from_value, calendar_event_input_from_value,
+};
 use crate::memory;
+use crate::memos::{
+    infer_memo_category, memo_category_label, memo_input_from_value, summarize_memo,
+};
+use crate::plugins::ToolCall;
+use crate::reminder_service::{
+    reminder_delete_input_from_value, reminder_input_from_value, repeat_rule_label,
+};
 use chrono::{DateTime, Local, TimeZone};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -166,7 +173,7 @@ pub(crate) fn action_draft_from_tool_call_with_locale(
             _ => Vec::new(),
         };
         if let Some(advice) = memory::soul::observations::schedule_advice(&events, locale) {
-            summary.push_str("\n");
+            summary.push('\n');
             summary.push_str(advice);
         }
     }

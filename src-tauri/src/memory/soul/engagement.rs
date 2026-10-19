@@ -145,8 +145,14 @@ pub fn propose(
     };
     let id = format!("response-{message_id}");
     let changed=conn.execute("INSERT INTO soul_topic_responses(id,message_id,topic_id,expected_revision,proposed_state,proposed_time,status,created_at) VALUES(?1,?2,?3,?4,?5,?6,'pending_review',?7) ON CONFLICT(id) DO NOTHING",params![id,message_id,topic.id,topic.revision,state,time.map(|time|serde_json::to_string(&time).unwrap()),now]).map_err(|_|"ledger_write_failed")?;
-    if changed==0 {
-        return conn.query_row("SELECT status FROM soul_topic_responses WHERE id=?1",[&id],|r|r.get(0)).map_err(|_|"ledger_unreadable".into());
+    if changed == 0 {
+        return conn
+            .query_row(
+                "SELECT status FROM soul_topic_responses WHERE id=?1",
+                [&id],
+                |r| r.get(0),
+            )
+            .map_err(|_| "ledger_unreadable".into());
     }
     Ok("pending_review".into())
 }

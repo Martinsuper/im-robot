@@ -52,7 +52,29 @@ export async function installPanelBackend(page: Page, options: BackendOptions = 
       unregisterCallback(id: number) { callbacks.delete(id); },
       async invoke(command: string, args: any = {}) {
         calls.push({ command, args: clone(args) });
+        if (["get_pet_state", "migrate_pet_state", "save_pet_state"].includes(command)) {
+          const owner = window as unknown as { __petWire?: { schemaVersion: number; initialized: boolean; entries: Record<string, { revision: number; value: string | null }> } };
+          const pet = owner.__petWire ??= { schemaVersion: 1, initialized: true, entries: {} };
+          const payload = (args ?? {}) as Record<string, unknown>;
+          if (command === "save_pet_state") {
+            const key = String(payload.key); const previous = pet.entries[key] ?? { revision: 0, value: null };
+            if (previous.revision !== payload.expectedRevision) throw new Error("pet state conflict");
+            return pet.entries[key] = { revision: previous.revision + 1, value: payload.value as string | null };
+          }
+          return structuredClone(pet);
+        }
+        if (command === "background_status") return [];
+        if (command === "get_data_health") return { memoryPersistent: true, sqlite: { acquisitions: 0, waitMicros: 0, holdMicros: 0 }, jsonLockAcquisitions: 0, jsonLockWaitMicros: 0, speechRecognition: true, wasmPlugins: true };
+
         if (options.failures?.[command]) throw options.failures[command];
+
+        if (command === "plugin:dialog|open") return options.snapshotDirectory ?? null;
+        const snapshot = { id: "snapshot-ui", directory: options.snapshotDirectory ?? "/tmp/piko-snapshot-ui", createdAt: 1792288800, fileCount: 2, bytes: 100, excluded: ["API Key"] };
+        if (command === "create_data_snapshot" || command === "preview_data_snapshot") return snapshot;
+        if (command === "restore_data_snapshot") {
+          for (const listener of listeners.values()) if (listener.event === "data-restore-pending") callbacks.get(listener.handler)?.({ event: "data-restore-pending", payload: null });
+          return { rollback: snapshot, restoredFiles: 2, restartRequired: true };
+        }
         const id = () => `ui-${++state.nextId}`;
         let result: any = null;
         switch (command) {

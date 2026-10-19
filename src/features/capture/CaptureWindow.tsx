@@ -22,7 +22,7 @@ export function CaptureWindow() {
     try {
       await runCommand("confirm_screen_capture", { selection });
     } catch (captureError) {
-      setError(String(captureError));
+      setError(captureError instanceof Error ? captureError.message : String(captureError));
     }
   }, [hasSelection, selection]);
 

@@ -72,3 +72,36 @@ npm run tauri dev
 ## 素材来源
 
 - 默认像素精灵使用 [OpenPets](https://github.com/alvinunreal/openpets) 的开源素材，遵循 MIT License。
+
+## 开发验证与发布
+
+首次验证前运行 `npm ci`、`npm --prefix agent ci` 和 `npx playwright install chromium`。浏览器测试默认使用 Playwright 配套 Chromium；本地调试可用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 显式指定浏览器。
+
+运行 `npm run verify` 检查版本、模块边界、翻译、Lint、单元测试和前端构建；运行 `npm run test:e2e` 完成浏览器交互回归。Rust 使用 `cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings` 和 `cargo test`（在 src-tauri 目录内）。CI 在 Linux、macOS、Windows 验证 Rust 与原生 Agent 运行时，macOS 额外验证通知和日历桥接。
+
+API Key 使用系统凭据存储（macOS Keychain、Windows Credential Manager、Linux Secret Service）。Linux 需要可用且已解锁的 Secret Service；开发构建需要 `libdbus-1-dev`。旧 `api-credentials.json` 会在成功写入并验证系统凭据后删除；迁移失败保留原文件，并在设置中显示错误。单元测试使用模拟凭据，不读取或修改个人钥匙串。
+
+发布先通过质量检查，再创建草稿、构建各平台安装包并上传 SHA-256 校验文件，全部成功后公开。应用按系统与 CPU 架构选择安装包，仅接受项目正式 Release 的 HTTPS 地址，校验摘要后才能打开文件。缺少匹配安装包或校验值时请从发布页手动下载。下载上限为 1 GiB，支持进度与取消。
+
+macOS 最低版本为 11，与随应用分发的 Node 22 原生运行时要求一致。
+
+
+## 架构与数据维护
+
+IPC 合约由 Rust 源码生成：修改命令或传输类型后运行 `npm run contracts:generate`，通过 `npm run contracts:check` 检查漂移。Pi SDK 接入集中在 `agent/sdk-adapter.mjs`；桌面端通过单实例插件保护本地数据访问。
+
+设置页支持一致性完整备份、恢复预览及确认恢复后重启。备份包含归属清单内的业务 JSON、SQLite 与 Agent 会话，不含凭据、缓存、插件程序和工作区原文件；上限为 2 GiB / 2 万文件。交互式恢复要求应用版本一致，校验内容并保留回滚快照。存储健康信息提供锁等待与持有指标。
+
+Rust 默认启用 `speech-recognition` 与 `wasm-plugins`；可使用 `cargo check --manifest-path src-tauri/Cargo.toml --no-default-features` 检查精简后端。完整边界、依赖及验证记录见[架构优化实施记录](doc/review/architecture-optimization-2026-10-18.md)。
+
+
+## 自动化桌面验收
+
+运行 `npm run verify:desktop` 可依次执行前端、端到端、Rust、完整/精简构建检查、打包 Node/Agent 与原生桥接测试，每次结果和日志保存在 `artifacts/acceptance/`。macOS 可运行 `npm run verify:desktop -- --bundle`，额外构建应用包并检查版本、权限文案、架构、随包源码及 Node/SDK 加载。单独检查现有包使用 `npm run inspect:bundle`。
+
+验收脚本不启动正式桌面应用；交互式系统权限、真实桌面多窗口、退出重启和签名/公证仍需对应设备验收。三平台 CI 会运行打包 Agent 测试，前端 CI 失败时保留 Playwright 诊断文件。
+
+依赖审计可在安装 `cargo-audit` 后通过 `npm run verify:desktop -- --audit` 纳入验收；安全公告命中会导致验收失败。最近结果见[自动化验收记录](doc/review/desktop-acceptance-2026-10-19.md)。
+
+
+依赖安全修复后，默认 Rust 构建要求 Rust 1.96+；截图后端采用 xcap，Linux 还需 PipeWire/XCB 开发包及 libclang。语音 FFI 的 ZIP 构建依赖补丁和审计边界见[依赖安全修复记录](doc/review/dependency-security-remediation-2026-10-19.md)。

@@ -21,8 +21,23 @@ struct Cache {
     unreadable: HashSet<PathBuf>,
 }
 
-pub(crate) fn transaction() -> ReentrantMutexGuard<'static, ()> {
-    TRANSACTION.lock()
+pub(crate) struct Transaction {
+    _guard: ReentrantMutexGuard<'static, ()>,
+    _lease: crate::data_gate::ReadLease,
+}
+pub(crate) fn transaction() -> Transaction {
+    let lease = crate::data_gate::read();
+    let started = std::time::Instant::now();
+    let guard = TRANSACTION.lock();
+    JSON_LOCK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    JSON_LOCK_WAIT.fetch_add(
+        started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    Transaction {
+        _guard: guard,
+        _lease: lease,
+    }
 }
 
 pub(crate) fn revision() -> u64 {
@@ -33,6 +48,25 @@ pub(crate) fn wait_for_change(revision: u64, timeout: std::time::Duration) {
     let _ = CHANGES
         .1
         .wait_timeout_while(guard, timeout, |current| *current == revision);
+}
+
+/// Storage revisions wake timers immediately; bounded slices also observe process shutdown.
+pub(crate) fn wait_for_change_until(
+    revision: u64,
+    timeout: std::time::Duration,
+    cancelled: impl Fn() -> bool,
+) {
+    let deadline = std::time::Instant::now() + timeout;
+    while self::revision() == revision && !cancelled() {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        wait_for_change(
+            revision,
+            remaining.min(std::time::Duration::from_millis(100)),
+        );
+    }
 }
 
 pub(crate) fn read<T: DeserializeOwned + Default>(path: &Path) -> Result<T, String> {
@@ -110,6 +144,20 @@ pub(crate) fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(),
     *CHANGES.0.lock().unwrap_or_else(|e| e.into_inner()) += 1;
     CHANGES.1.notify_all();
     Ok(())
+}
+
+/// Called after an exclusive restore, before any observer is allowed to read again.
+pub(crate) fn invalidate_all() {
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Cache::default();
+    *CHANGES.0.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+    CHANGES.1.notify_all();
+}
+
+static JSON_LOCK_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static JSON_LOCK_WAIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) fn lock_metrics() -> (u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (JSON_LOCK_COUNT.load(Relaxed), JSON_LOCK_WAIT.load(Relaxed))
 }
 
 #[cfg(test)]

@@ -39,7 +39,7 @@ export async function fixture(t, handler) {
   });
   function run({ prompt = "请执行任务", conversationId = "test-session", onEvent,
     workingDirectory = cwd, provider = "openai-compatible", model = "mock", unified = false, autoApproveCommands = false, workspace = cwd, businessTools = [], history, images, readOnly = false, resumeRoot, requestId, systemPrompt } = {}) {
-    const child = spawn(process.execPath, [sidecar], { stdio: ["pipe", "pipe", "pipe"] }); children.push(child);
+    const child = spawn(process.env.PIKO_TEST_NODE || process.execPath, [sidecar], { stdio: ["pipe", "pipe", "pipe"] }); children.push(child);
     const events = []; let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.stdin.on("error", () => {});

@@ -16,7 +16,7 @@ pub(crate) async fn list_models(app: AppHandle) -> Result<Vec<ModelInfo>, String
         &settings.ai,
         reqwest::Method::GET,
         models_url(&settings.ai),
-    )
+    )?
     .send()
     .await
     .map_err(|error| error.to_string())?

@@ -2,7 +2,7 @@ use chrono::TimeZone;
 #[cfg(all(unix, not(target_os = "macos")))]
 use rdev::{listen, Event, EventType, Key};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, sync::Mutex, thread, time::Duration};
+use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
 use tauri::{AppHandle, Manager};
 
 const TYPING_SESSION_IDLE_SECONDS: u64 = 5;
@@ -386,7 +386,11 @@ mod macos_keyboard_monitor {
         ) -> CFRunLoopSourceRef;
         fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFRunLoopMode);
         fn CFRunLoopGetCurrent() -> CFRunLoopRef;
-        fn CFRunLoopRun();
+        fn CFRunLoopRunInMode(mode: CFRunLoopMode, seconds: f64, return_after_source: bool) -> i32;
+        fn CFRunLoopRemoveSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFRunLoopMode);
+        fn CFMachPortInvalidate(port: CFMachPortRef);
+        fn CFRelease(value: *const c_void);
+        static kCFRunLoopDefaultMode: CFRunLoopMode;
 
         static kCFRunLoopCommonModes: CFRunLoopMode;
     }
@@ -418,7 +422,7 @@ mod macos_keyboard_monitor {
         event
     }
 
-    pub fn run(app: AppHandle) -> Result<(), &'static str> {
+    pub fn run(app: AppHandle, worker: crate::background::Worker) -> Result<(), String> {
         let app = Box::new(app);
         let app_ptr = Box::into_raw(app) as *mut c_void;
 
@@ -433,13 +437,15 @@ mod macos_keyboard_monitor {
             );
             if tap.is_null() {
                 let _ = Box::from_raw(app_ptr as *mut AppHandle);
-                return Err("event tap unavailable");
+                return Err("event tap unavailable".into());
             }
 
             let run_loop_source = CFMachPortCreateRunLoopSource(ptr::null(), tap, 0);
             if run_loop_source.is_null() {
                 let _ = Box::from_raw(app_ptr as *mut AppHandle);
-                return Err("event tap run loop source unavailable");
+                CFMachPortInvalidate(tap);
+                CFRelease(tap);
+                return Err("event tap run loop source unavailable".into());
             }
 
             CFRunLoopAddSource(
@@ -448,7 +454,19 @@ mod macos_keyboard_monitor {
                 kCFRunLoopCommonModes,
             );
             CGEventTapEnable(tap, true);
-            CFRunLoopRun();
+            while !worker.cancelled() {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+            }
+            CGEventTapEnable(tap, false);
+            CFRunLoopRemoveSource(
+                CFRunLoopGetCurrent(),
+                run_loop_source,
+                kCFRunLoopCommonModes,
+            );
+            CFMachPortInvalidate(tap);
+            CFRelease(run_loop_source);
+            CFRelease(tap);
+            drop(Box::from_raw(app_ptr as *mut AppHandle));
         }
 
         Ok(())
@@ -474,7 +492,7 @@ fn virtual_key_delta(vk: u32) -> i64 {
 mod windows_keyboard_monitor {
     use super::{is_sensing_paused, virtual_key_delta, TypingActivityState};
     use std::sync::atomic::{AtomicPtr, Ordering};
-    use std::{thread, time::Duration};
+    use std::time::Duration;
     use tauri::{AppHandle, Manager};
     use windows::Win32::Foundation::{LPARAM, LRESULT, WAIT_OBJECT_0, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -517,7 +535,7 @@ mod windows_keyboard_monitor {
         CallNextHookEx(HHOOK::default(), code, wparam, lparam)
     }
 
-    pub fn run(app: AppHandle) {
+    pub fn run(app: AppHandle, worker: crate::background::Worker) {
         MONITOR_APP.store(Box::into_raw(Box::new(app)), Ordering::Release);
 
         loop {
@@ -527,7 +545,9 @@ mod windows_keyboard_monitor {
 
             // 暂停感知：保持无钩子状态，等恢复后再装，250ms 轮询恢复标记
             if is_sensing_paused(app) {
-                thread::sleep(Duration::from_millis(250));
+                if !worker.wait(Duration::from_millis(250)) {
+                    break;
+                }
                 continue;
             }
 
@@ -537,7 +557,9 @@ mod windows_keyboard_monitor {
                 Ok(hook) => hook,
                 Err(error) => {
                     eprintln!("typing monitor: SetWindowsHookExW failed: {error}");
-                    thread::sleep(Duration::from_secs(1));
+                    if !worker.wait(Duration::from_secs(1)) {
+                        break;
+                    }
                     continue;
                 }
             };
@@ -565,59 +587,134 @@ mod windows_keyboard_monitor {
                 }
             }
         }
+        let pointer = MONITOR_APP.swap(std::ptr::null_mut(), Ordering::AcqRel);
+        if !pointer.is_null() {
+            unsafe {
+                drop(Box::from_raw(pointer));
+            }
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
 pub fn start_keyboard_monitor(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || {
-        if let Err(error) = macos_keyboard_monitor::run(app) {
-            eprintln!("typing monitor stopped: {error}");
-        }
+    crate::background::SUPERVISOR.spawn("keyboard-monitor", move |worker| {
+        macos_keyboard_monitor::run(app, worker)
     });
 }
-
 #[cfg(target_os = "windows")]
 pub fn start_keyboard_monitor(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || windows_keyboard_monitor::run(app));
+    crate::background::SUPERVISOR.spawn("keyboard-monitor", move |worker| {
+        windows_keyboard_monitor::run(app, worker);
+        Ok(())
+    });
 }
-
+#[cfg(target_os = "linux")]
+pub fn keyboard_worker_main() -> bool {
+    if std::env::args().nth(1).as_deref() != Some("--piko-keyboard-worker") {
+        return false;
+    }
+    use std::io::Write;
+    let result = listen(move |event: Event| {
+        if let EventType::KeyPress(key) = event.event_type {
+            let delta = keypress_delta(key);
+            if delta != 0 {
+                let mut output = std::io::stdout().lock();
+                if writeln!(output, "{delta}")
+                    .and_then(|_| output.flush())
+                    .is_err()
+                {
+                    std::process::exit(0);
+                }
+            }
+        }
+    });
+    if result.is_err() {
+        std::process::exit(1);
+    }
+    true
+}
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn start_keyboard_monitor(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || {
-        let listen_result = listen(move |event: Event| {
-            if let EventType::KeyPress(key) = event.event_type {
-                let delta = keypress_delta(key);
-                if delta == 0 {
-                    return;
+    crate::background::SUPERVISOR.spawn("keyboard-monitor", move |worker| {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        // rdev's native X11 loop has no stop API. A dedicated child gives it a bounded lifetime.
+        let mut child = Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+            .arg("--piko-keyboard-worker")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        let output = child
+            .stdout
+            .take()
+            .ok_or("keyboard_worker_stdout_missing")?;
+        let (send, receive) = std::sync::mpsc::sync_channel(128);
+        let reader = std::thread::spawn(move || {
+            for line in BufReader::new(output).lines() {
+                match line {
+                    Ok(line) => {
+                        if send.send(line).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
                 }
-                let state = app.state::<TypingActivityState>();
-                let _ = state.record_keypress(&app, delta);
             }
         });
-        if let Err(error) = listen_result {
-            eprintln!("typing monitor stopped: {error:?}");
+        let mut failure = None;
+        while !worker.cancelled() {
+            match receive.recv_timeout(Duration::from_millis(100)) {
+                Ok(line) => {
+                    if let Ok(delta @ (-1 | 1)) = line.parse::<i64>() {
+                        let _ = app
+                            .state::<TypingActivityState>()
+                            .record_keypress(&app, delta);
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (),
+                Err(_) => {
+                    failure = Some("keyboard_worker_exited".to_string());
+                    break;
+                }
+            }
         }
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(receive);
+        let _ = reader.join();
+        failure.map_or(Ok(()), Err)
     });
 }
 
 pub fn watch_typing_rollover(app: &AppHandle) {
     let app = app.clone();
-    thread::spawn(move || loop {
-        let state = app.state::<TypingActivityState>();
-        let now = crate::common::unix_timestamp();
-        let _ = state.finalize_stale_session(&app, now);
-        let _ = state.flush_snapshot_if_needed(&app, now);
-        thread::sleep(Duration::from_secs(2));
+    crate::background::SUPERVISOR.spawn("typing-rollover", move |worker| {
+        while !worker.cancelled() {
+            let state = app.state::<TypingActivityState>();
+            let now = crate::common::unix_timestamp();
+            worker.health(
+                state
+                    .finalize_stale_session(&app, now)
+                    .and_then(|_| state.flush_snapshot_if_needed(&app, now))
+                    .map(|_| ()),
+            );
+            if !worker.wait(Duration::from_secs(2)) {
+                break;
+            }
+        }
+        Ok(())
     });
 }
 
 pub fn get_typing_stats_today(app: &AppHandle) -> Result<TypingStatsToday, String> {
-    let state = app.state::<TypingActivityState>();
-    state.snapshot(crate::common::unix_timestamp())
+    app.state::<TypingActivityState>()
+        .snapshot(crate::common::unix_timestamp())
 }
 
 #[cfg(all(test, target_os = "macos"))]

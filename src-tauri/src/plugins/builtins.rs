@@ -1,9 +1,18 @@
 //! Built-in reminder, memo and calendar adapters; delegates domain writes to existing services.
-use crate::calendar_service::{CalendarEvent, calendar_delete_batch_input_from_value, calendar_delete_input_from_value, calendar_event_batch_input_from_value, calendar_event_input_from_value, create_calendar_event_batch_record, create_calendar_event_record, delete_calendar_event_batch_record, delete_calendar_event_record, find_calendar_conflicts, read_calendar_events};
-use crate::reminder_service::{create_reminder_record, delete_reminder_record, read_reminders, reminder_delete_input_from_value, reminder_input_from_value};
-use crate::memos::{create_memo_record, memo_input_from_value, read_memos};
 use super::{PikoPlugin, PluginManifest, PluginToolManifest};
+use crate::calendar_service::{
+    calendar_delete_batch_input_from_value, calendar_delete_input_from_value,
+    calendar_event_batch_input_from_value, calendar_event_input_from_value,
+    create_calendar_event_batch_record, create_calendar_event_record,
+    delete_calendar_event_batch_record, delete_calendar_event_record, find_calendar_conflicts,
+    read_calendar_events, CalendarEvent,
+};
 use crate::common::tool_timestamp;
+use crate::memos::{create_memo_record, memo_input_from_value, read_memos};
+use crate::reminder_service::{
+    create_reminder_record, delete_reminder_record, read_reminders,
+    reminder_delete_input_from_value, reminder_input_from_value,
+};
 use chrono::{Local, TimeZone};
 use serde_json::{json, Value};
 use tauri::AppHandle;

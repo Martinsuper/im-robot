@@ -1,6 +1,18 @@
 //! Plugin registry and shared tool contracts. Business writes remain behind the existing approval flow.
 pub(crate) mod bridge;
 mod builtins;
+#[cfg(feature = "wasm-plugins")]
+mod wasm_runtime;
+#[cfg(not(feature = "wasm-plugins"))]
+mod wasm_runtime {
+    pub(super) fn execute(
+        _: &std::path::Path,
+        _: &str,
+        _: Vec<u8>,
+    ) -> Result<(String, String), String> {
+        Err("此构建未启用 WASM 插件".into())
+    }
+}
 pub(crate) mod commands;
 pub(crate) mod declarative;
 #[cfg(test)]

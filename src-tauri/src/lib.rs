@@ -6,11 +6,14 @@ mod calendar_service;
 mod common;
 mod companion;
 mod data_commands;
+mod data_gate;
+mod data_snapshot;
 mod desktop;
 mod favorites;
 mod html_preview;
 mod memos;
 mod notifications;
+mod pet_state;
 mod reminder_service;
 mod runtime_types;
 mod screen_capture;
@@ -37,6 +40,7 @@ mod storage;
 pub mod sync;
 pub mod typing_activity;
 
+mod background;
 mod bootstrap;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

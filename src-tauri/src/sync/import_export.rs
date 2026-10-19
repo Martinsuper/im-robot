@@ -1,8 +1,7 @@
+use crate::app_settings::AppSettings;
+use crate::calendar_service::CalendarEvent;
 use crate::chat_session::ChatHistoryEntry;
-use crate::calendar_service::{CalendarEvent};
 use crate::reminder_service::Reminder;
-use crate::storage;
-use crate::settings::{app_settings_path, persist_settings, read_persisted_settings};
 /// Data import/export module.
 ///
 /// Supports exporting and importing: chat history, reminders, calendar events,
@@ -11,7 +10,8 @@ use crate::settings::{app_settings_path, persist_settings, read_persisted_settin
 /// Security: API keys are NEVER exported (they live in keyring).
 /// Temporary attachments and screenshots are NOT included.
 use crate::rhythm::{persist_focus_records, read_focus_records, FocusRecord};
-use crate::app_settings::AppSettings;
+use crate::settings::{app_settings_path, persist_settings, read_persisted_settings};
+use crate::storage;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -213,7 +213,6 @@ pub struct ImportResult {
 
 // --- Read functions (reuse existing lib.rs patterns) ---
 
-
 fn read_settings_for_export(app: &AppHandle) -> Option<SanitizedSettings> {
     app_settings_path(app)
         .and_then(|path| fs::read_to_string(path).ok())
@@ -222,7 +221,6 @@ fn read_settings_for_export(app: &AppHandle) -> Option<SanitizedSettings> {
 }
 
 // --- Path helpers ---
-
 
 // --- Merge functions ---
 

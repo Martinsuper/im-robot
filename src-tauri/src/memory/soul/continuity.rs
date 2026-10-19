@@ -579,15 +579,39 @@ mod tests {
 }
 
 #[cfg(test)]
-mod retention_tests{
- use super::*;
- #[test]
- fn versions_are_bounded_and_failed_rollback_is_atomic(){
-  let mut c=Connection::open_in_memory().unwrap();store::migrate(&mut c).unwrap();profile::load_or_create(&mut c,"en-US",100).unwrap();
-  for revision in 1..=55{store::transaction(&mut c,|tx|save_version(tx,revision,&json!({"tone":format!("tone {revision}")}),&json!({"kind":"test","id":"source","revision":revision}),100+revision)).unwrap();}
-  assert_eq!(c.query_row("SELECT count(*) FROM soul_role_versions",[],|r|r.get::<_,i64>(0)).unwrap(),50);
-  assert!(rollback(&mut c,"role-1",56,200).is_err());
-  c.execute_batch("CREATE TRIGGER fail_version BEFORE INSERT ON soul_role_versions BEGIN SELECT RAISE(ABORT,'test'); END").unwrap();
-  assert!(rollback(&mut c,"role-54",56,201).is_err());assert_eq!(profile::load_or_create(&mut c,"en-US",202).unwrap().revision,56);
- }
+mod retention_tests {
+    use super::*;
+    #[test]
+    fn versions_are_bounded_and_failed_rollback_is_atomic() {
+        let mut c = Connection::open_in_memory().unwrap();
+        store::migrate(&mut c).unwrap();
+        profile::load_or_create(&mut c, "en-US", 100).unwrap();
+        for revision in 1..=55 {
+            store::transaction(&mut c, |tx| {
+                save_version(
+                    tx,
+                    revision,
+                    &json!({"tone":format!("tone {revision}")}),
+                    &json!({"kind":"test","id":"source","revision":revision}),
+                    100 + revision,
+                )
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM soul_role_versions", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            50
+        );
+        assert!(rollback(&mut c, "role-1", 56, 200).is_err());
+        c.execute_batch("CREATE TRIGGER fail_version BEFORE INSERT ON soul_role_versions BEGIN SELECT RAISE(ABORT,'test'); END").unwrap();
+        assert!(rollback(&mut c, "role-54", 56, 201).is_err());
+        assert_eq!(
+            profile::load_or_create(&mut c, "en-US", 202)
+                .unwrap()
+                .revision,
+            56
+        );
+    }
 }

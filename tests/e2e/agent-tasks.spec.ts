@@ -43,6 +43,20 @@ async function installAgentBackend(page: Page, taskRecords: unknown[] = []) {
       unregisterCallback(id: number) { callbacks.delete(id); },
       async invoke(command: string, args: Record<string, unknown> = {}) {
         state.calls.push({ command, args: structuredClone(args) });
+        if (["get_pet_state", "migrate_pet_state", "save_pet_state"].includes(command)) {
+          const owner = window as unknown as { __petWire?: { schemaVersion: number; initialized: boolean; entries: Record<string, { revision: number; value: string | null }> } };
+          const pet = owner.__petWire ??= { schemaVersion: 1, initialized: true, entries: {} };
+          const payload = (args ?? {}) as Record<string, unknown>;
+          if (command === "save_pet_state") {
+            const key = String(payload.key); const previous = pet.entries[key] ?? { revision: 0, value: null };
+            if (previous.revision !== payload.expectedRevision) throw new Error("pet state conflict");
+            return pet.entries[key] = { revision: previous.revision + 1, value: payload.value as string | null };
+          }
+          return structuredClone(pet);
+        }
+        if (command === "background_status") return [];
+        if (command === "get_data_health") return { memoryPersistent: true, sqlite: { acquisitions: 0, waitMicros: 0, holdMicros: 0 }, jsonLockAcquisitions: 0, jsonLockWaitMicros: 0, speechRecognition: true, wasmPlugins: true };
+
         if (command === "plugin:event|listen") {
           const id = ++sequence;
           listeners.set(id, { topic: args.event as string, handler: args.handler as number });
@@ -194,7 +208,7 @@ test("expired approval disappears and cannot execute from a stale card", async (
   await expect(page.getByRole("button", { name: "允许此次操作" })).toBeVisible();
   await emit(page, input.requestId, { type: "approval-expired", approvalId: "expired" });
   await expect(page.getByRole("button", { name: "允许此次操作" })).toHaveCount(0);
-  await expect(page.getByRole("status").filter({ hasText: "操作确认已超时，该操作未获批准" })).toBeVisible();
+  await expect(page.locator(".agent-activity").getByRole("status").filter({ hasText: "操作确认已超时，该操作未获批准" })).toBeVisible();
   expect(await calls(page, "agent_approve")).toHaveLength(0);
 });
 
@@ -215,16 +229,17 @@ test("one composer handles ordinary chat without a workspace or mode switch", as
   await expect(page.getByText("让 Piko 执行任务")).toHaveCount(0);
   const input = await start(page, "你好");
   expect(input.unified).toBe(true); expect(input.cwd).toBeUndefined();
-  await emit(page, input.requestId, { type: "delta", text: "你好，有什么想聊的？" });
+  await emit(page, input.requestId, { type: "delta", text: "今天想聊点什么？" });
   await emit(page, input.requestId, { type: "completed" });
-  await expect(page.getByText("你好，有什么想聊的？", { exact: true })).toBeVisible();
+  await expect(page.getByText("今天想聊点什么？", { exact: true })).toBeVisible();
   expect(await calls(page, "chat_start")).toHaveLength(0);
 });
 
 test("browser preview keeps one composer and disables native directory selection", async ({ page }) => {
   await page.goto("/?view=bubble");
   await expect(page.getByRole("textbox")).toHaveCount(1);
-  await expect(page.getByRole("button", { name: /^📁/ })).toBeDisabled();
+  await page.getByTestId("chat-context-toggle").click();
+  await expect(page.getByTestId("workspace-directory")).toBeDisabled();
   await page.getByLabel("发送给 Piko 的问题").fill("你好");
   await page.getByRole("button", { name: "发送消息" }).click();
   await expect(page.getByText("这是浏览器预览回复：你好", { exact: true })).toBeVisible();
@@ -233,7 +248,8 @@ test("browser preview keeps one composer and disables native directory selection
 test("directory cancellation preserves text and ordinary sending remains available", async ({ page }) => {
   await installAgentBackend(page); await bridge(page, "directory", null);
   await page.getByLabel("发送给 Piko 的问题").fill("保留这段输入");
-  await page.getByRole("button", { name: /^📁/ }).click();
+  await page.getByTestId("chat-context-toggle").click();
+  await page.getByTestId("workspace-directory").click();
   await expect(page.getByLabel("发送给 Piko 的问题")).toHaveValue("保留这段输入");
   await expect(page.getByRole("button", { name: "发送消息" })).toBeEnabled();
 });
@@ -248,7 +264,8 @@ test("workspace selection is requested in the reply and resumes the same turn", 
   expect(await calls(page, "agent_start")).toHaveLength(1);
   await emit(page, input.requestId, { type: "delta", text: "已检查该文件夹。" });
   await emit(page, input.requestId, { type: "completed" });
-  await expect(page.getByRole("button", { name: /^📁/ })).toHaveAttribute("title", "/tmp/piko-agent-ui-test");
+  await page.getByTestId("chat-context-toggle").click();
+  await expect(page.getByTestId("workspace-directory")).toHaveAttribute("title", "/tmp/piko-agent-ui-test");
 });
 
 test("cancel directory access without cancelling ordinary conversation", async ({ page }) => {
@@ -324,7 +341,8 @@ test("reload and directory changes preserve the conversation; new chat resets it
   await installAgentBackend(page); const first = await start(page, "记住摄影");
   await emit(page, first.requestId, { type: "completed" });
   await page.reload();
-  await page.getByRole("button", { name: /^📁/ }).click();
+  await page.getByTestId("chat-context-toggle").click();
+  await page.getByTestId("workspace-directory").click();
   const resumed = await start(page, "继续分析");
   expect(resumed.conversationId).toBe(first.conversationId);
   expect(resumed.cwd).toBe("/tmp/piko-agent-ui-test");
@@ -367,7 +385,9 @@ for (const viewport of [{ width: 480, height: 420 }, { width: 360, height: 300 }
   test(`one composer and approval fit at ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport); await installAgentBackend(page);
     await bridge(page, "directory", `/tmp/${"very-long-directory/".repeat(8)}`);
-    await page.getByRole("button", { name: /^📁/ }).click();
+    await page.getByTestId("chat-context-toggle").click();
+  await page.getByTestId("workspace-directory").click();
+    await page.getByTestId("chat-context-toggle").click();
     const input = await start(page);
     await emit(page, input.requestId, { type: "approval", approvalId: "long", tool: "write", arguments: { path: "file.txt", content: "x".repeat(2000) } });
     await expect(page.getByRole("button", { name: "允许此次操作" })).toBeInViewport({ ratio: 1 });

@@ -1,3 +1,6 @@
+import { DataRestoreStatus } from "./components/feedback/DataRestoreStatus";
+import { PersistenceStatus } from "./components/feedback/PersistenceStatus";
+import { WindowErrorBoundary } from "./components/feedback/WindowErrorBoundary";
 import { lazy, Suspense } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ToastProvider } from "./components/feedback/Toast";
@@ -36,9 +39,12 @@ const windowLabel = detectWindowLabel();
 
 function App() {
   return (
-    // ToastProvider 放在 Suspense 外层：懒加载失败时也能把错误报出来。
+    // Boundary catches render and lazy-import failures inside each window.
     <ToastProvider>
       <I18nProvider>
+        <WindowErrorBoundary>
+        <PersistenceStatus />
+        <DataRestoreStatus />
         <Suspense fallback={<main className="app-loading">加载中…</main>}>
           {windowLabel === "html-preview" ? <HtmlPreviewWindow /> : null}
           {windowLabel === "bubble" ? <BubbleWindow /> : null}
@@ -46,6 +52,7 @@ function App() {
           {windowLabel === "capture" ? <CaptureWindow /> : null}
           {windowLabel === "pet" ? <PetWindow /> : null}
         </Suspense>
+        </WindowErrorBoundary>
       </I18nProvider>
     </ToastProvider>
   );

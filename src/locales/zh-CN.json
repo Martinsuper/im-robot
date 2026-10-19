@@ -45,6 +45,15 @@
       "summarize": "总结",
       "translate": "翻译",
       "explain": "解释"
+    },
+    "error": {
+      "title": "页面暂时无法显示",
+      "description": "请重试或重新加载。仍有问题时，可复制诊断信息。",
+      "retry": "重试",
+      "reload": "重新加载",
+      "copy": "复制诊断信息",
+      "copied": "诊断信息已复制",
+      "copyFailed": "无法复制诊断信息，请重试。"
     }
   },
   "pet": {
@@ -165,7 +174,40 @@
     "foregroundAppEnabled": "已启用",
     "foregroundAppPaused": "已暂停",
     "languageLabel": "界面语言",
-    "sectionsAriaLabel": "设置分区"
+    "sectionsAriaLabel": "设置分区",
+    "feedback": {
+      "modelReady": "已可用",
+      "autostartReadFailed": "开机启动状态读取失败",
+      "autostartSaveFailed": "开机启动设置失败",
+      "previewSaved": "HTML 预览插件已更新",
+      "previewFailed": "HTML 预览插件更新失败",
+      "onboardingReset": "引导已重置，重新打开面板后生效。",
+      "onboardingFailed": "重置引导失败",
+      "shortcutSaved": "快捷键已更新",
+      "shortcutFailed": "快捷键更新失败，请重试。",
+      "clearFailed": "清空失败，未做任何删除。",
+      "exportSaved": "数据已导出（不含 API Key）",
+      "exportFailed": "导出失败，请重试。",
+      "notificationFailed": "通知权限申请失败，请重试。",
+      "notificationSent": "测试通知已提交，请检查屏幕右上角或通知中心。",
+      "testNotificationFailed": "测试通知发送失败，请重试。",
+      "autoApproveEnabled": "已开启命令自动批准，下次任务起生效",
+      "autoApproveDisabled": "已恢复逐次确认，下次任务起生效",
+      "permissionFailed": "命令权限设置保存失败",
+      "cleared": "已清空 {count} 类数据，备份在 backups 目录"
+    },
+    "connection": {
+      "configured": "已配置密钥",
+      "dirty": "有未保存的 AI 设置",
+      "savedKey": "已配置密钥，设置已保存",
+      "savedNoKey": "设置已保存，未配置密钥",
+      "savingFailed": "保存失败",
+      "connecting": "正在连接...",
+      "connected": "已连接",
+      "empty": "已连接，未发现模型",
+      "failed": "连接失败",
+      "idle": "尚未测试连接"
+    }
   },
   "onboarding": {
     "title": "欢迎使用 Piko",
@@ -238,12 +280,21 @@
     "updateDownloadFailed": "更新下载失败"
   },
   "update": {
-    "available": "发现新版本 {version}",
-    "latest": "当前已是最新版本",
-    "downloading": "正在下载更新...",
+    "available": "发现新版本",
+    "latest": "已是最新版本",
+    "downloading": "正在下载…",
     "downloadComplete": "下载完成",
     "downloadFailed": "下载失败",
-    "restartPrompt": "重启以安装更新？"
+    "restartPrompt": "重启以安装更新？",
+    "checkFailed": "检查更新失败",
+    "versionInfo": "版本信息",
+    "checking": "正在检查更新…",
+    "check": "检查更新",
+    "download": "下载更新",
+    "cancel": "取消下载",
+    "noAsset": "没有适用于当前平台的安装包，请打开发布页下载。",
+    "openRelease": "打开下载页",
+    "openFile": "打开已下载文件"
   },
   "bubble": {
     "actionCancelled": "已取消该操作。",
@@ -598,7 +649,8 @@
       "themePeach": "暖桃色",
       "themeSage": "鼠尾草绿",
       "timeoutLabel": "超时秒数",
-      "waitingTest": "等待测试"
+      "waitingTest": "等待测试",
+      "providerLead": "选择服务后，填写必要的连接信息。"
     },
     "status": {
       "aiChat": "AI 对话",
@@ -775,6 +827,37 @@
       "rollback": "回退到此版本",
       "rollbackHint": "回退会创建新版本，并暂停后续演化候选；关闭再开启演化可恢复提议。",
       "rollbackConfirm": "确认回退表达版本？你的手动人格覆盖会保留。"
+    }
+  },
+  "data": {
+    "snapshot": {
+      "title": "完整备份与恢复",
+      "description": "包含对话、日程、记忆和宠物成长；不包含 API Key、下载模型和工作目录原文件。正在执行任务时请稍后再试。",
+      "create": "创建完整备份",
+      "choose": "恢复完整备份…",
+      "chooseDirectory": "选择完整备份文件夹",
+      "saved": "完整备份已保存",
+      "savedDetails": "已备份 {count} 个文件：{directory}",
+      "confirmLabel": "恢复确认",
+      "confirmDescription": "将恢复 {count} 个文件并重启 Piko。恢复前会自动备份当前数据，系统中的日历不会被改动。",
+      "confirm": "确认恢复并重启",
+      "cancel": "取消恢复"
+    },
+    "diagnostics": {
+      "title": "后台任务诊断",
+      "refresh": "刷新任务状态",
+      "sqlite": "数据库锁等待（微秒）",
+      "json": "文件锁等待（微秒）"
+    },
+    "memory": {
+      "temporary": "记忆仅保存在本次会话，重启后会丢失。请检查磁盘空间和数据目录权限。"
+    },
+    "pet": {
+      "unavailable": "宠物数据保存暂不可用",
+      "retry": "重新加载数据"
+    },
+    "restore": {
+      "pending": "正在恢复并重启 Piko，请稍候…"
     }
   }
 }

@@ -13,18 +13,10 @@ pub enum Mood {
     Stifled,
     Energized,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Scores {
     values: BTreeMap<Mood, u8>,
     last_event: BTreeMap<Mood, i64>,
-}
-impl Default for Scores {
-    fn default() -> Self {
-        Self {
-            values: BTreeMap::new(),
-            last_event: BTreeMap::new(),
-        }
-    }
 }
 #[derive(Debug, Clone)]
 pub struct State {

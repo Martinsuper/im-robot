@@ -44,7 +44,10 @@ impl Default for ActivityState {
 
 impl ActivityState {
     pub fn returned_from_idle(&self, idle: Option<u64>, locked: Option<bool>) -> bool {
-        self.inner.lock().map(|mut inner| inner.idle_return.observe(idle, locked)).unwrap_or(false)
+        self.inner
+            .lock()
+            .map(|mut inner| inner.idle_return.observe(idle, locked))
+            .unwrap_or(false)
     }
 
     /// Accept a heartbeat; a claimed future observation is rejected outright.
@@ -537,7 +540,8 @@ pub fn system_locked() -> Option<bool> {
                 Some(CFBooleanGetValue(value))
             }
         };
-        let on_console = boolean(c"kCGSSessionOnConsoleKey").or_else(||boolean(c"kCGSessionOnConsoleKey"));
+        let on_console =
+            boolean(c"kCGSSessionOnConsoleKey").or_else(|| boolean(c"kCGSessionOnConsoleKey"));
         let logged_in = boolean(c"kCGSessionLoginDoneKey");
         let locked = boolean(c"CGSSessionScreenIsLocked");
         let result = match (on_console, logged_in, locked) {
@@ -598,15 +602,23 @@ pub fn keyboard_idle_seconds() -> Option<u64> {
 
 /// Return greetings require a measured absence; unknown samples never infer it.
 #[derive(Default)]
-struct IdleReturn { armed: bool }
+struct IdleReturn {
+    armed: bool,
+}
 impl IdleReturn {
     fn observe(&mut self, idle: Option<u64>, locked: Option<bool>) -> bool {
         match (idle, locked) {
-            (Some(seconds), Some(false)) if seconds >= 30 * 60 => { self.armed = true; false }
+            (Some(seconds), Some(false)) if seconds >= 30 * 60 => {
+                self.armed = true;
+                false
+            }
             (Some(seconds), Some(false)) if seconds < 5 => std::mem::take(&mut self.armed),
             (Some(_), Some(true)) => false,
             (Some(_), Some(false)) => false,
-            _ => { self.armed = false; false }
+            _ => {
+                self.armed = false;
+                false
+            }
         }
     }
 }
@@ -615,14 +627,14 @@ mod return_greeting_tests {
     use super::*;
     #[test]
     fn only_measured_long_absence_yields_one_return_event() {
-        let mut state=IdleReturn::default();
-        assert!(!state.observe(Some(0),Some(false)));
-        assert!(!state.observe(Some(1800),Some(false)));
-        assert!(!state.observe(Some(0),Some(true)));
-        assert!(state.observe(Some(0),Some(false)));
-        assert!(!state.observe(Some(0),Some(false)));
-        state.observe(Some(1800),Some(false));
-        state.observe(None,None);
-        assert!(!state.observe(Some(0),Some(false)));
+        let mut state = IdleReturn::default();
+        assert!(!state.observe(Some(0), Some(false)));
+        assert!(!state.observe(Some(1800), Some(false)));
+        assert!(!state.observe(Some(0), Some(true)));
+        assert!(state.observe(Some(0), Some(false)));
+        assert!(!state.observe(Some(0), Some(false)));
+        state.observe(Some(1800), Some(false));
+        state.observe(None, None);
+        assert!(!state.observe(Some(0), Some(false)));
     }
 }

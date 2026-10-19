@@ -112,8 +112,14 @@ pub(crate) fn request_builder(
     settings: &AiSettings,
     method: reqwest::Method,
     url: String,
-) -> reqwest::RequestBuilder {
-    request_builder_with_key(client, settings, method, url, read_api_key())
+) -> Result<reqwest::RequestBuilder, String> {
+    Ok(request_builder_with_key(
+        client,
+        settings,
+        method,
+        url,
+        read_api_key()?,
+    ))
 }
 
 fn request_builder_with_key(
@@ -342,7 +348,7 @@ pub(crate) async fn send_chat_request(
     settings: &AiSettings,
     body: &Value,
 ) -> Result<reqwest::Response, String> {
-    request_builder(client, settings, reqwest::Method::POST, chat_url(settings)?)
+    request_builder(client, settings, reqwest::Method::POST, chat_url(settings)?)?
         .json(body)
         .send()
         .await

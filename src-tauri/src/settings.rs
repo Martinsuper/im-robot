@@ -17,7 +17,16 @@ pub(crate) fn read_settings(app: &AppHandle) -> AppSettings {
     let mut settings: AppSettings = app_settings_path(app)
         .map(|path| storage::read_or_default(&path))
         .unwrap_or_default();
-    settings.has_api_key = read_api_key().is_some();
+    match read_api_key() {
+        Ok(key) => {
+            settings.has_api_key = key.is_some();
+            settings.credential_error = None;
+        }
+        Err(error) => {
+            settings.has_api_key = false;
+            settings.credential_error = Some(error);
+        }
+    }
     settings
 }
 

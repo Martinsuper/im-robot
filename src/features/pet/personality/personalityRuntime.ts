@@ -1,10 +1,11 @@
+import { readPersistentState, writePersistentState } from "../../../lib/persistentState";
 import type { HumanInteractionEvent } from "../interaction/interactionTypes";
 import { DEFAULT_PERSONALITY, type InteractionRecord, type PersonalityDimensions } from "./personalityTypes";
 
 const PERSONALITY_STORAGE_KEY = "piko-personality-state";
 
 function canUseStorage() {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+  return typeof window !== "undefined";
 }
 
 function isPersonalityDimensions(value: unknown): value is PersonalityDimensions {
@@ -20,7 +21,7 @@ function isPersonalityDimensions(value: unknown): value is PersonalityDimensions
 export function loadPersonalityState(fallback: PersonalityDimensions = DEFAULT_PERSONALITY): PersonalityDimensions {
   if (!canUseStorage()) return { ...fallback };
   try {
-    const raw = window.localStorage.getItem(PERSONALITY_STORAGE_KEY);
+    const raw = readPersistentState(PERSONALITY_STORAGE_KEY);
     if (!raw) return { ...fallback };
     const parsed = JSON.parse(raw) as unknown;
     return isPersonalityDimensions(parsed) ? parsed : { ...fallback };
@@ -35,7 +36,7 @@ export function loadPersonalityState(fallback: PersonalityDimensions = DEFAULT_P
 export function savePersonalityState(state: PersonalityDimensions): void {
   if (!canUseStorage()) return;
   try {
-    window.localStorage.setItem(PERSONALITY_STORAGE_KEY, JSON.stringify(state));
+    writePersistentState(PERSONALITY_STORAGE_KEY, JSON.stringify(state));
     window.dispatchEvent(new CustomEvent<PersonalityDimensions>("piko-personality-state-changed", { detail: state }));
   } catch (error) {
     // ignore persistence failures。
@@ -47,7 +48,7 @@ export function savePersonalityState(state: PersonalityDimensions): void {
 export function clearPersonalityState(): void {
   if (!canUseStorage()) return;
   try {
-    window.localStorage.removeItem(PERSONALITY_STORAGE_KEY);
+    writePersistentState(PERSONALITY_STORAGE_KEY, null);
     window.dispatchEvent(new CustomEvent<PersonalityDimensions>("piko-personality-state-changed", { detail: DEFAULT_PERSONALITY }));
   } catch (error) {
     // ignore persistence failures。

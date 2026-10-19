@@ -17,14 +17,22 @@
     "test:build:full": "bash scripts/test-build.sh --full",
     "preview": "vite preview",
     "tauri": "tauri",
-    "lint": "eslint src",
+    "lint": "eslint src --max-warnings 0",
     "agent:prepare": "node scripts/prepare-agent-runtime.mjs",
     "test:calendar": "node scripts/test-calendar-bridge.mjs",
     "test:agent": "node --test agent/*.test.mjs",
     "check:architecture": "node scripts/check-runtime-boundaries.mjs",
     "test:ui": "npm run build && playwright test",
     "test:ui:report": "playwright show-report --host 127.0.0.1",
-    "test:notifications-native": "node scripts/test-notification-bridge.mjs"
+    "test:notifications-native": "node scripts/test-notification-bridge.mjs",
+    "check": "node scripts/check-version.mjs && node scripts/check-runtime-boundaries.mjs && node scripts/check-i18n-keys.mjs && npm run contracts:check",
+    "verify": "npm run check && npm run lint && npm test && npm run test:agent && npm run build",
+    "smoke:runtime": "node scripts/native-runtime-smoke.mjs",
+    "contracts:generate": "cargo run --locked --quiet --manifest-path tools/contracts/Cargo.toml",
+    "contracts:check": "cargo run --locked --quiet --manifest-path tools/contracts/Cargo.toml -- --check",
+    "test:agent:packaged": "node scripts/test-packaged-agent.mjs",
+    "verify:desktop": "node scripts/desktop-acceptance.mjs",
+    "inspect:bundle": "node scripts/inspect-macos-bundle.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -32,7 +40,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2",
-    "katex": "^0.17.0",
+    "katex": "^0.19.0",
     "lucide-react": "^1.47.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -66,5 +74,8 @@
   "allowScripts": {
     "fsevents@2.3.3": true,
     "fsevents@2.3.2": true
+  },
+  "overrides": {
+    "katex": "$katex"
   }
 }
