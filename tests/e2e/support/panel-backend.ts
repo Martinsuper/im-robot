@@ -150,7 +150,7 @@ export async function installPanelBackend(page: Page, options: BackendOptions = 
           state.desktop = { ...args.input, revision: args.input.revision + 1 }; result = state.desktop; break;
           case 'soul_get_profile': result = state.role; break;
           case 'soul_get_continuity': result = { revision: 1, history_enabled: false, days: 0, nickname: null, nickname_options: [], milestones: [], proposals: [], versions: [] }; break;
-          case 'soul_diagnostics': result = { storage: 'ready', profile_valid: true, ledger_readable: true }; break;
+          case 'soul_diagnostics': result = { storage: 'available', profile_valid: true, ledger_readable: true }; break;
           case 'soul_update_settings':
             for (const [key, value] of Object.entries(args.input)) if (key !== 'expected_revision' && value !== null) state.soul[key] = value;
             state.soul.revision++; result = state.soul; break;

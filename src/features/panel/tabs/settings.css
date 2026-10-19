@@ -375,3 +375,66 @@
 .tab--settings .settings-pet-actions > button {
   border-radius: 7px;
 }
+
+/* DataSettings（备份与恢复）：把原生 <button>/<details> 纳入设计系统。 */
+.data-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+}
+.data-actions > button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: var(--panel-accent);
+  font-size: 11px;
+  font-weight: 800;
+  transition: opacity 160ms ease, background 160ms ease;
+}
+.data-actions > button:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.08);
+}
+.data-actions > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+.data-actions > .data-button--secondary {
+  color: var(--panel-accent);
+  background: transparent;
+  border: 1px solid var(--piko-line);
+  font-weight: 700;
+}
+.data-actions > .data-button--secondary:hover:not(:disabled) {
+  background: var(--piko-fill);
+  box-shadow: none;
+}
+.data-result {
+  margin: 0;
+  color: var(--piko-muted);
+  font-size: var(--text-sm, 11px);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.data-restore-confirm {
+  border: 1px solid var(--piko-line);
+  border-radius: 10px;
+  padding: var(--space-3, 12px);
+  display: grid;
+  gap: var(--space-2, 8px);
+  justify-items: start;
+}
+.data-restore-confirm__note {
+  margin: 0;
+  color: var(--piko-ink);
+  font-size: var(--text-sm, 11px);
+  line-height: 1.55;
+}
+.data-diagnostics__refresh {
+  padding: 0 12px;
+  min-height: 28px;
+  border-radius: 7px;
+  font-size: var(--text-sm, 11px);
+  font-weight: 650;
+}

@@ -76,22 +76,25 @@ export function DataSettings() {
           "包含对话、日程、记忆和宠物成长；不包含 API Key、下载模型和工作目录原文件。正在执行任务时请稍后再试。",
         )}
       </p>
-      <button
-        type="button"
-        disabled={!isTauriRuntime || busy}
-        onClick={() => void create()}
-      >
-        {t("data.snapshot.create", "创建完整备份")}
-      </button>
-      <button
-        type="button"
-        disabled={!isTauriRuntime || busy}
-        onClick={() => void choose()}
-      >
-        {t("data.snapshot.choose", "恢复完整备份…")}
-      </button>
+      <div className="settings-actions data-actions">
+        <button
+          type="button"
+          disabled={!isTauriRuntime || busy}
+          onClick={() => void create()}
+        >
+          {t("data.snapshot.create", "创建完整备份")}
+        </button>
+        <button
+          type="button"
+          className="data-button--secondary"
+          disabled={!isTauriRuntime || busy}
+          onClick={() => void choose()}
+        >
+          {t("data.snapshot.choose", "恢复完整备份…")}
+        </button>
+      </div>
       {snapshot && (
-        <p role="status">
+        <p className="data-result" role="status">
           {t("data.snapshot.savedDetails", "已备份 {count} 个文件：{directory}")
             .replace("{count}", String(snapshot.fileCount))
             .replace("{directory}", snapshot.directory)}
@@ -99,32 +102,36 @@ export function DataSettings() {
       )}
       {restore && (
         <div
-          className="settings-subgroup"
+          className="data-restore-confirm"
           role="region"
           aria-label={t("data.snapshot.confirmLabel", "恢复确认")}
         >
-          <p>
+          <p className="data-restore-confirm__note">
             {t(
               "data.snapshot.confirmDescription",
               "将恢复 {count} 个文件并重启 Piko。恢复前会自动备份当前数据，系统中的日历不会被改动。",
             ).replace("{count}", String(restore.fileCount))}
           </p>
-          <button type="button" disabled={busy} onClick={() => void confirm()}>
-            {t("data.snapshot.confirm", "确认恢复并重启")}
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => setRestore(undefined)}
-          >
-            {t("data.snapshot.cancel", "取消恢复")}
-          </button>
+          <div className="settings-actions data-actions">
+            <button type="button" disabled={busy} onClick={() => void confirm()}>
+              {t("data.snapshot.confirm", "确认恢复并重启")}
+            </button>
+            <button
+              type="button"
+              className="data-button--secondary"
+              disabled={busy}
+              onClick={() => setRestore(undefined)}
+            >
+              {t("data.snapshot.cancel", "取消恢复")}
+            </button>
+          </div>
         </div>
       )}
-      <details>
+      <details className="settings-subgroup">
         <summary>{t("data.diagnostics.title", "后台任务诊断")}</summary>
         <button
           type="button"
+          className="button-secondary data-diagnostics__refresh"
           disabled={!isTauriRuntime}
           onClick={() => {
             void invokeCommand("background_status", {})
@@ -135,7 +142,7 @@ export function DataSettings() {
           {t("data.diagnostics.refresh", "刷新任务状态")}
         </button>
         {health && (
-          <p>
+          <p className="data-result">
             {t("data.diagnostics.sqlite", "数据库锁等待（微秒）")}：
             {health.sqlite.waitMicros} ·{" "}
             {t("data.diagnostics.json", "文件锁等待（微秒）")}：
@@ -143,7 +150,7 @@ export function DataSettings() {
           </p>
         )}
         {workers.map((worker) => (
-          <p key={worker.name}>
+          <p className="data-result" key={worker.name}>
             {worker.name}：{worker.state}
             {worker.lastError ? ` · ${worker.lastError}` : ""}
           </p>

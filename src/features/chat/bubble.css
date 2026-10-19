@@ -131,7 +131,7 @@
 .bubble-shell .chat-workspace button { margin-left: 0; background: var(--piko-fill); min-height: 30px; }
 .bubble-shell .prompt-form { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--piko-line); border-radius: 14px; transition: border-color 160ms, box-shadow 160ms; }
 .bubble-shell .prompt-form:focus-within, .bubble-shell .prompt-form--dragging { border-color: var(--piko-accent); box-shadow: 0 0 0 3px var(--piko-soft); }
-.bubble-shell .prompt-form textarea { box-sizing: border-box; grid-column: 1 / -1; grid-row: 1; width: 100%; min-width: 0; min-height: 48px; max-height: 140px; resize: vertical; field-sizing: content; padding: 2px 3px; border: 0; outline: none; box-shadow: none; background: transparent; color: var(--piko-ink); font: inherit; font-size: 13px; line-height: 1.65; }
+.bubble-shell .prompt-form textarea { box-sizing: border-box; grid-column: 1 / -1; grid-row: 1; width: 100%; min-width: 0; min-height: 48px; max-height: 140px; resize: none; field-sizing: content; padding: 2px 3px; border: 0; outline: none; box-shadow: none; background: transparent; color: var(--piko-ink); font: inherit; font-size: 13px; line-height: 1.65; }
 .bubble-shell .prompt-form textarea::placeholder { color: var(--piko-muted); }
 .bubble-shell .prompt-tools { align-items: center; gap: 4px; }
 .bubble-shell .prompt-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: auto; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 7px; }
