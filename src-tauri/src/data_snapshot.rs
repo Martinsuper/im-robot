@@ -702,6 +702,9 @@ mod tests {
     use super::*;
     #[test]
     fn rejects_unowned_paths_and_detects_tampering() {
+        let _test = crate::data_gate::TEST_FREEZE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let roots = Roots {
             config: dir.path().join("config"),
@@ -736,6 +739,9 @@ mod tests {
     }
     #[test]
     fn complete_snapshot_and_crash_recovery_restore_json_and_sqlite() {
+        let _test = crate::data_gate::TEST_FREEZE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let roots = Roots {
             config: dir.path().join("config"),
@@ -790,6 +796,9 @@ mod transaction_tests {
     }
     #[test]
     fn failing_multi_store_write_rolls_back_json_and_sqlite() {
+        let _test = crate::data_gate::TEST_FREEZE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let (_dir, roots, db) = fixture();
         let result: Result<(), String> = transaction_at(&roots, &db, || {
             crate::storage::write(
@@ -818,6 +827,9 @@ mod transaction_tests {
     }
     #[test]
     fn pending_restore_applies_on_boot_and_invalidates_saved_approvals() {
+        let _test = crate::data_gate::TEST_FREEZE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let (_dir, roots, db) = fixture();
         let operation = roots.data.join("agent/operations/probe");
         fs::create_dir_all(&operation).unwrap();
@@ -861,6 +873,9 @@ mod transaction_tests {
     }
     #[test]
     fn snapshots_exclude_credentials_workspace_files_and_diagnostics() {
+        let _test = crate::data_gate::TEST_FREEZE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let (_dir, roots, db) = fixture();
         fs::write(roots.config.join("api-credentials.json"), "private-key").unwrap();
         for folder in ["agent/workspace", "agent/diagnostics"] {

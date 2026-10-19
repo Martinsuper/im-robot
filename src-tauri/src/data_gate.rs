@@ -16,6 +16,10 @@ struct Gate {
     changed: Condvar,
 }
 static GATE: LazyLock<Gate> = LazyLock::new(Gate::default);
+
+// Tests using the process-wide freeze must not contend with unrelated fixtures.
+#[cfg(test)]
+pub(crate) static TEST_FREEZE: Mutex<()> = Mutex::new(());
 pub(crate) struct ReadLease {
     counted: bool,
 }
@@ -169,6 +173,9 @@ mod tests {
     use super::*;
     #[test]
     fn active_writers_block_freeze_and_owner_can_use_storage() {
+        let _test = TEST_FREEZE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let lease = read();
         assert!(freeze(Duration::from_millis(1)).is_err());
         drop(lease);
