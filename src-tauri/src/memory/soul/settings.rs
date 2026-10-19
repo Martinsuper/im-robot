@@ -15,6 +15,7 @@ fn category_policy() -> Vec<CategorySetting> {
         ProactiveCategory::Pattern,
         ProactiveCategory::SmallTalk,
         ProactiveCategory::OutputFeedback,
+        ProactiveCategory::DesktopObservation,
     ]
     .iter()
     .map(|category| CategorySetting {
@@ -346,6 +347,7 @@ pub fn clear(conn: &mut Connection, scopes: &[SoulDataScope], now: i64) -> Resul
                         .map_err(|_| "ledger_write_failed".to_string())?;
                 }
                 SoulDataScope::All => {
+                    tx.execute("UPDATE soul_desktop_control SET revision=revision+1,frequency='natural',excluded_apps='[]',model='' WHERE singleton=1", []).map_err(|_| "settings_write_failed")?;
                     tx.execute_batch("DELETE FROM soul_topic_responses; DELETE FROM soul_continuity_control; DELETE FROM soul_evidence; DELETE FROM soul_evolution_pauses; DELETE FROM soul_output_observations; DELETE FROM soul_observation_sources;").map_err(|_|"ledger_write_failed")?;
                     for domain in ["open_loops", "proactive", "mood", "history"] {
                         tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES(?1,?2) ON CONFLICT(domain) DO UPDATE SET cleared_through=excluded.cleared_through",rusqlite::params![domain,now]).map_err(|_| "ledger_write_failed")?;

@@ -9,7 +9,8 @@ export type ProactiveCategory =
   | "milestone"
   | "pattern"
   | "small_talk"
-  | "output_feedback";
+  | "output_feedback"
+  | "desktop_observation";
 
 export type DeliveryState =
   | "pending"

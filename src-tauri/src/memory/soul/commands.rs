@@ -27,6 +27,15 @@ pub fn soul_update_settings(
     let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
     settings::update(&mut conn, &input, now())?;
     let updated = settings::get(&mut conn, now())?;
+    if !updated.enabled
+        || updated.paused
+        || !updated
+            .categories
+            .iter()
+            .any(|c| c.category == ProactiveCategory::DesktopObservation && c.enabled)
+    {
+        super::desktop::clear_cache();
+    }
     drop(conn);
     reconcile_visible(&app);
     let _ = app.emit("soul:changed", ());
@@ -44,6 +53,7 @@ pub fn soul_clear(
     }
     let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
     settings::clear(&mut conn, &input.scopes, now())?;
+    super::desktop::clear_cache();
     drop(conn);
     reconcile_visible(&app);
     let _ = app.emit("soul:changed", ());
@@ -146,7 +156,7 @@ pub fn start(app: AppHandle) {
                     "category": serde_json::to_value(message.category).unwrap(),
                     "templateId": message.template_id,
                     "source": message.source,
-                    "text": super::profile::message_text(&crate::settings::read_settings(&app).language,&message.template_id),
+                    "text": super::desktop::message_text(&message.id, &crate::settings::read_settings(&app).language, &message.template_id),
                 });
                 if message.category == ProactiveCategory::Greeting {
                     let db = app.state::<Arc<MemoryDb>>();
@@ -198,6 +208,7 @@ fn attempt_dispatch(app: &AppHandle) -> Result<Option<ProactiveMessage>, String>
         super::engagement::produce_topics(&mut conn, now())?;
         super::observations::produce_local(&mut conn, now())?;
     }
+    super::desktop::reconcile(app)?;
     let activity_state = app.state::<activity::ActivityState>();
     let settings = crate::settings::read_settings(app);
     let quiet_hours_active = crate::rhythm::is_within_quiet_hours(
@@ -484,7 +495,7 @@ pub fn open_notification(app: &AppHandle, id: &str) {
     let row=conn.query_row("SELECT category,template_id,source_ref FROM soul_proactive_ledger WHERE id=?1 AND state IN ('dispatching','shown')",[id],|r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)));
     if let Ok((category, template, source)) = row {
         if let Ok(source) = serde_json::from_str::<SourceRef>(&source) {
-            let payload = serde_json::json!({"id":id,"category":category,"templateId":template,"source":source,"text":super::profile::message_text(&crate::settings::read_settings(app).language,&template)});
+            let payload = serde_json::json!({"id":id,"category":category,"templateId":template,"source":source,"text":super::desktop::message_text(id, &crate::settings::read_settings(app).language, &template)});
             let _ = app.emit_to("bubble", "soul:message", payload);
         }
     }
@@ -520,9 +531,9 @@ fn current_message(
         "SELECT l.id,l.category,l.template_id,l.source_ref FROM soul_proactive_ledger l,soul_control c WHERE c.enabled=1 AND c.paused=0 AND l.state IN ('dispatching','shown') AND l.valid_from<=?1 AND l.expires_at>?1 ORDER BY l.dispatching_at DESC,l.id LIMIT 1",
         [at], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?))
     ).optional().map_err(|e|e.to_string())?;
-    row.map(|(id, category, template, source)| {
+    row.filter(|(id, _, template, _)| template != "desktop_observation" || super::desktop::reply_context(id).is_some()).map(|(id, category, template, source)| {
         let source: SourceRef = serde_json::from_str(&source).map_err(|e|e.to_string())?;
-        Ok(serde_json::json!({"id":id,"category":category,"templateId":template,"source":source,"text":profile::message_text(language,&template)}))
+        Ok(serde_json::json!({"id":id,"category":category,"templateId":template,"source":source,"text":super::desktop::message_text(&id,language,&template)}))
     }).transpose()
 }
 
@@ -684,6 +695,9 @@ pub fn soul_clear_category(
     }
     let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
     settings::clear_category(&mut conn, category, expected_revision, now())?;
+    if category == ProactiveCategory::DesktopObservation {
+        super::desktop::clear_cache();
+    }
     let result = settings::get(&mut conn, now())?;
     drop(conn);
     reconcile_visible(&app);
@@ -703,6 +717,16 @@ pub async fn soul_request_notification_permission(
 #[cfg(test)]
 mod delivery_recovery_tests {
     use super::*;
+    #[test]
+    fn desktop_messages_without_transient_content_are_not_recovered() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        store::migrate(&mut conn).unwrap();
+        settings::get(&mut conn, 100).unwrap();
+        conn.execute("UPDATE soul_control SET enabled=1", [])
+            .unwrap();
+        conn.execute("INSERT INTO soul_proactive_ledger(id,category,source_ref,dedupe_key,template_id,valid_from,expires_at,state,created_at,dispatching_at) VALUES('desktop-old-session','desktop_observation',?1,'desktop-old-session','desktop_observation',100,200,'dispatching',100,100)", [r#"{"kind":"desktop_observation","id":"old","revision":1}"#]).unwrap();
+        assert!(current_message(&conn, 150, "zh-CN").unwrap().is_none());
+    }
 
     #[test]
     fn recovery_preserves_identity_without_reserving_and_obeys_control_and_expiry() {

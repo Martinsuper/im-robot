@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 6;
 pub const DAILY_LIMIT: u32 = 3;
 pub const COOLDOWN_SECONDS: i64 = 2 * 60 * 60;
 pub const IDLE_STABLE_SECONDS: i64 = 30;
@@ -17,13 +17,14 @@ pub enum ProactiveCategory {
     Pattern,
     SmallTalk,
     OutputFeedback,
+    DesktopObservation,
 }
 
 impl ProactiveCategory {
     pub fn daily_limit(self) -> u32 {
         match self {
             Self::Greeting => 2,
-            Self::SmallTalk => 3,
+            Self::SmallTalk | Self::DesktopObservation => 3,
             Self::TaskUnresolved => DAILY_LIMIT,
             _ => 1,
         }
@@ -298,12 +299,14 @@ impl ProactiveCategory {
             Self::Pattern => 5,
             Self::SmallTalk => 6,
             Self::OutputFeedback => 7,
+            Self::DesktopObservation => 6,
         }
     }
 
     /// Task and topic windows start at their business deadline, not enqueue time.
     pub fn window_seconds(self) -> i64 {
         match self {
+            Self::DesktopObservation => 120,
             Self::Greeting => 30 * 60,
             Self::Pattern | Self::SmallTalk | Self::OutputFeedback => 2 * 60 * 60,
             Self::Milestone => 24 * 60 * 60,

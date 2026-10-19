@@ -1,8 +1,28 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Check, Coffee, ListTodo, Pause, Play, Plus, Timer, TriangleAlert } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
+import {
+  Check,
+  Coffee,
+  ListTodo,
+  Pause,
+  Play,
+  Plus,
+  Timer,
+  TriangleAlert,
+} from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import type { CalendarSyncStatus, FocusSnapshot, ReminderRepeat, ScheduleItem } from "../../../types/appTypes";
+import type {
+  CalendarSyncStatus,
+  FocusSnapshot,
+  ReminderRepeat,
+  ScheduleItem,
+} from "../../../types/appTypes";
 import { EmptyState, ErrorState } from "../../../components/feedback/States";
 import { useToast } from "../../../components/feedback/toastStore";
 import { toUserMessage } from "../../../lib/errors";
@@ -39,7 +59,9 @@ const repeatLabels: Record<ReminderRepeat, string> = {
 
 function kindLabel(item: ScheduleItem): string {
   if (item.kind === "reminder") {
-    return item.repeat && item.repeat !== "none" ? `提醒 · ${repeatLabels[item.repeat]}` : "提醒";
+    return item.repeat && item.repeat !== "none"
+      ? `提醒 · ${repeatLabels[item.repeat]}`
+      : "提醒";
   }
   return "日程";
 }
@@ -85,7 +107,9 @@ export function TodayTab() {
   const [draftAt, setDraftAt] = useState(defaultQuickAddTime);
   const [draftDurationMinutes, setDraftDurationMinutes] = useState(60);
   const [draftRepeat, setDraftRepeat] = useState<ReminderRepeat>("none");
-  const [calendarSync, setCalendarSync] = useState<CalendarSyncStatus | null>(null);
+  const [calendarSync, setCalendarSync] = useState<CalendarSyncStatus | null>(
+    null,
+  );
   const [isSyncing, setIsSyncing] = useState(false);
 
   /**
@@ -104,7 +128,9 @@ export function TodayTab() {
     setDraftAt(toDateTimeLocalValue(suggestion.startAt));
     if (suggestion.kind === "event" && suggestion.endAt) {
       const minutes = Math.round((suggestion.endAt - suggestion.startAt) / 60);
-      setDraftDurationMinutes([30, 60, 90, 120].includes(minutes) ? minutes : 60);
+      setDraftDurationMinutes(
+        [30, 60, 90, 120].includes(minutes) ? minutes : 60,
+      );
     } else {
       setDraftRepeat(suggestion.repeat ?? "none");
     }
@@ -144,13 +170,25 @@ export function TodayTab() {
   async function syncWithSystemCalendar() {
     setIsSyncing(true);
     try {
-      const pushed = await runCommand<{ pushed: number }>("sync_calendar_to_system", undefined, { pushed: 0 });
-      const pulled = await runCommand<{ imported: number }>("sync_calendar_from_system", undefined, { imported: 0 });
+      const pushed = await runCommand<{ pushed: number }>(
+        "sync_calendar_to_system",
+        undefined,
+        { pushed: 0 },
+      );
+      const pulled = await runCommand<{ imported: number }>(
+        "sync_calendar_from_system",
+        undefined,
+        { imported: 0 },
+      );
       const parts = [
         pushed?.pushed ? `推出 ${pushed.pushed} 条` : "",
         pulled?.imported ? `导入 ${pulled.imported} 条` : "",
       ].filter(Boolean);
-      toast.success(parts.length ? `已与系统日历同步：${parts.join("、")}` : "已与系统日历同步，没有变化");
+      toast.success(
+        parts.length
+          ? `已与系统日历同步：${parts.join("、")}`
+          : "已与系统日历同步，没有变化",
+      );
       await Promise.all([loadItems(), loadCalendarSyncStatus()]);
     } catch (error) {
       toast.error(toUserMessage(error, "与系统日历同步失败，请重试。"));
@@ -171,7 +209,10 @@ export function TodayTab() {
       toast.show({
         message: "日程已导出",
         tone: "success",
-        action: { label: "交给系统日历导入", onClick: () => void runCommand("open_calendar_import", { path }) },
+        action: {
+          label: "交给系统日历导入",
+          onClick: () => void runCommand("open_calendar_import", { path }),
+        },
       });
     } catch (error) {
       toast.error(toUserMessage(error, "导出失败，请重试。"));
@@ -179,7 +220,11 @@ export function TodayTab() {
   }
 
   const loadFocus = useCallback(async () => {
-    const snapshot = await runCommand<FocusSnapshot>("get_focus_state", undefined, defaultFocusSnapshot);
+    const snapshot = await runCommand<FocusSnapshot>(
+      "get_focus_state",
+      undefined,
+      defaultFocusSnapshot,
+    );
     setFocus(snapshot ?? defaultFocusSnapshot);
   }, []);
 
@@ -193,7 +238,11 @@ export function TodayTab() {
     const disposers: Array<Promise<() => void>> = [];
     if (isTauriRuntime) {
       disposers.push(listen("schedule-updated", () => void loadItems()));
-      disposers.push(listen<FocusSnapshot>("focus-updated", (event) => setFocus(event.payload)));
+      disposers.push(
+        listen<FocusSnapshot>("focus-updated", (event) =>
+          setFocus(event.payload),
+        ),
+      );
     }
     return () => {
       disposed = true;
@@ -210,11 +259,17 @@ export function TodayTab() {
     const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
     return () => window.clearInterval(timer);
   }, [focus.status]);
-  const remainingSeconds = Math.max(0, focus.remainingSeconds - (focus.status === "running" ? tick : 0));
+  const remainingSeconds = Math.max(
+    0,
+    focus.remainingSeconds - (focus.status === "running" ? tick : 0),
+  );
 
   const reference = nowSeconds();
   const todayItems = useMemo(
-    () => items.filter((item) => isToday(item.startAt, reference)).sort((left, right) => left.startAt - right.startAt),
+    () =>
+      items
+        .filter((item) => isToday(item.startAt, reference))
+        .sort((left, right) => left.startAt - right.startAt),
     [items, reference],
   );
   const upcomingItems = useMemo(
@@ -237,9 +292,17 @@ export function TodayTab() {
     return ids;
   }, [overlaps]);
 
-  async function updateFocus(command: "start_focus" | "start_break" | "pause_focus" | "resume_focus" | "stop_focus", args?: { minutes: number }) {
+  async function updateFocus(
+    command:
+      | "start_focus"
+      | "start_break"
+      | "pause_focus"
+      | "resume_focus"
+      | "stop_focus",
+    args?: { minutes: number },
+  ) {
     try {
-      const snapshot = await runCommand(command, args ?? {}) as FocusSnapshot;
+      const snapshot = (await runCommand(command, args ?? {})) as FocusSnapshot;
       setFocus(snapshot ?? defaultFocusSnapshot);
       setTick(0);
     } catch (error) {
@@ -259,7 +322,10 @@ export function TodayTab() {
 
   async function deleteItem(item: ScheduleItem) {
     try {
-      await runCommand(item.kind === "reminder" ? "delete_reminder" : "delete_calendar_event", { id: item.id });
+      await runCommand(
+        item.kind === "reminder" ? "delete_reminder" : "delete_calendar_event",
+        { id: item.id },
+      );
       await loadItems();
       toast.success("已删除");
     } catch (error) {
@@ -282,10 +348,18 @@ export function TodayTab() {
     setIsAdding(true);
     try {
       if (draftKind === "reminder") {
-        await runCommand("create_reminder", { input: { title, dueAt: startAt, repeat: draftRepeat } });
+        await runCommand("create_reminder", {
+          input: { title, dueAt: startAt, repeat: draftRepeat },
+        });
       } else {
         await runCommand("create_calendar_event", {
-          input: { title, startAt, endAt: startAt + draftDurationMinutes * 60, location: null, notes: null },
+          input: {
+            title,
+            startAt,
+            endAt: startAt + draftDurationMinutes * 60,
+            location: null,
+            notes: null,
+          },
         });
       }
       setDraftTitle("");
@@ -308,64 +382,10 @@ export function TodayTab() {
         <h2>{greeting}</h2>
         <p>
           {summarizeTodayCount(todayCount) ?? "今天还没有安排"}
-          {focus.status === "running" ? ` · ${focus.kind === "focus" ? "专注中" : "休息中"}` : ""}
+          {focus.status === "running"
+            ? ` · ${focus.kind === "focus" ? "专注中" : "休息中"}`
+            : ""}
         </p>
-      </section>
-
-      <section className="today-card today-focus" aria-label="专注与休息">
-        {focus.status === "idle" ? (
-          <>
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">FOCUS</p>
-                <h2>开始一段专注</h2>
-              </div>
-              {focus.todayMinutes > 0 ? <span className="today-focus__today">今日 {focus.todayMinutes} 分钟</span> : null}
-            </div>
-            <div className="today-focus__durations">
-              {FOCUS_DURATIONS.map((minutes) => (
-                <button key={minutes} type="button" onClick={() => void updateFocus("start_focus", { minutes })}>
-                  {minutes} 分钟
-                </button>
-              ))}
-            </div>
-            <div className="today-focus__breaks">
-              <span>或者休息一下</span>
-              {BREAK_DURATIONS.map((minutes) => (
-                <button key={minutes} type="button" className="text-action" onClick={() => void updateFocus("start_break", { minutes })}>
-                  <Coffee size={14} />
-                  {minutes} 分钟
-                </button>
-              ))}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">{focus.kind === "focus" ? "FOCUSING" : "BREAK"}</p>
-                <h2>{focus.kind === "focus" ? "专注中" : "休息中"}</h2>
-              </div>
-              {focus.todayMinutes > 0 ? <span className="today-focus__today">今日 {focus.todayMinutes} 分钟</span> : null}
-            </div>
-            <div className="today-focus__running">
-              <Timer size={18} aria-hidden="true" />
-              <strong aria-live="polite">{formatCountdown(remainingSeconds)}</strong>
-              <div className="today-focus__actions">
-                <button
-                  type="button"
-                  onClick={() => void updateFocus(focus.status === "paused" ? "resume_focus" : "pause_focus")}
-                >
-                  {focus.status === "paused" ? <Play size={15} /> : <Pause size={15} />}
-                  {focus.status === "paused" ? "继续" : "暂停"}
-                </button>
-                <button type="button" className="text-action" onClick={() => void updateFocus("stop_focus")}>
-                  结束
-                </button>
-              </div>
-            </div>
-          </>
-        )}
       </section>
 
       <section className="today-card" aria-label="快速添加">
@@ -390,56 +410,93 @@ export function TodayTab() {
                 {" · "}
                 {suggestion.title}
               </span>
-              <button type="button" className="text-action" onClick={applySuggestion}>
+              <button
+                type="button"
+                className="text-action"
+                onClick={applySuggestion}
+              >
                 套用
               </button>
             </div>
           ) : null}
           <div className="today-quick-add__row">
-            <label>
-              <span>类型</span>
-              <select value={draftKind} onChange={(event) => setDraftKind(event.currentTarget.value as "reminder" | "event")}>
-                <option value="reminder">提醒</option>
-                <option value="event">日程</option>
-              </select>
-            </label>
-            <label>
-              <span>{draftKind === "reminder" ? "提醒时间" : "开始时间"}</span>
-              <input
-                type="datetime-local"
-                value={draftAt}
-                onChange={(event) => setDraftAt(event.currentTarget.value)}
-                aria-label="时间"
-              />
-            </label>
-            {draftKind === "event" ? (
-              <label>
-                <span>时长</span>
-                <select
-                  value={draftDurationMinutes}
-                  onChange={(event) => setDraftDurationMinutes(Number(event.currentTarget.value))}
-                  aria-label="时长"
-                >
-                  {[30, 60, 90, 120].map((minutes) => (
-                    <option key={minutes} value={minutes}>{minutes} 分钟</option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <label>
-                <span>重复</span>
-                <select
-                  value={draftRepeat}
-                  onChange={(event) => setDraftRepeat(event.currentTarget.value as ReminderRepeat)}
-                  aria-label="重复"
-                >
-                  {Object.entries(repeatLabels).map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <button type="submit" className="primary-action" disabled={isAdding}>
+            <details className="today-quick-add__options">
+              <summary>
+                {draftKind === "reminder" ? "提醒" : "日程"} ·{" "}
+                {draftAt.replace("T", " ")} <span>修改</span>
+              </summary>
+              <div className="today-quick-add__fields">
+                <label>
+                  <span>类型</span>
+                  <select
+                    value={draftKind}
+                    onChange={(event) =>
+                      setDraftKind(
+                        event.currentTarget.value as "reminder" | "event",
+                      )
+                    }
+                  >
+                    <option value="reminder">提醒</option>
+                    <option value="event">日程</option>
+                  </select>
+                </label>
+                <label>
+                  <span>
+                    {draftKind === "reminder" ? "提醒时间" : "开始时间"}
+                  </span>
+                  <input
+                    type="datetime-local"
+                    value={draftAt}
+                    onChange={(event) => setDraftAt(event.currentTarget.value)}
+                    aria-label="时间"
+                  />
+                </label>
+                {draftKind === "event" ? (
+                  <label>
+                    <span>时长</span>
+                    <select
+                      value={draftDurationMinutes}
+                      onChange={(event) =>
+                        setDraftDurationMinutes(
+                          Number(event.currentTarget.value),
+                        )
+                      }
+                      aria-label="时长"
+                    >
+                      {[30, 60, 90, 120].map((minutes) => (
+                        <option key={minutes} value={minutes}>
+                          {minutes} 分钟
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label>
+                    <span>重复</span>
+                    <select
+                      value={draftRepeat}
+                      onChange={(event) =>
+                        setDraftRepeat(
+                          event.currentTarget.value as ReminderRepeat,
+                        )
+                      }
+                      aria-label="重复"
+                    >
+                      {Object.entries(repeatLabels).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            </details>
+            <button
+              type="submit"
+              className="primary-action"
+              disabled={isAdding}
+            >
               <Plus size={15} />
               {isAdding ? "添加中…" : "添加"}
             </button>
@@ -461,7 +518,11 @@ export function TodayTab() {
         </div>
 
         {loadError ? (
-          <ErrorState message={loadError} onRetry={() => void loadItems()} onDismiss={() => setLoadError("")} />
+          <ErrorState
+            message={loadError}
+            onRetry={() => void loadItems()}
+            onDismiss={() => setLoadError("")}
+          />
         ) : isLoading ? (
           <p className="today-loading">正在读取今天的安排…</p>
         ) : todayItems.length === 0 ? (
@@ -483,7 +544,9 @@ export function TodayTab() {
                   data-kind={item.kind}
                 >
                   <span className="timeline__time">
-                    {item.kind === "event" ? formatRange(item.startAt, item.endAt) : formatClock(item.startAt)}
+                    {item.kind === "event"
+                      ? formatRange(item.startAt, item.endAt)
+                      : formatClock(item.startAt)}
                   </span>
                   <span className="timeline__marker" aria-hidden="true" />
                   <span className="timeline__body">
@@ -496,11 +559,21 @@ export function TodayTab() {
                   </span>
                   <span className="timeline__actions">
                     {item.kind === "reminder" && !done ? (
-                      <button type="button" aria-label={`完成 ${item.title}`} title="完成" onClick={() => void completeItem(item)}>
+                      <button
+                        type="button"
+                        aria-label={`完成 ${item.title}`}
+                        title="完成"
+                        onClick={() => void completeItem(item)}
+                      >
                         <Check size={15} />
                       </button>
                     ) : null}
-                    <button type="button" aria-label={`删除 ${item.title}`} title="删除" onClick={() => void deleteItem(item)}>
+                    <button
+                      type="button"
+                      aria-label={`删除 ${item.title}`}
+                      title="删除"
+                      onClick={() => void deleteItem(item)}
+                    >
                       ✕
                     </button>
                   </span>
@@ -510,41 +583,162 @@ export function TodayTab() {
           </ul>
         )}
       </section>
+      <details
+        className="today-focus-disclosure today-card"
+        open={focus.status !== "idle"}
+      >
+        <summary>
+          <Timer size={16} />
+          <span>
+            {focus.status === "idle"
+              ? "专注计时"
+              : focus.status === "paused"
+                ? "计时已暂停"
+                : "计时进行中"}
+          </span>
+          <span className="today-disclosure-hint">
+            {focus.status === "idle"
+              ? "展开使用"
+              : formatCountdown(remainingSeconds)}
+          </span>
+        </summary>
+        <section className="today-card today-focus" aria-label="专注与休息">
+          {focus.status === "idle" ? (
+            <>
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">FOCUS</p>
+                  <h2>开始一段专注</h2>
+                </div>
+                {focus.todayMinutes > 0 ? (
+                  <span className="today-focus__today">
+                    今日 {focus.todayMinutes} 分钟
+                  </span>
+                ) : null}
+              </div>
+              <div className="today-focus__durations">
+                {FOCUS_DURATIONS.map((minutes) => (
+                  <button
+                    key={minutes}
+                    type="button"
+                    onClick={() => void updateFocus("start_focus", { minutes })}
+                  >
+                    {minutes} 分钟
+                  </button>
+                ))}
+              </div>
+              <div className="today-focus__breaks">
+                <span>或者休息一下</span>
+                {BREAK_DURATIONS.map((minutes) => (
+                  <button
+                    key={minutes}
+                    type="button"
+                    className="text-action"
+                    onClick={() => void updateFocus("start_break", { minutes })}
+                  >
+                    <Coffee size={14} />
+                    {minutes} 分钟
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">
+                    {focus.kind === "focus" ? "FOCUSING" : "BREAK"}
+                  </p>
+                  <h2>{focus.kind === "focus" ? "专注中" : "休息中"}</h2>
+                </div>
+                {focus.todayMinutes > 0 ? (
+                  <span className="today-focus__today">
+                    今日 {focus.todayMinutes} 分钟
+                  </span>
+                ) : null}
+              </div>
+              <div className="today-focus__running">
+                <Timer size={18} aria-hidden="true" />
+                <strong aria-live="polite">
+                  {formatCountdown(remainingSeconds)}
+                </strong>
+                <div className="today-focus__actions">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void updateFocus(
+                        focus.status === "paused"
+                          ? "resume_focus"
+                          : "pause_focus",
+                      )
+                    }
+                  >
+                    {focus.status === "paused" ? (
+                      <Play size={15} />
+                    ) : (
+                      <Pause size={15} />
+                    )}
+                    {focus.status === "paused" ? "继续" : "暂停"}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-action"
+                    onClick={() => void updateFocus("stop_focus")}
+                  >
+                    结束
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+      </details>
 
-      <section className="today-card today-more" aria-label="更多">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">MORE</p>
-            <h2>日历</h2>
-          </div>
-        </div>
+      <details className="today-card today-calendar-tools">
+        <summary>日历同步与导出</summary>
+
         <div className="today-more__row">
           {calendarSync?.available ? (
-            <button type="button" disabled={isSyncing} onClick={() => void syncWithSystemCalendar()}>
+            <button
+              type="button"
+              disabled={isSyncing}
+              onClick={() => void syncWithSystemCalendar()}
+            >
               {isSyncing ? "同步中…" : "与系统日历同步"}
             </button>
           ) : (
-            <span className="today-more__hint">当前系统未开放日历直连，可用导出方式交给系统日历。</span>
+            <span className="today-more__hint">
+              当前系统未开放日历直连，可用导出方式交给系统日历。
+            </span>
           )}
-          <button type="button" className="text-action" onClick={() => void exportCalendar()}>
+          <button
+            type="button"
+            className="text-action"
+            onClick={() => void exportCalendar()}
+          >
             导出 iCalendar
           </button>
         </div>
         {calendarSync?.lastSync ? (
-          <p className="today-more__meta">上次同步：{formatClock(calendarSync.lastSync)}</p>
+          <p className="today-more__meta">
+            上次同步：{formatClock(calendarSync.lastSync)}
+          </p>
         ) : null}
-      </section>
+      </details>
 
       {upcomingItems.length ? (
         <details className="today-card today-upcoming">
-          <summary>
-            接下来 · {upcomingItems.length} 件
-          </summary>
+          <summary>接下来 · {upcomingItems.length} 件</summary>
           <ul className="timeline timeline--upcoming">
             {upcomingItems.map((item) => (
-              <li key={item.id} className={`timeline__item timeline__item--${item.kind}`} data-testid="upcoming-item">
+              <li
+                key={item.id}
+                className={`timeline__item timeline__item--${item.kind}`}
+                data-testid="upcoming-item"
+              >
                 <span className="timeline__time">
-                  {dayOffset(item.startAt, reference) === 1 ? "明天" : "本周"} {formatClock(item.startAt)}
+                  {dayOffset(item.startAt, reference) === 1 ? "明天" : "本周"}{" "}
+                  {formatClock(item.startAt)}
                 </span>
                 <span className="timeline__marker" aria-hidden="true" />
                 <span className="timeline__body">

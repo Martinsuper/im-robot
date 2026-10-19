@@ -134,6 +134,7 @@ pub(crate) fn run() {
             memory::extraction::start(app.handle().clone());
             // S08：调度循环自身 fail closed（未启用/未迁移时保持静默）。
             memory::soul::commands::start(app.handle().clone());
+            memory::soul::desktop::start(app.handle().clone());
             // S09：启动恢复 interrupted 任务并入队提醒候选与启动问候（均受类别开关门控）。
             memory::soul::tasks::on_boot(app.handle());
             app.manage(typing_activity::TypingActivityState::new(app.handle()));
@@ -327,6 +328,11 @@ pub(crate) fn run() {
             memory::soul::commands::soul_reply_context,
             memory::soul::commands::soul_resolve_task,
             memory::soul::commands::soul_get_settings,
+            memory::soul::desktop::soul_get_desktop_settings,
+            memory::soul::desktop::soul_desktop_status,
+            memory::soul::desktop::soul_test_desktop_model,
+            memory::soul::desktop::soul_test_desktop_speech,
+            memory::soul::desktop::soul_update_desktop_settings,
             memory::soul::commands::soul_get_mood,
             memory::soul::commands::soul_request_notification_permission,
             memory::soul::commands::soul_clear_category,

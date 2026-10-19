@@ -47,7 +47,7 @@
   color: var(--piko-ink);
   font-size: var(--text-base, 13px);
   font-weight: 650;
-  letter-spacing: -.2px;
+  letter-spacing: -0.2px;
 }
 
 /* 描述与标题之间必须有可见的分隔，否则会连成「伙伴名字、外观与它有多爱说话」 */
@@ -67,4 +67,107 @@
   display: grid;
   gap: var(--space-3, 12px);
   padding: 0 0 var(--space-4, 16px);
+}
+
+/* Keep the daily panel compact; secondary controls share the same disclosure pattern. */
+.panel-header.panel-header--compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 0;
+}
+.panel-header--compact .panel-brand {
+  margin: 0;
+}
+.panel-header--compact .status-pill {
+  flex: 0 0 auto;
+}
+.settings-subgroup__body {
+  display: grid;
+  gap: 14px;
+  padding: 12px 0 0;
+}
+.settings-subgroup__body > .panel-card {
+  margin: 0;
+  box-shadow: none;
+}
+.settings-group__body > .settings-subgroup {
+  margin: 0;
+  padding: 12px 0;
+}
+.settings-group__body > .settings-subgroup + .settings-subgroup {
+  border-top: 1px solid var(--piko-line);
+}
+.settings-group__description {
+  line-height: 1.5;
+}
+.settings-group__body [data-name="soul-settings"] {
+  display: grid;
+  gap: 12px;
+}
+.settings-group__body [data-name="soul-settings"] textarea,
+.settings-group__body [data-name="soul-settings"] input:not([type="checkbox"]) {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Readable controls and persistent status at desktop panel sizes. */
+.panel-header--compact .status-pill.status-pill--action {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 13px;
+  gap: 6px;
+}
+.panel-shell .panel-tabs button {
+  min-height: 38px;
+  font-size: 13px;
+}
+.tab--settings > .settings-group > summary {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 14px;
+  column-gap: 10px;
+  row-gap: 3px;
+  min-height: 68px;
+  padding: 12px 0;
+  box-sizing: border-box;
+}
+.tab--settings > .settings-group > summary > .settings-group__icon {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: center;
+}
+.tab--settings > .settings-group > summary > .settings-group__title {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 14px;
+}
+.tab--settings > .settings-group > summary > .settings-group__description {
+  grid-column: 2;
+  grid-row: 2;
+  padding: 0;
+  border: 0;
+  font-size: 12px;
+  color: var(--panel-muted, #56665f);
+  line-height: 1.5;
+}
+.tab--settings > .settings-group > summary::after {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  align-self: center;
+  font-size: 14px;
+}
+.panel-shell button:focus-visible,
+.panel-shell summary:focus-visible {
+  outline: 2px solid var(--piko-accent);
+  outline-offset: 3px;
+}
+.tab--settings .settings-form input:not([type="checkbox"]),
+.tab--settings .settings-form select {
+  min-height: 36px;
+  font-size: 13px;
+}
+.tab--settings .settings-note {
+  font-size: 12px;
+  line-height: 1.6;
 }

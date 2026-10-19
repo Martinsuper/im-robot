@@ -4,7 +4,6 @@ import { FileOperations } from "./file-operations.mjs";
 import { createInterface } from "node:readline";
 import { mkdir, readFile, writeFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { prepareAgent, SessionStore, fileTools } from "./sdk-adapter.mjs";
 import { ApprovalGate, needsApproval, isWithin } from "./permissions.mjs";
 import { executePrompt } from "./execution.mjs";
 import { AppToolBridge, applicationTools } from "./app-tools.mjs";
@@ -21,12 +20,24 @@ let activeInput;
 let steeringJobs = [];
 let cancelled = false;
 let unsubscribe;
+let initializing = false;
 
 async function start(input) {
   if (running) throw new Error("已有任务正在运行");
   running = true; activeInput = input;
   cancelled = false; steeringJobs = [];
+  initializing = true;
+  // SDK imports and resource discovery precede the HTTP timeout. Bound that
+  // phase separately; no prompt or tool has run when this watchdog fires.
+  const startupMs = Math.min(30, Math.max(5, input.timeoutSeconds || 30)) * 1000;
+  const startupTimer = setTimeout(() => {
+    const event = eventEnvelope({ type: "failed", message: "助手初始化超时，尚未发送本轮模型请求或执行工具。请重试；可在故障诊断查看启动阶段。" }, input.requestId);
+    process.stdout.write(`${JSON.stringify(event)}\n`, () => process.exit(1));
+  }, startupMs);
   try {
+    console.error("[piko] loading SDK");
+    const { prepareAgent, SessionStore, fileTools } = await import("./sdk-adapter.mjs");
+    if (cancelled) return;
     const cwd = await realpath(input.cwd);
     let workspace = input.unified ? (input.workspace ? await realpath(input.workspace) : undefined) : cwd;
     const sessionDir = path.join(input.dataDir, "sessions", input.conversationId);
@@ -53,7 +64,9 @@ async function start(input) {
       if (!isWithin(await realpath(sessionDir), sessionFile)) throw new Error("无效的会话文件");
       manager = SessionStore.open(sessionFile, sessionDir, cwd);
     }
+    console.error("[piko] initializing model runtime");
     const connect = await prepareAgent(input);
+    console.error("[piko] model runtime ready");
     const fileOperations = new FileOperations(input.dataDir, input.resumeRoot || input.requestId || randomUUID(), { resuming: Boolean(input.resumeRoot) });
     activeFileOperations = fileOperations;
     const definitions = fileTools(workspace || cwd, { readOnly: input.readOnly, resuming: Boolean(input.resumeRoot) });
@@ -83,7 +96,9 @@ async function start(input) {
         },
       });
     }
+    console.error("[piko] initializing session");
     session = await connect({ cwd, manager, customTools, appTools, appNames, systemNames, saved, workspace });
+    console.error("[piko] session ready");
     if (input.unified && !workspace) session.setActiveToolsByName([...appNames, "piko_select_workspace"]);
     await writeFile(pointer, JSON.stringify({ cwd, sessionFile: session.sessionFile }), { mode: 0o600 });
     let toolInvocations = 0;
@@ -96,7 +111,10 @@ async function start(input) {
         verification: event.result?.details?.verification, output: Array.from((event.result?.content || []).filter((part) => part.type === "text").map((part) => part.text).join("\n")).slice(0, 16000).join("") });
     });
     if (cancelled) { emit({ type: "cancelled" }); return; }
+    clearTimeout(startupTimer);
+    initializing = false;
     emit({ type: "started", sessionId: session.sessionId });
+    console.error("[piko] requesting model");
     await executePrompt(session, input.prompt, { toolCount: () => toolInvocations, cancelled: () => cancelled, emit, images: input.images });
     await Promise.all(steeringJobs);
     while (!cancelled && session.pendingMessageCount > 0) {
@@ -112,6 +130,8 @@ async function start(input) {
   } catch (error) {
     emit(cancelled ? { type: "cancelled" } : { type: "failed", message: error.message });
   } finally {
+    clearTimeout(startupTimer);
+    initializing = false;
     gate.cancel();
     bridge.cancel();
     unsubscribe?.();
@@ -147,7 +167,9 @@ lines.on("line", (line) => {
       cancelled = true;
       gate.cancel();
       bridge.cancel();
-      void session?.abort();
+      if (initializing) {
+        process.stdout.write(`${JSON.stringify(eventEnvelope({ type: "cancelled" }, activeInput?.requestId))}\n`, () => process.exit(0));
+      } else void session?.abort();
     } else throw new Error("未知的 Agent 指令");
   } catch (error) { emit({ type: "protocol-error", message: error.message }); }
 });

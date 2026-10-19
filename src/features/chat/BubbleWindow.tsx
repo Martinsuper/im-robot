@@ -731,6 +731,7 @@ export function BubbleWindow() {
   }
 
   function newConversation() {
+    setSoulReplyId(null);
     followThreadRef.current = true;
     setAwayFromBottom(false);
     setVerificationOf(undefined); setResumeOf(undefined);

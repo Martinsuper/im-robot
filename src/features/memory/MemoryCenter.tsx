@@ -26,7 +26,9 @@ import { useTranslation } from "../i18n/I18nProvider";
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
 function runCommand<T>(command: string, args?: Record<string, unknown>) {
-  return isTauriRuntime ? invoke<T>(command, args) : Promise.resolve([] as unknown as T);
+  return isTauriRuntime
+    ? invoke<T>(command, args)
+    : Promise.resolve([] as unknown as T);
 }
 
 export function MemoryCenter() {
@@ -46,14 +48,18 @@ export function MemoryCenter() {
   const [selectedMemory, setSelectedMemory] = useState<MemoryItem | null>(null);
 
   // Pending candidates
-  const [pendingCandidates, setPendingCandidates] = useState<MemoryCandidate[]>([]);
+  const [pendingCandidates, setPendingCandidates] = useState<MemoryCandidate[]>(
+    [],
+  );
 
   // Reflection summaries
   const [summaries, setSummaries] = useState<ReflectionSummary[]>([]);
   const [isReflecting, setIsReflecting] = useState(false);
 
   // Sub-tab for advanced views
-  const [subView, setSubView] = useState<"memories" | "pending" | "reflections">("memories");
+  const [subView, setSubView] = useState<
+    "memories" | "pending" | "reflections"
+  >("memories");
 
   const toast = useToast();
   const { t } = useTranslation();
@@ -76,7 +82,9 @@ export function MemoryCenter() {
 
   async function loadRecent() {
     try {
-      const items = await runCommand<MemoryItem[]>("get_recent_memories", { limit: 20 });
+      const items = await runCommand<MemoryItem[]>("get_recent_memories", {
+        limit: 20,
+      });
       setMemories(items);
       setListError("");
     } catch (error) {
@@ -87,7 +95,10 @@ export function MemoryCenter() {
 
   async function loadPending() {
     try {
-      const items = await runCommand<MemoryCandidate[]>("get_pending_candidates", {});
+      const items = await runCommand<MemoryCandidate[]>(
+        "get_pending_candidates",
+        {},
+      );
       setPendingCandidates(items);
       setPendingError("");
     } catch (error) {
@@ -98,9 +109,12 @@ export function MemoryCenter() {
 
   async function loadSummaries() {
     try {
-      const items = await runCommand<ReflectionSummary[]>("get_memory_summaries", {
-        limit: 5,
-      });
+      const items = await runCommand<ReflectionSummary[]>(
+        "get_memory_summaries",
+        {
+          limit: 5,
+        },
+      );
       setSummaries(items);
       setSummariesError("");
     } catch (error) {
@@ -137,7 +151,9 @@ export function MemoryCenter() {
       limit: 30,
     };
     try {
-      const items = await runCommand<MemoryItem[]>("search_memories", { input });
+      const items = await runCommand<MemoryItem[]>("search_memories", {
+        input,
+      });
       setMemories(items);
       setListError("");
     } catch (error) {
@@ -161,7 +177,13 @@ export function MemoryCenter() {
   useEffect(() => {
     if (!isTauriRuntime) return;
     let disposed = false;
-    void Promise.resolve().then(() => { if (!disposed) { void loadMemories(); void loadPending(); void loadSummaries(); } });
+    void Promise.resolve().then(() => {
+      if (!disposed) {
+        void loadMemories();
+        void loadPending();
+        void loadSummaries();
+      }
+    });
     const unlisten = listen("memories-updated", () => {
       void loadMemories();
       void loadPending();
@@ -175,7 +197,9 @@ export function MemoryCenter() {
 
   async function handleDelete(id: string) {
     try {
-      await runCommandAndRefresh("delete_memory", { id }, [reloadVisibleMemories]);
+      await runCommandAndRefresh("delete_memory", { id }, [
+        reloadVisibleMemories,
+      ]);
       setListError("");
     } catch (error) {
       toast.error(toUserMessage(error, t("memory.error.deleteFailed")));
@@ -241,9 +265,13 @@ export function MemoryCenter() {
 
   async function handleConfirmCandidate(candidateId: string) {
     try {
-      await runCommandAndRefresh("apply_memory_candidates", {
-        input: { candidateId, confirmed: true },
-      }, [loadPending, loadMemories]);
+      await runCommandAndRefresh(
+        "apply_memory_candidates",
+        {
+          input: { candidateId, confirmed: true },
+        },
+        [loadPending, loadMemories],
+      );
     } catch (error) {
       toast.error(toUserMessage(error, t("memory.error.confirmFailed")));
     }
@@ -276,44 +304,11 @@ export function MemoryCenter() {
           <p className="eyebrow">{t("memory.center.eyebrow")}</p>
           <h2>{t("memory.title")}</h2>
         </div>
-        <div className="section-heading__actions">
-          <select
-            value={filterType}
-            onChange={(e) => {
-              setFilterType(e.currentTarget.value as MemoryType | "all");
-            }}
-            className="memory-filter-select"
-          >
-            {MEMORY_TYPE_OPTIONS.map(({ label, value }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <button type="button" onClick={handleExport} title={t("memory.actions.exportTitle")}>
-            {t("memory.actions.export")}
-          </button>
-          <button
-            type="button"
-            onClick={handleReflectNow}
-            disabled={isReflecting}
-            title={t("memory.actions.reflectTitle")}
-          >
-            {isReflecting ? t("memory.actions.reflecting") : t("memory.actions.reflect")}
-          </button>
-          <button
-            type="button"
-            onClick={handleClearAll}
-            disabled={isClearing || memories.length === 0}
-          >
-            {isClearing ? t("memory.actions.clearing") : t("memory.actions.clearAll")}
-          </button>
-        </div>
       </div>
 
       {/* Sub-view tabs */}
       <MemoryExtractionControls />
-      <OpenLoopReview />
+
       <nav className="memory-sub-tabs">
         <button
           type="button"
@@ -330,17 +325,10 @@ export function MemoryCenter() {
             void loadPending();
           }}
         >
-          {t("memory.tabs.pending", `待确认 (${pendingCandidates.length})`).replace("{count}", String(pendingCandidates.length))}
-        </button>
-        <button
-          type="button"
-          className={subView === "reflections" ? "is-active" : ""}
-          onClick={() => {
-            setSubView("reflections");
-            void loadSummaries();
-          }}
-        >
-          {t("memory.tabs.reflections")}
+          {t(
+            "memory.tabs.pending",
+            `待确认 (${pendingCandidates.length})`,
+          ).replace("{count}", String(pendingCandidates.length))}
         </button>
       </nav>
 
@@ -398,7 +386,10 @@ export function MemoryCenter() {
             </button>
             {view === "search" && (
               <span className="memory-search-info">
-                {t("memory.center.searchResults").replace("{count}", String(memories.length))}
+                {t("memory.center.searchResults").replace(
+                  "{count}",
+                  String(memories.length),
+                )}
               </span>
             )}
           </div>
@@ -416,17 +407,28 @@ export function MemoryCenter() {
 
           {!listError && memories.length === 0 ? (
             <EmptyState
-              title={view === "search" ? t("memory.center.searchNoResultTitle") : t("memory.center.noMemoriesTitle")}
+              title={
+                view === "search"
+                  ? t("memory.center.searchNoResultTitle")
+                  : t("memory.center.noMemoriesTitle")
+              }
               description={
                 view === "search"
-                  ? t("memory.center.emptySearchDescription").replace("{query}", searchQuery)
+                  ? t("memory.center.emptySearchDescription").replace(
+                      "{query}",
+                      searchQuery,
+                    )
                   : t("memory.empty.noMemories")
               }
             />
           ) : (
             <div className="memory-list">
               {memories.map((memory) => (
-                <div key={memory.id} onClick={() => setSelectedMemory(memory)} className="memory-card-wrapper">
+                <div
+                  key={memory.id}
+                  onClick={() => setSelectedMemory(memory)}
+                  className="memory-card-wrapper"
+                >
                   <MemoryCard
                     memory={memory}
                     onDelete={handleDelete}
@@ -464,10 +466,22 @@ export function MemoryCenter() {
               {pendingCandidates.map((cand) => (
                 <div key={cand.id} className="memory-card memory-card--pending">
                   <div className="memory-card__header">
-                    <span className={`memory-type-badge memory-type-badge--${cand.memoryType}`}>
-                      {t("memory.pending.badge").replace("{type}", cand.memoryType === "profile" ? t("memory.type.profile") : t("memory.type.event"))}
+                    <span
+                      className={`memory-type-badge memory-type-badge--${cand.memoryType}`}
+                    >
+                      {t("memory.pending.badge").replace(
+                        "{type}",
+                        cand.memoryType === "profile"
+                          ? t("memory.type.profile")
+                          : t("memory.type.event"),
+                      )}
                     </span>
-                    <span className="memory-card__source">{t("memory.pending.confidence").replace("{value}", (cand.confidence * 100).toFixed(0))}</span>
+                    <span className="memory-card__source">
+                      {t("memory.pending.confidence").replace(
+                        "{value}",
+                        (cand.confidence * 100).toFixed(0),
+                      )}
+                    </span>
                   </div>
                   <h3 className="memory-card__title">{cand.title}</h3>
                   <p className="memory-card__content">{cand.content}</p>
@@ -517,8 +531,12 @@ export function MemoryCenter() {
               {summaries.map((s) => (
                 <div key={s.id} className="reflection-card">
                   <div className="reflection-card__header">
-                    <span className={`reflection-badge reflection-badge--${s.summaryType}`}>
-                      {s.summaryType === "daily" ? t("memory.reflections.daily") : t("memory.reflections.weekly")}
+                    <span
+                      className={`reflection-badge reflection-badge--${s.summaryType}`}
+                    >
+                      {s.summaryType === "daily"
+                        ? t("memory.reflections.daily")
+                        : t("memory.reflections.weekly")}
                     </span>
                     <span className="reflection-date">
                       {new Date(s.createdAt * 1000).toLocaleDateString("zh-CN")}
@@ -533,6 +551,63 @@ export function MemoryCenter() {
       )}
 
       {/* Memory Detail Modal */}
+      <details className="memory-tools">
+        <summary>更多记忆工具</summary>
+        <div className="section-heading__actions">
+          <select
+            value={filterType}
+            onChange={(e) => {
+              setFilterType(e.currentTarget.value as MemoryType | "all");
+            }}
+            className="memory-filter-select"
+          >
+            {MEMORY_TYPE_OPTIONS.map(({ label, value }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={handleExport}
+            title={t("memory.actions.exportTitle")}
+          >
+            {t("memory.actions.export")}
+          </button>
+          <button
+            type="button"
+            onClick={handleReflectNow}
+            disabled={isReflecting}
+            title={t("memory.actions.reflectTitle")}
+          >
+            {isReflecting
+              ? t("memory.actions.reflecting")
+              : t("memory.actions.reflect")}
+          </button>
+          <button
+            type="button"
+            onClick={handleClearAll}
+            disabled={isClearing || memories.length === 0}
+          >
+            {isClearing
+              ? t("memory.actions.clearing")
+              : t("memory.actions.clearAll")}
+          </button>
+        </div>
+        <div className="memory-tools__secondary">
+          <button
+            type="button"
+            className={subView === "reflections" ? "is-active" : ""}
+            onClick={() => {
+              setSubView("reflections");
+              void loadSummaries();
+            }}
+          >
+            {t("memory.tabs.reflections")}
+          </button>
+        </div>
+        <OpenLoopReview />
+      </details>
       {selectedMemory && (
         <MemoryDetail
           memory={selectedMemory}

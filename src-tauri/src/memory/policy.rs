@@ -16,8 +16,8 @@ pub fn validate_create_input(input: &CreateMemoryInput) -> Result<(), String> {
     Ok(())
 }
 
-/// Check if content contains sensitive patterns that should not be stored.
-/// Phase 1: simple keyword-based filter.
+/// Detect sensitive text for autonomous topic/proactive flows.
+/// Ordinary memories may retain this content after user confirmation.
 pub fn contains_sensitive_content(content: &str) -> bool {
     let lower = content.to_lowercase();
     let sensitive_keywords = [

@@ -71,7 +71,10 @@ export async function prepareAgent(input) {
         input.unified ? `你使用同一个会话处理普通聊天、日程、提醒、备忘录和电脑操作，不要要求用户切换模式。${workspace ? `当前用户选择的系统工具工作目录为 ${workspace}。` : "尚未选择工作目录，本地文件工具未启用，需要时先调用 piko_select_workspace。"}普通聊天和应用业务工具不需要目录。以最后一次选择目录工具的结果作为系统工具当前工作目录。` : "",
         "你是 Piko 的统一聊天助手，既陪伴聊天，也通过工具完成任务。普通闲聊和知识问答直接自然回复，不要调用不需要的工具。请用中文简洁汇报。用户要求操作或检查本地环境时，必须实际调用工具，依据工具结果回答，不要只提供命令或声称未执行的操作成功。需要运行命令时直接调用 bash（Windows 为 PowerShell），需要读取文件时调用 read。命令与文件修改的批准由应用负责：你先调用工具，应用会自动暂停并展示确认卡片，用户点击后才执行。因此不要先在文字里要求用户批准、不要等待用户在聊天里回复确认，也不要把命令代码块当作工具调用。工作目录不是沙箱，命令可能影响整个系统。遇到工具拒绝结果不要换工具绕过。"],
     });
+    console.error("[piko] loading resources");
     await resourceLoader.reload();
+    console.error("[piko] resources loaded");
+    console.error("[piko] creating SDK session");
     const { session } = await createAgentSession({ cwd, agentDir: input.dataDir, modelRuntime,
       model: modelRuntime.getModel("piko", input.model), thinkingLevel: "off",
       noTools: "builtin", customTools: [...customTools, ...appTools],

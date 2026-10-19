@@ -1,7 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { NotebookPen, Plus } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import { MoreHorizontal, NotebookPen, Plus } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import type { ChatHistoryEntry, Memo, MemoCategory } from "../../../types/appTypes";
+import type {
+  ChatHistoryEntry,
+  Memo,
+  MemoCategory,
+} from "../../../types/appTypes";
 import type { MemoryItem } from "../../memory/memoryTypes";
 import { EmptyState, ErrorState } from "../../../components/feedback/States";
 import { useToast } from "../../../components/feedback/toastStore";
@@ -36,10 +48,10 @@ const memoCategoryOptions: Array<{ label: string; value: MemoCategory }> = [
   { label: "其他", value: "other" },
 ];
 
-const memoCategoryDraftOptions: Array<{ label: string; value: MemoCategory | "" }> = [
-  { label: "自动分类", value: "" },
-  ...memoCategoryOptions,
-];
+const memoCategoryDraftOptions: Array<{
+  label: string;
+  value: MemoCategory | "";
+}> = [{ label: "自动分类", value: "" }, ...memoCategoryOptions];
 
 const memoCategoryLabels: Record<MemoCategory, string> = {
   task: "任务",
@@ -66,13 +78,16 @@ const sectionLabels: Record<RecordsSection, string> = {
  * 「没有内容」。顶部一个搜索框同时过滤三处，结果分组并标注来源。
  */
 export function RecordsTab() {
+  const [composerOpen, setComposerOpen] = useState(false);
   const toast = useToast();
   const memoFormRef = useRef<HTMLFormElement>(null);
   const [section, setSection] = useState<RecordsSection>("mine");
 
   // --- 我的记录 ---
   const [memos, setMemos] = useState<Memo[]>([]);
-  const [categoryFilter, setCategoryFilter] = useState<MemoCategory | "all">("all");
+  const [categoryFilter, setCategoryFilter] = useState<MemoCategory | "all">(
+    "all",
+  );
   const [editingMemoId, setEditingMemoId] = useState("");
   const [memosError, setMemosError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -102,7 +117,11 @@ export function RecordsTab() {
    */
   const loadMemos = useCallback(async () => {
     try {
-      const items = await runCommand<Memo[]>("list_memos", undefined, undefined);
+      const items = await runCommand<Memo[]>(
+        "list_memos",
+        undefined,
+        undefined,
+      );
       setMemos((current) => {
         if (isTauriRuntime || items?.length) return items ?? [];
         return current.length ? current : previewMemos();
@@ -123,7 +142,9 @@ export function RecordsTab() {
       setMemories(items ?? []);
       setMemoriesError("");
     } catch (error) {
-      setMemoriesError(toUserMessage(error, "Piko 记住的内容加载失败，请重试。"));
+      setMemoriesError(
+        toUserMessage(error, "Piko 记住的内容加载失败，请重试。"),
+      );
     }
   }, []);
 
@@ -147,10 +168,13 @@ export function RecordsTab() {
       await Promise.all([loadMemos(), loadMemories(), loadChatHistory()]);
       if (!disposed) setIsLoading(false);
     })();
-    const pending = isTauriRuntime ? listen("memos-updated", () => void loadMemos()) : undefined;
+    const pending = isTauriRuntime
+      ? listen("memos-updated", () => void loadMemos())
+      : undefined;
     return () => {
       disposed = true;
-      if (pending) void pending.then((dispose) => dispose()).catch(() => undefined);
+      if (pending)
+        void pending.then((dispose) => dispose()).catch(() => undefined);
     };
   }, [loadChatHistory, loadMemories, loadMemos]);
 
@@ -164,16 +188,23 @@ export function RecordsTab() {
   }, [keyword]);
 
   const visibleMemos = useMemo(() => {
-    const sorted = [...memos].sort((left, right) => right.updatedAt - left.updatedAt);
+    const sorted = [...memos].sort(
+      (left, right) => right.updatedAt - left.updatedAt,
+    );
     const byCategory =
-      categoryFilter === "all" ? sorted : sorted.filter((memo) => memo.category === categoryFilter);
+      categoryFilter === "all"
+        ? sorted
+        : sorted.filter((memo) => memo.category === categoryFilter);
     if (!debouncedKeyword) return byCategory;
-    return byCategory.filter((memo) => containsKeyword(memoSearchFields(memo), debouncedKeyword));
+    return byCategory.filter((memo) =>
+      containsKeyword(memoSearchFields(memo), debouncedKeyword),
+    );
   }, [categoryFilter, debouncedKeyword, memos]);
 
   const categoryCounts = useMemo(() => {
     const counts = new Map<MemoCategory, number>();
-    for (const memo of memos) counts.set(memo.category, (counts.get(memo.category) ?? 0) + 1);
+    for (const memo of memos)
+      counts.set(memo.category, (counts.get(memo.category) ?? 0) + 1);
     return counts;
   }, [memos]);
 
@@ -182,25 +213,35 @@ export function RecordsTab() {
     if (!debouncedKeyword) return null;
     return {
       mine: memos
-        .filter((memo) => containsKeyword(memoSearchFields(memo), debouncedKeyword))
+        .filter((memo) =>
+          containsKeyword(memoSearchFields(memo), debouncedKeyword),
+        )
         .slice(0, SEARCH_RESULT_LIMIT),
       memory: memories
-        .filter((memory) => containsKeyword(memorySearchFields(memory), debouncedKeyword))
+        .filter((memory) =>
+          containsKeyword(memorySearchFields(memory), debouncedKeyword),
+        )
         .slice(0, SEARCH_RESULT_LIMIT),
       chat: chatHistory
-        .filter((entry) => containsKeyword(chatSearchFields(entry), debouncedKeyword))
+        .filter((entry) =>
+          containsKeyword(chatSearchFields(entry), debouncedKeyword),
+        )
         .slice(0, SEARCH_RESULT_LIMIT),
     };
   }, [chatHistory, debouncedKeyword, memos, memories]);
 
   const hasSearchResults =
     searchResults !== null &&
-    searchResults.mine.length + searchResults.memory.length + searchResults.chat.length > 0;
+    searchResults.mine.length +
+      searchResults.memory.length +
+      searchResults.chat.length >
+      0;
 
   async function saveMemo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // 标题允许留空：取正文第一行（04 §3.2「标题可为首行」）。
-    const title = draftTitle.trim() || draftContent.trim().split("\n")[0].trim();
+    const title =
+      draftTitle.trim() || draftContent.trim().split("\n")[0].trim();
     const content = draftContent.trim();
     if (!title || !content) {
       toast.error("先写点内容，标题可以留空（会取第一行）");
@@ -211,7 +252,9 @@ export function RecordsTab() {
     const wasEditing = Boolean(editingMemoId);
     try {
       if (isTauriRuntime) {
-        const args = { input: { title, content, category: draftCategory || undefined } };
+        const args = {
+          input: { title, content, category: draftCategory || undefined },
+        };
         if (wasEditing) {
           await runCommand("update_memo", { id: editingMemoId, ...args });
         } else {
@@ -233,7 +276,11 @@ export function RecordsTab() {
         };
         setMemos((current) => {
           const next = wasEditing
-            ? current.map((item) => (item.id === saved.id ? { ...saved, createdAt: item.createdAt } : item))
+            ? current.map((item) =>
+                item.id === saved.id
+                  ? { ...saved, createdAt: item.createdAt }
+                  : item,
+              )
             : [saved, ...current];
           return next.sort((left, right) => right.updatedAt - left.updatedAt);
         });
@@ -251,6 +298,7 @@ export function RecordsTab() {
   }
 
   function editMemo(memo: Memo) {
+    setComposerOpen(true);
     setEditingMemoId(memo.id);
     setDraftTitle(memo.title);
     setDraftContent(memo.content);
@@ -291,65 +339,21 @@ export function RecordsTab() {
 
   return (
     <div className="tab tab--records">
-      <section className="records-entry" aria-label="记录入口">
-        <form ref={memoFormRef} onSubmit={saveMemo}>
-          {editingMemoId ? <p className="records-entry__hint">正在编辑一条记录，保存后生效。</p> : null}
+      {section !== "memory" && (
+        <section className="records-search" aria-label="搜索记录">
           <input
-            value={draftTitle}
-            onChange={(event) => setDraftTitle(event.currentTarget.value)}
-            maxLength={120}
-            placeholder="标题（留空则取第一行）"
-            aria-label="记录标题"
+            value={keyword}
+            onChange={(event) => setKeyword(event.currentTarget.value)}
+            placeholder="搜索我的记录、Piko 记住的、对话历史…"
+            aria-label="搜索记录"
           />
-          <textarea
-            value={draftContent}
-            onChange={(event) => setDraftContent(event.currentTarget.value)}
-            maxLength={8000}
-            rows={3}
-            placeholder="记一笔…想到什么就写下来。"
-            aria-label="记录内容"
-          />
-          <div className="records-entry__actions">
-            <label className="records-entry__category">
-              <span className="sr-only">分类</span>
-              <select
-                value={draftCategory}
-                onChange={(event) => setDraftCategory(event.currentTarget.value as MemoCategory | "")}
-                aria-label="记录分类"
-              >
-                {memoCategoryDraftOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {editingMemoId ? (
-              <button type="button" className="text-action" onClick={cancelMemoEdit}>
-                取消编辑
-              </button>
-            ) : null}
-            <button type="submit" className="primary-action" disabled={isSaving || !draftContent.trim()}>
-              <Plus size={15} />
-              {isSaving ? "保存中…" : editingMemoId ? "保存修改" : "记一笔"}
+          {keyword ? (
+            <button type="button" onClick={() => setKeyword("")}>
+              清空
             </button>
-          </div>
-        </form>
-      </section>
-
-      <section className="records-search" aria-label="搜索记录">
-        <input
-          value={keyword}
-          onChange={(event) => setKeyword(event.currentTarget.value)}
-          placeholder="搜索我的记录、Piko 记住的、对话历史…"
-          aria-label="搜索记录"
-        />
-        {keyword ? (
-          <button type="button" onClick={() => setKeyword("")}>
-            清空
-          </button>
-        ) : null}
-      </section>
+          ) : null}
+        </section>
+      )}
 
       {debouncedKeyword ? (
         <section className="records-results" aria-label="搜索结果">
@@ -365,17 +369,28 @@ export function RecordsTab() {
                 }}
               >
                 {searchResults.mine.map((memo) => (
-                  <ResultRow key={memo.id} title={memo.title} text={memo.summary || memo.content} />
+                  <ResultRow
+                    key={memo.id}
+                    title={memo.title}
+                    text={memo.summary || memo.content}
+                  />
                 ))}
               </SearchGroup>
               <SearchGroup
                 title={sectionLabels.memory}
                 count={searchResults.memory.length}
                 error={memoriesError}
-                onOpen={() => setSection("memory")}
+                onOpen={() => {
+                  setKeyword("");
+                  setSection("memory");
+                }}
               >
                 {searchResults.memory.map((memory) => (
-                  <ResultRow key={memory.id} title={memory.title} text={memory.content} />
+                  <ResultRow
+                    key={memory.id}
+                    title={memory.title}
+                    text={memory.content}
+                  />
                 ))}
               </SearchGroup>
               <SearchGroup
@@ -385,7 +400,11 @@ export function RecordsTab() {
                 onOpen={() => setSection("chat")}
               >
                 {searchResults.chat.map((entry) => (
-                  <ResultRow key={entry.id} title={entry.prompt} text={entry.response} />
+                  <ResultRow
+                    key={entry.id}
+                    title={entry.prompt}
+                    text={entry.response}
+                  />
                 ))}
               </SearchGroup>
             </>
@@ -399,7 +418,10 @@ export function RecordsTab() {
         </section>
       ) : (
         <>
-          <nav className="segmented-control records-sections" aria-label="记录分区">
+          <nav
+            className="segmented-control records-sections"
+            aria-label="记录分区"
+          >
             <button
               type="button"
               aria-current={section === "mine" ? "page" : undefined}
@@ -425,6 +447,84 @@ export function RecordsTab() {
               对话历史
             </button>
           </nav>
+          {section === "mine" && (
+            <details
+              className="records-entry records-composer"
+              open={composerOpen || Boolean(editingMemoId)}
+              onToggle={(event) => setComposerOpen(event.currentTarget.open)}
+            >
+              <summary>
+                <Plus size={15} />
+                {editingMemoId ? "编辑记录" : "记一笔"}
+                <span>随手记录想法</span>
+              </summary>
+              <form ref={memoFormRef} onSubmit={saveMemo}>
+                {editingMemoId ? (
+                  <p className="records-entry__hint">
+                    正在编辑一条记录，保存后生效。
+                  </p>
+                ) : null}
+                <input
+                  value={draftTitle}
+                  onChange={(event) => setDraftTitle(event.currentTarget.value)}
+                  maxLength={120}
+                  placeholder="标题（留空则取第一行）"
+                  aria-label="记录标题"
+                />
+                <textarea
+                  value={draftContent}
+                  onChange={(event) =>
+                    setDraftContent(event.currentTarget.value)
+                  }
+                  maxLength={8000}
+                  rows={3}
+                  placeholder="记一笔…想到什么就写下来。"
+                  aria-label="记录内容"
+                />
+                <div className="records-entry__actions">
+                  <label className="records-entry__category">
+                    <span className="sr-only">分类</span>
+                    <select
+                      value={draftCategory}
+                      onChange={(event) =>
+                        setDraftCategory(
+                          event.currentTarget.value as MemoCategory | "",
+                        )
+                      }
+                      aria-label="记录分类"
+                    >
+                      {memoCategoryDraftOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {editingMemoId ? (
+                    <button
+                      type="button"
+                      className="text-action"
+                      onClick={cancelMemoEdit}
+                    >
+                      取消编辑
+                    </button>
+                  ) : null}
+                  <button
+                    type="submit"
+                    className="primary-action"
+                    disabled={isSaving || !draftContent.trim()}
+                  >
+                    <Plus size={15} />
+                    {isSaving
+                      ? "保存中…"
+                      : editingMemoId
+                        ? "保存修改"
+                        : "记一笔"}
+                  </button>
+                </div>
+              </form>
+            </details>
+          )}
 
           {section === "mine" ? (
             <section aria-label="我的记录">
@@ -442,10 +542,13 @@ export function RecordsTab() {
                     <button
                       type="button"
                       key={option.value}
-                      className={categoryFilter === option.value ? "is-active" : ""}
+                      className={
+                        categoryFilter === option.value ? "is-active" : ""
+                      }
                       onClick={() => setCategoryFilter(option.value)}
                     >
-                      {option.label} <span>{categoryCounts.get(option.value) ?? 0}</span>
+                      {option.label}{" "}
+                      <span>{categoryCounts.get(option.value) ?? 0}</span>
                     </button>
                   ))}
               </div>
@@ -465,14 +568,71 @@ export function RecordsTab() {
               ) : visibleMemos.length === 0 ? (
                 <EmptyState
                   icon={<NotebookPen size={20} />}
-                  title={memos.length ? "这个分类下还没有记录。" : "还没有记录。写下第一个想法吧。"}
+                  title={
+                    memos.length
+                      ? "这个分类下还没有记录。"
+                      : "还没有记录。写下第一个想法吧。"
+                  }
                 />
               ) : (
                 <ul className="records-list">
                   {visibleMemos.map((memo) => (
-                    <li key={memo.id} className="records-card" data-testid="record-card">
+                    <li
+                      key={memo.id}
+                      className="records-card"
+                      data-testid="record-card"
+                    >
                       <div className="records-card__head">
                         <strong>{memo.title}</strong>
+                        <details
+                          className="records-card__menu"
+                          onBlur={(event) => {
+                            if (
+                              !event.currentTarget.contains(
+                                event.relatedTarget as Node | null,
+                              )
+                            )
+                              event.currentTarget.open = false;
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              event.currentTarget.open = false;
+                              event.currentTarget
+                                .querySelector("summary")
+                                ?.focus();
+                            }
+                          }}
+                        >
+                          <summary aria-label={`更多操作：${memo.title}`}>
+                            <MoreHorizontal size={18} aria-hidden="true" />
+                          </summary>
+                          <div className="records-card__menu-items">
+                            <button
+                              type="button"
+                              className="text-action"
+                              onClick={(event) => {
+                                event.currentTarget
+                                  .closest("details")
+                                  ?.removeAttribute("open");
+                                editMemo(memo);
+                              }}
+                            >
+                              编辑
+                            </button>
+                            <button
+                              type="button"
+                              className="text-action"
+                              onClick={(event) => {
+                                event.currentTarget
+                                  .closest("details")
+                                  ?.removeAttribute("open");
+                                void deleteMemo(memo);
+                              }}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </details>
                         <span className="records-chip records-chip--category">
                           {memoCategoryLabels[memo.category] ?? "其他"}
                         </span>
@@ -480,19 +640,16 @@ export function RecordsTab() {
                       <p>{summarizeText(memo.summary || memo.content)}</p>
                       <div className="records-card__meta">
                         <time>{formatChatHistoryTime(memo.updatedAt)}</time>
-                        {memo.tags.slice(0, 3).map((tag) => (
-                          <span key={tag} className="records-chip">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="records-card__actions">
-                        <button type="button" className="text-action" onClick={() => editMemo(memo)}>
-                          编辑
-                        </button>
-                        <button type="button" className="text-action" onClick={() => void deleteMemo(memo)}>
-                          删除
-                        </button>
+                        {memo.tags
+                          .filter(
+                            (tag) => tag !== memoCategoryLabels[memo.category],
+                          )
+                          .slice(0, 2)
+                          .map((tag) => (
+                            <span key={tag} className="records-chip">
+                              {tag}
+                            </span>
+                          ))}
                       </div>
                     </li>
                   ))}
@@ -511,7 +668,10 @@ export function RecordsTab() {
                 onDismiss={() => setChatError("")}
               />
             ) : (
-              <PanelHistory chatHistory={chatHistory} onClear={clearChatHistory} />
+              <PanelHistory
+                chatHistory={chatHistory}
+                onClear={clearChatHistory}
+              />
             )
           ) : null}
         </>

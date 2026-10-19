@@ -115,9 +115,6 @@ pub fn apply_candidate(
         return Ok(None);
     }
 
-    if super::policy::contains_sensitive_content(&candidate.content) {
-        return Err("记忆内容包含敏感信息，已拦截".into());
-    }
     let now = now_unix();
     let item = MemoryItem {
         id: format!("memory-{}", candidate.id),

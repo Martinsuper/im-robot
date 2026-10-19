@@ -163,6 +163,41 @@ async function submitPrompt(text: string) {
 }
 
 describe("BubbleWindow 聊天事件流竞态", () => {
+  async function showDesktopOpener() {
+    await waitFor(() => expect(handlersByEvent.get("soul:message")?.size).toBe(1));
+    await act(async () => {
+      for (const handler of handlersByEvent.get("soul:message") ?? []) handler({ payload: {
+        id: "desktop-flower-test", category: "desktop_observation", templateId: "desktop_observation",
+        text: "第一朵花开了，要给它起个名字吗？", source: { kind: "desktop_observation", id: "desktop-flower-test", revision: 1 },
+      } });
+    });
+    await screen.findByText("第一朵花开了，要给它起个名字吗？");
+  }
+
+  it("responding to a desktop opener forwards its identity only after the user sends a reply", async () => {
+    render(<BubbleWindow />);
+    await showDesktopOpener();
+    expect(chatStartInputCalls()).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "回应" }));
+    expect(chatStartInputCalls()).toHaveLength(0);
+    expect(runCommandMock).toHaveBeenCalledWith("soul_ack_message", { receipt: { message_id: "desktop-flower-test", kind: "responded", visible_seconds: 0 } });
+    await submitPrompt("就叫小春吧");
+    await waitFor(() => expect(chatStartInputCalls()).toHaveLength(1));
+    const call = runCommandMock.mock.calls.find(([command]) => command === "agent_start");
+    expect(call?.[1].input).toMatchObject({ prompt: "就叫小春吧", proactiveMessageId: "desktop-flower-test" });
+  });
+
+  it("a new conversation clears an unsent desktop-reply association", async () => {
+    render(<BubbleWindow />);
+    await showDesktopOpener();
+    fireEvent.click(screen.getByRole("button", { name: "回应" }));
+    fireEvent.click(screen.getByRole("button", { name: "新对话" }));
+    await submitPrompt("另聊一个话题");
+    await waitFor(() => expect(chatStartInputCalls()).toHaveLength(1));
+    const call = runCommandMock.mock.calls.find(([command]) => command === "agent_start");
+    expect(call?.[1].input.proactiveMessageId).toBeUndefined();
+  });
+
   it("默认不置顶，点击图标切换原生窗口置顶并同步选中状态", async () => {
     render(<BubbleWindow />);
     const pin = screen.getByRole("button", { name: "窗口置顶" });

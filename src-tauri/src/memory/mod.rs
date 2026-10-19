@@ -17,3 +17,5 @@ pub use model::{
 };
 pub use store::{init_memory_db, open_in_memory_db, MemoryDb};
 pub use writer::{auto_capture_from_chat, CandidateCache};
+
+mod semantic;

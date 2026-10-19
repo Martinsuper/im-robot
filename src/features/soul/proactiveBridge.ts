@@ -60,6 +60,7 @@ export function currentActivitySnapshot(typing: boolean): ActivitySnapshot {
 }
 
 export const SOUL_CATEGORY_LABELS: Record<ProactiveCategory, string> = {
+  desktop_observation: "看见你在忙什么",
   task_unresolved: "任务跟进",
   open_loop: "话题回访",
   greeting: "打了个招呼",

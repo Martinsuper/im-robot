@@ -247,7 +247,7 @@
   color: #b85a51;
 }
 .timeline__item.is-conflicting .timeline__marker {
-  box-shadow: 0 0 0 3px rgba(154, 89, 59, .18);
+  box-shadow: 0 0 0 3px rgba(154, 89, 59, 0.18);
 }
 
 /* --- ⑤ 接下来 --- */
@@ -317,4 +317,58 @@
 }
 .today-more__meta {
   margin: 6px 0 0;
+}
+
+.today-focus-disclosure > summary,
+.today-calendar-tools > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+.today-focus-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.today-disclosure-hint {
+  margin-left: auto;
+  color: var(--piko-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.today-focus-disclosure > .today-focus {
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.today-calendar-tools[open] > summary {
+  margin-bottom: 14px;
+}
+.today-quick-add__options {
+  min-width: 0;
+}
+.today-quick-add__options > summary {
+  cursor: pointer;
+  color: var(--piko-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.today-quick-add__options > summary > span {
+  margin-left: 6px;
+  color: var(--piko-accent);
+}
+.today-quick-add__fields {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+.today-quick-add__row {
+  align-items: start;
+}
+.today-quick-add__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
 }

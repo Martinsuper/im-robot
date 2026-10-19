@@ -56,10 +56,6 @@ pub fn create_memory(
 ) -> Result<MemoryItem, String> {
     policy::validate_create_input(&input)?;
 
-    if policy::contains_sensitive_content(&input.content) {
-        return Err("记忆内容包含敏感信息，已拦截".to_string());
-    }
-
     let now = now_unix();
     let item = MemoryItem {
         id: memory_id(),

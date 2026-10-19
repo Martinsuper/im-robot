@@ -61,6 +61,24 @@ pub fn migrate(conn: &mut Connection) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
     }
+    if version < 5 {
+        tx.execute_batch(include_str!("schema_v5.sql"))
+            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE soul_schema SET version=?1 WHERE singleton=1",
+            [SCHEMA_VERSION],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if version < 6 {
+        tx.execute_batch(include_str!("schema_v6.sql"))
+            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE soul_schema SET version=?1 WHERE singleton=1",
+            [SCHEMA_VERSION],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     tx.commit().map_err(|e| e.to_string())
 }
 

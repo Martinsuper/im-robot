@@ -114,7 +114,9 @@ pub fn produce_local(conn: &mut Connection, now: i64) -> Result<(), String> {
     }
 
     store::transaction(conn, |tx| {
-        if proactive::event_allowed(tx, ProactiveCategory::SmallTalk, now)? {
+        if proactive::event_allowed(tx, ProactiveCategory::SmallTalk, now)?
+            && !super::desktop::enabled(tx)?
+        {
             let date = chrono::DateTime::<chrono::Utc>::from_timestamp(now, 0)
                 .ok_or("invalid_clock")?
                 .with_timezone(&chrono::Local)

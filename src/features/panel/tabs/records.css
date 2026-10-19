@@ -213,8 +213,12 @@
   animation: records-skeleton-sweep 1.4s ease-in-out infinite;
 }
 @keyframes records-skeleton-sweep {
-  0% { background-position: 100% 0; }
-  100% { background-position: -100% 0; }
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
 }
 
 /* --- ⑦ 统一搜索结果 --- */
@@ -374,4 +378,176 @@
   .records-history__layout {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.records-composer > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.records-composer > summary > span {
+  margin-left: auto;
+  color: var(--piko-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.records-composer[open] > summary {
+  margin-bottom: 12px;
+}
+.memory-extraction--compact .memory-extraction__bar {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.memory-extraction__settings {
+  flex: 1;
+  min-width: 0;
+}
+.memory-extraction__settings > summary,
+.memory-tools > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--piko-muted);
+}
+.memory-extraction__config {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+.memory-extraction__config label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.memory-extraction__config p {
+  font-size: 11px;
+  color: var(--piko-muted);
+  line-height: 1.6;
+}
+.memory-extraction--compact .memory-extraction__bar > button {
+  flex: 0 0 auto;
+}
+.memory-tools {
+  border-top: 1px solid var(--piko-line);
+  margin-top: 12px;
+  padding-top: 14px;
+}
+.memory-tools[open] > summary {
+  margin-bottom: 12px;
+}
+.memory-tools .section-heading__actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.memory-tools__secondary {
+  margin: 10px 0;
+}
+.memory-center > .section-heading {
+  display: none;
+}
+.memory-center .memory-sub-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  margin: 0;
+  border-radius: 10px;
+  background: var(--piko-soft, rgba(70, 91, 96, 0.07));
+}
+.memory-center .memory-sub-tabs button {
+  min-height: 34px;
+  font-size: 12px;
+  background: transparent;
+}
+.memory-center .memory-sub-tabs button.is-active {
+  background: var(--piko-fill, #fff);
+  color: var(--piko-accent);
+}
+.memory-extraction--compact .memory-extraction__bar > button {
+  color: #fff;
+  background: var(--piko-accent);
+  border-color: transparent;
+}
+.memory-extraction--compact .memory-extraction__bar > button:disabled {
+  opacity: 0.5;
+}
+
+.records-card {
+  position: relative;
+}
+.records-card__head {
+  padding-right: 34px;
+}
+.records-card__head > strong {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.records-card > p {
+  font-size: 13px;
+  line-height: 1.65;
+}
+.records-card__meta {
+  font-size: 12px;
+}
+.records-card .records-chip {
+  font-size: 11px;
+}
+.records-card__menu {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+}
+.records-card__menu > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 8px;
+  color: var(--piko-muted);
+}
+.records-card__menu > summary::-webkit-details-marker {
+  display: none;
+}
+.records-card__menu > summary:hover,
+.records-card__menu[open] > summary {
+  color: var(--piko-accent);
+  background: var(--piko-soft, #eef2ee);
+}
+.records-card__menu-items {
+  position: absolute;
+  top: 39px;
+  right: 0;
+  display: grid;
+  min-width: 112px;
+  padding: 5px;
+  background: var(--piko-fill, #fff);
+  border: 1px solid var(--piko-line);
+  border-radius: 10px;
+  box-shadow: 0 5px 18px rgba(30, 45, 35, 0.14);
+}
+.records-card__menu-items .text-action {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 13px;
+  text-align: left;
+}
+.records-card__menu-items button:last-child {
+  color: #aa433a;
+}
+.records-search input,
+.records-entry input,
+.records-entry textarea {
+  font-size: 13px;
+}
+.records-chips button {
+  min-height: 32px;
+  font-size: 12px;
 }

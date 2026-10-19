@@ -29,7 +29,7 @@ export async function installPanelBackend(page: Page, options: BackendOptions = 
       onboarding: options.onboarding ?? false,
       items: [], memos: [], history: [{ id: 'history-1', prompt: '自动化历史提问', response: '自动化历史回答', createdAt: 1792288800 }],
       focus: { status: 'idle', kind: 'focus', remainingSeconds: 0, todayMinutes: 0 },
-      soul: { revision: 7, enabled: false, paused: false, enabled_since: 100, categories: [{ category: 'greeting', enabled: false, available: true, enabled_since: null, daily_limit: 2 }], mood_enabled: false, evolution_enabled: false, daily_limit: 3, cooldown_seconds: 7200 },
+      soul: { revision: 7, enabled: false, paused: false, enabled_since: 100, categories: [{ category: 'greeting', enabled: false, available: true, enabled_since: null, daily_limit: 2 }, { category: 'desktop_observation', enabled: false, available: true, enabled_since: null, daily_limit: 3 }], mood_enabled: false, evolution_enabled: false, daily_limit: 3, cooldown_seconds: 7200 },
       role: { profile_id: 'piko', schema_version: 2, revision: 4, default_resource_version: '1', locale: 'zh-CN', user_overrides: {}, effective: { background: 'default', values: [], tone: 'default', catchphrases: [], forbidden_phrases: [], care: 'care', stance: 'stance', extra: '' }, writable: true, fallback_reason: null },
       memories: options.memory ? [{ id: 'memory-1', memoryType: 'profile', title: '自动化记忆', content: '偏好简洁表达', source: 'userExplicit', importance: 5, confidence: 1, recencyScore: 1, privacyLevel: 'publicToUser', status: 'active', createdAt: 1792288800, updatedAt: 1792288800, tags: [], isPinned: false }] : [],
       candidates: options.memory ? [{ id: 'candidate-1', title: '候选偏好', content: '候选记忆内容', memoryType: 'profile', source: 'conversation', confidence: 0.9, importance: 5, tags: [], requiresConfirmation: true }] : [],
@@ -142,6 +142,12 @@ export async function installPanelBackend(page: Page, options: BackendOptions = 
           case 'update_ai_settings': Object.assign(state.settings.ai, args.input); result = state.settings; break;
           case 'list_models': result = [{ id: 'ui-test', name: 'ui-test' }]; break;
           case 'soul_get_settings': result = state.soul; break;
+        case 'soul_desktop_status': result = { enabled: state.soul.enabled && !state.soul.paused, capture_permission: true, model: state.desktop?.model || state.settings.ai.model, checks_remaining: 12, last_error: null }; break;
+        case 'soul_test_desktop_model': result = null; break;
+        case 'soul_get_desktop_settings': result = state.desktop ??= { revision: 1, frequency: 'natural', excluded_apps: [], model: '' }; break;
+        case 'soul_update_desktop_settings':
+          if (state.desktop.revision !== args.input.revision) throw new Error('settings_conflict');
+          state.desktop = { ...args.input, revision: args.input.revision + 1 }; result = state.desktop; break;
           case 'soul_get_profile': result = state.role; break;
           case 'soul_get_continuity': result = { revision: 1, history_enabled: false, days: 0, nickname: null, nickname_options: [], milestones: [], proposals: [], versions: [] }; break;
           case 'soul_diagnostics': result = { storage: 'ready', profile_valid: true, ledger_readable: true }; break;

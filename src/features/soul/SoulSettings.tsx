@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "../i18n/I18nProvider";
 import "./soul.css";
+import { DesktopObservationSettings } from "./DesktopObservationSettings";
 import { ContinuitySettings } from "./ContinuitySettings";
 import {
   type RoleOverrides,
@@ -181,6 +182,7 @@ export function SoulSettings() {
           </button>
         </div>
       )}
+      <DesktopObservationSettings />
       {role && (
         <div className="soul-settings__role">
           {!writable && <p role="alert">{t("soul.settings.readOnlyRole")}</p>}

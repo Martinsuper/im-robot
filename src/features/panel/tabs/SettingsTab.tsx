@@ -1,17 +1,29 @@
 import { DataSettings } from "../DataSettings";
-import { connectionMessage, type ModelConnectionStatus } from "../modelConnectionStatus";
+import {
+  connectionMessage,
+  type ModelConnectionStatus,
+} from "../modelConnectionStatus";
 import "./settings.css";
 import { SoulDiagnostics } from "../../soul/SoulDiagnostics";
 import { SoulSettings } from "../../soul/SoulSettings";
 import { useEffect, useRef, useState } from "react";
-import { BellRing, Info, MessageCircle, PawPrint, ShieldCheck, SlidersHorizontal, Volume2 } from "lucide-react";
+import {
+  BellRing,
+  MessageCircle,
+  PawPrint,
+  ShieldCheck,
+  Volume2,
+} from "lucide-react";
 import { useStableEvent } from "../../../hooks/useStableEvent";
 import { VersionSettings } from "../VersionSettings";
 import { useTranslation } from "../../i18n/I18nProvider";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
-import { notificationPermissionLabel, type NotificationStatus } from "../notificationStatus";
+import {
+  notificationPermissionLabel,
+  type NotificationStatus,
+} from "../notificationStatus";
 import { listen } from "@tauri-apps/api/event";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { SettingsGroup } from "../PanelChrome";
 import { EmptyState, ErrorState } from "../../../components/feedback/States";
 import { useToast } from "../../../components/feedback/toastStore";
@@ -19,16 +31,9 @@ import { toUserMessage } from "../../../lib/errors";
 import { usePreferenceDrafts } from "../usePreferenceDrafts";
 import { useAppSettings } from "../settingsStore";
 
-import {
-  loadGrowthSnapshot,
-  loadInteractionStats,
-  type GrowthSnapshot,
-  type InteractionStats,
-} from "../../pet/interaction";
 import type {
   AiSettings,
   AppSettings,
-  InstalledPlugin,
   ModelInfo,
   QuietMode,
   SpeechModelDownloadProgress,
@@ -66,20 +71,34 @@ export function SettingsTab() {
   const statusLabels = useStableEvent(() => t);
   const { settings, applyServer } = useAppSettings();
 
-  const { companionName, theme, sensingPaused, breakRemindersEnabled, breakReminderIntervalMinutes,
-    breakReminderCooldownMinutes, breakReminderQuietHoursEnabled, breakReminderQuietHoursStart,
-    breakReminderQuietHoursEnd, updatePreferences, updateWorkRhythm } = usePreferenceDrafts(settings);
+  const {
+    companionName,
+    theme,
+    sensingPaused,
+    breakRemindersEnabled,
+    breakReminderIntervalMinutes,
+    breakReminderCooldownMinutes,
+    breakReminderQuietHoursEnabled,
+    breakReminderQuietHoursStart,
+    breakReminderQuietHoursEnd,
+    updatePreferences,
+    updateWorkRhythm,
+  } = usePreferenceDrafts(settings);
   const [quietMode, setQuietMode] = useState<QuietMode>(settings.quietMode);
   const [aiSettings, setAiSettings] = useState<AiSettings>(settings.ai);
-  const [agentAutoApproveCommands, setAgentAutoApproveCommands] = useState(settings.agentAutoApproveCommands ?? false);
+  const [agentAutoApproveCommands, setAgentAutoApproveCommands] = useState(
+    settings.agentAutoApproveCommands ?? false,
+  );
   const [savingCommandPermission, setSavingCommandPermission] = useState(false);
-  const [htmlPreviewEnabled, setHtmlPreviewEnabled] = useState(settings.htmlPreviewEnabled);
 
   const [apiKey, setApiKey] = useState("");
   const [apiKeyClearRequested, setApiKeyClearRequested] = useState(false);
-  const [savedAiSettings, setSavedAiSettings] = useState<AiSettings>(settings.ai);
+  const [savedAiSettings, setSavedAiSettings] = useState<AiSettings>(
+    settings.ai,
+  );
   const [savedHasApiKey, setSavedHasApiKey] = useState(settings.hasApiKey);
-  const [connectionStatus, setConnectionStatus] = useState<ModelConnectionStatus>({ kind: "idle" });
+  const [connectionStatus, setConnectionStatus] =
+    useState<ModelConnectionStatus>({ kind: "idle" });
   const connectionText = connectionMessage(connectionStatus, t);
   const [isSavingAi, setIsSavingAi] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -89,21 +108,25 @@ export function SettingsTab() {
   /** 两段式确认：第一次点击只变成「确认清空」，再点才执行（00 §5.9 可逆原则）。 */
   const [confirmClear, setConfirmClear] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
-  const [notificationPermission, setNotificationPermission] = useState("尚未授权");
-  const [notificationDetails, setNotificationDetails] = useState<NotificationStatus>();
+  const [notificationPermission, setNotificationPermission] =
+    useState("尚未授权");
+  const [notificationDetails, setNotificationDetails] =
+    useState<NotificationStatus>();
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [notificationQueryError, setNotificationQueryError] = useState("");
-  const [screenCapturePermission, setScreenCapturePermission] = useState("截图时按需申请");
+  const [screenCapturePermission, setScreenCapturePermission] =
+    useState("截图时按需申请");
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
-  const [speechModelProgress, setSpeechModelProgress] = useState<Record<string, SpeechModelDownloadProgress>>({});
+  const [speechModelProgress, setSpeechModelProgress] = useState<
+    Record<string, SpeechModelDownloadProgress>
+  >({});
   const [downloadingSpeechModelId, setDownloadingSpeechModelId] = useState("");
-  const [externalPlugins, setExternalPlugins] = useState<InstalledPlugin[]>([]);
-  const [interactionStats, setInteractionStats] = useState<InteractionStats>(() => loadInteractionStats());
-  const [growthSnapshot, setGrowthSnapshot] = useState<GrowthSnapshot>(() => loadGrowthSnapshot());
 
   const petVisualStyle = usePetVisualStyle();
   const customPetImagePath = useCustomPetImagePath();
-  const availablePetVisualStyleOptions = getAvailablePetVisualStyleOptions(Boolean(customPetImagePath));
+  const availablePetVisualStyleOptions = getAvailablePetVisualStyleOptions(
+    Boolean(customPetImagePath),
+  );
 
   /**
    * 共享缓存 → 本地草稿的单向同步。
@@ -121,7 +144,6 @@ export function SettingsTab() {
     appliedSettingsRef.current = settings;
 
     setQuietMode(settings.quietMode);
-    setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
     setAgentAutoApproveCommands(settings.agentAutoApproveCommands ?? false);
     // AI 参数是显式保存，服务端回包之外只在首次加载同步。
     if (isFirstLoad) {
@@ -132,19 +154,24 @@ export function SettingsTab() {
     }
   }, [settings]);
 
-  // 本 Tab 自己持有的两段数据：语音模型（高级 → 语音）与外部插件（高级 → 插件）。
+  // 语音模型与系统权限信息。
   useEffect(() => {
     void loadSpeechModels();
-    void runCommand<InstalledPlugin[]>("list_external_plugins", undefined, [])
-      .then(setExternalPlugins)
-      .catch((error) => toast.error(toUserMessage(error, "无法读取插件列表，请重试。")));
-    void runCommand<string>("screen_capture_permission_status", undefined, "截图时按需申请")
+    void runCommand<string>(
+      "screen_capture_permission_status",
+      undefined,
+      "截图时按需申请",
+    )
       .then(setScreenCapturePermission)
       .catch(() => setScreenCapturePermission("读取失败"));
     if (isTauriRuntime) {
-      void isEnabled().then(setAutostartEnabled).catch((error) => {
-        toast.error(`${statusLabels()("settings.feedback.autostartReadFailed", "开机启动状态读取失败")}：${toUserMessage(error)}`);
-      });
+      void isEnabled()
+        .then(setAutostartEnabled)
+        .catch((error) => {
+          toast.error(
+            `${statusLabels()("settings.feedback.autostartReadFailed", "开机启动状态读取失败")}：${toUserMessage(error)}`,
+          );
+        });
       void refreshNotificationStatus();
     }
 
@@ -162,31 +189,30 @@ export function SettingsTab() {
         }
       },
     );
-    const refreshInteraction = () => {
-      setInteractionStats(loadInteractionStats());
-      setGrowthSnapshot(loadGrowthSnapshot());
-    };
-    const unlistenInteraction = listen("piko-interaction-stats-changed", refreshInteraction);
-    const unlistenGrowth = listen("piko-growth-state-changed", refreshInteraction);
-    window.addEventListener("storage", refreshInteraction);
     return () => {
-      void unlistenSpeechModelProgress.then((dispose) => dispose()).catch(() => undefined);
-      void unlistenInteraction.then((dispose) => dispose()).catch(() => undefined);
-      void unlistenGrowth.then((dispose) => dispose()).catch(() => undefined);
-      window.removeEventListener("storage", refreshInteraction);
+      void unlistenSpeechModelProgress
+        .then((dispose) => dispose())
+        .catch(() => undefined);
     };
   }, [toast, statusLabels]);
 
   function updateQuietMode(mode: QuietMode) {
     setQuietMode(mode);
-    void runCommand<AppSettings>("update_quiet_mode", { quietMode: mode }, {
-      ...defaultAppSettings,
-      quietMode: mode,
-      ai: aiSettings,
-    });
+    void runCommand<AppSettings>(
+      "update_quiet_mode",
+      { quietMode: mode },
+      {
+        ...defaultAppSettings,
+        quietMode: mode,
+        ai: aiSettings,
+      },
+    );
   }
 
-  function updateAiField<Key extends keyof AiSettings>(key: Key, value: AiSettings[Key]) {
+  function updateAiField<Key extends keyof AiSettings>(
+    key: Key,
+    value: AiSettings[Key],
+  ) {
     setAiSettings((current) => ({ ...current, [key]: value }));
     setConnectionStatus({ kind: "dirty" });
   }
@@ -196,12 +222,15 @@ export function SettingsTab() {
     setAiSettings((current) => {
       const currentPreset = findProviderPreset(current.provider);
       const canApplyPreset = currentPreset
-        ? current.baseUrl === currentPreset.baseUrl && current.model === currentPreset.model
+        ? current.baseUrl === currentPreset.baseUrl &&
+          current.model === currentPreset.model
         : !current.baseUrl && !current.model;
       return {
         ...current,
         provider,
-        ...(canApplyPreset && preset ? { baseUrl: preset.baseUrl, model: preset.model } : {}),
+        ...(canApplyPreset && preset
+          ? { baseUrl: preset.baseUrl, model: preset.model }
+          : {}),
       };
     });
     setConnectionStatus({ kind: "dirty" });
@@ -218,7 +247,11 @@ export function SettingsTab() {
             apiKey: apiKeyClearRequested ? null : apiKey.trim() || undefined,
           },
         },
-        { ...defaultAppSettings, ai: aiSettings, hasApiKey: apiKeyClearRequested ? false : savedHasApiKey },
+        {
+          ...defaultAppSettings,
+          ai: aiSettings,
+          hasApiKey: apiKeyClearRequested ? false : savedHasApiKey,
+        },
       );
       setAiSettings(next.ai);
       setSavedAiSettings(next.ai);
@@ -233,41 +266,57 @@ export function SettingsTab() {
   }
 
   function hasUnsavedAiSettings() {
-    return JSON.stringify(aiSettings) !== JSON.stringify(savedAiSettings)
-      || apiKey.trim().length > 0
-      || apiKeyClearRequested;
+    return (
+      JSON.stringify(aiSettings) !== JSON.stringify(savedAiSettings) ||
+      apiKey.trim().length > 0 ||
+      apiKeyClearRequested
+    );
   }
 
   async function saveOnlyAiSettings() {
     try {
       await saveAiSettings();
     } catch (error) {
-      setConnectionStatus({ kind: "savingFailed", detail: toUserMessage(error) });
+      setConnectionStatus({
+        kind: "savingFailed",
+        detail: toUserMessage(error),
+      });
     }
   }
 
   async function loadSpeechModels() {
-    const models = await runCommand<SpeechModelStatus[]>("get_speech_model_status", undefined, [
-      {
-        id: "base",
-        name: "Whisper Base",
-        fileName: "ggml-base.bin",
-        downloadUrl: "",
-        downloaded: false,
-        byteSize: 0,
-      },
-    ]);
+    const models = await runCommand<SpeechModelStatus[]>(
+      "get_speech_model_status",
+      undefined,
+      [
+        {
+          id: "base",
+          name: "Whisper Base",
+          fileName: "ggml-base.bin",
+          downloadUrl: "",
+          downloaded: false,
+          byteSize: 0,
+        },
+      ],
+    );
     setSpeechModels(models);
   }
 
   async function downloadSpeechModel(modelId: string) {
     setDownloadingSpeechModelId(modelId);
     try {
-      const model = await runCommand<SpeechModelStatus>("download_speech_model", {
-        input: { modelId },
-      });
-      setSpeechModels((current) => current.map((item) => (item.id === model.id ? model : item)));
-      toast.success(`${model.name} ${t("settings.feedback.modelReady", "已可用")}`);
+      const model = await runCommand<SpeechModelStatus>(
+        "download_speech_model",
+        {
+          input: { modelId },
+        },
+      );
+      setSpeechModels((current) =>
+        current.map((item) => (item.id === model.id ? model : item)),
+      );
+      toast.success(
+        `${model.name} ${t("settings.feedback.modelReady", "已可用")}`,
+      );
     } catch (error) {
       toast.error(toUserMessage(error));
     } finally {
@@ -286,7 +335,10 @@ export function SettingsTab() {
         { id: aiSettings.model },
       ]);
       const modelNames = models.map((model) => model.id).join("、");
-      setConnectionStatus({ kind: models.length ? "connected" : "empty", detail: modelNames });
+      setConnectionStatus({
+        kind: models.length ? "connected" : "empty",
+        detail: modelNames,
+      });
     } catch (error) {
       setConnectionStatus({ kind: "failed", detail: toUserMessage(error) });
     } finally {
@@ -298,7 +350,9 @@ export function SettingsTab() {
     if (!isTauriRuntime) return;
     const path = await open({
       multiple: false,
-      filters: [{ name: "图片文件", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+      filters: [
+        { name: "图片文件", extensions: ["png", "jpg", "jpeg", "webp", "gif"] },
+      ],
     });
     if (typeof path !== "string") return;
     setCustomPetImagePath(path);
@@ -329,7 +383,12 @@ export function SettingsTab() {
       setShortcutDraft(null);
       toast.success(t("settings.feedback.shortcutSaved", "快捷键已更新"));
     } catch (error) {
-      toast.error(toUserMessage(error, t("settings.feedback.shortcutFailed", "快捷键更新失败，请重试。")));
+      toast.error(
+        toUserMessage(
+          error,
+          t("settings.feedback.shortcutFailed", "快捷键更新失败，请重试。"),
+        ),
+      );
       setShortcutDraft(null);
     } finally {
       setIsSavingShortcut(false);
@@ -339,35 +398,32 @@ export function SettingsTab() {
   async function clearMyData() {
     setIsClearing(true);
     try {
-      const result = await runCommand<{ backupDir: string; cleared: string[] }>("clear_my_data", undefined, {
-        backupDir: "",
-        cleared: [],
-      });
+      const result = await runCommand<{ backupDir: string; cleared: string[] }>(
+        "clear_my_data",
+        undefined,
+        {
+          backupDir: "",
+          cleared: [],
+        },
+      );
       toast.show({
-        message: t("settings.feedback.cleared", "已清空 {count} 类数据，备份在 backups 目录").replace("{count}", String(result?.cleared.length ?? 0)),
+        message: t(
+          "settings.feedback.cleared",
+          "已清空 {count} 类数据，备份在 backups 目录",
+        ).replace("{count}", String(result?.cleared.length ?? 0)),
         tone: "success",
       });
       setConfirmClear(false);
       // 记录 Tab 监听 memos-updated / chat-history-updated，会自己刷新
-
     } catch (error) {
-      toast.error(toUserMessage(error, t("settings.feedback.clearFailed", "清空失败，未做任何删除。")));
+      toast.error(
+        toUserMessage(
+          error,
+          t("settings.feedback.clearFailed", "清空失败，未做任何删除。"),
+        ),
+      );
     } finally {
       setIsClearing(false);
-    }
-  }
-
-  async function exportMyData() {
-    try {
-      const path = await save({
-        defaultPath: "piko-export.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!path) return;
-      await runCommand("export_to_file", { filePath: path });
-      toast.show({ message: t("settings.feedback.exportSaved", "数据已导出（不含 API Key）"), tone: "success" });
-    } catch (error) {
-      toast.error(toUserMessage(error, t("settings.feedback.exportFailed", "导出失败，请重试。")));
     }
   }
 
@@ -380,13 +436,17 @@ export function SettingsTab() {
       }
       setAutostartEnabled(!autostartEnabled);
     } catch (error) {
-      toast.error(`${t("settings.feedback.autostartSaveFailed", "开机启动设置失败")}：${toUserMessage(error)}`);
+      toast.error(
+        `${t("settings.feedback.autostartSaveFailed", "开机启动设置失败")}：${toUserMessage(error)}`,
+      );
     }
   }
 
   async function refreshNotificationStatus() {
     try {
-      const status = await runCommand<NotificationStatus>("get_notification_status");
+      const status = await runCommand<NotificationStatus>(
+        "get_notification_status",
+      );
       setNotificationDetails(status);
       setNotificationPermission(notificationPermissionLabel(status));
       setNotificationQueryError("");
@@ -399,21 +459,46 @@ export function SettingsTab() {
   async function enableNotifications() {
     setNotificationBusy(true);
     try {
-      const status = await runCommand<NotificationStatus>("request_notification_permission");
+      const status = await runCommand<NotificationStatus>(
+        "request_notification_permission",
+      );
       setNotificationDetails(status);
       setNotificationPermission(notificationPermissionLabel(status));
     } catch (error) {
-      toast.error(toUserMessage(error, t("settings.feedback.notificationFailed", "通知权限申请失败，请重试。")));
-    } finally { setNotificationBusy(false); }
+      toast.error(
+        toUserMessage(
+          error,
+          t(
+            "settings.feedback.notificationFailed",
+            "通知权限申请失败，请重试。",
+          ),
+        ),
+      );
+    } finally {
+      setNotificationBusy(false);
+    }
   }
 
   async function testNotification() {
     setNotificationBusy(true);
     try {
       await runCommand("send_test_notification");
-      toast.success(t("settings.feedback.notificationSent", "测试通知已提交，请检查屏幕右上角或通知中心。"));
+      toast.success(
+        t(
+          "settings.feedback.notificationSent",
+          "测试通知已提交，请检查屏幕右上角或通知中心。",
+        ),
+      );
     } catch (error) {
-      toast.error(toUserMessage(error, t("settings.feedback.testNotificationFailed", "测试通知发送失败，请重试。")));
+      toast.error(
+        toUserMessage(
+          error,
+          t(
+            "settings.feedback.testNotificationFailed",
+            "测试通知发送失败，请重试。",
+          ),
+        ),
+      );
     } finally {
       await refreshNotificationStatus();
       setNotificationBusy(false);
@@ -424,30 +509,36 @@ export function SettingsTab() {
     setAgentAutoApproveCommands(enabled);
     setSavingCommandPermission(true);
     try {
-      const next = await runCommand<AppSettings>("update_agent_auto_approve_commands", { enabled }, {
-        ...settings, agentAutoApproveCommands: enabled,
-      });
+      const next = await runCommand<AppSettings>(
+        "update_agent_auto_approve_commands",
+        { enabled },
+        {
+          ...settings,
+          agentAutoApproveCommands: enabled,
+        },
+      );
       applyServer(next);
-      toast.success(enabled ? t("settings.feedback.autoApproveEnabled", "已开启命令自动批准，下次任务起生效") : t("settings.feedback.autoApproveDisabled", "已恢复逐次确认，下次任务起生效"));
+      toast.success(
+        enabled
+          ? t(
+              "settings.feedback.autoApproveEnabled",
+              "已开启命令自动批准，下次任务起生效",
+            )
+          : t(
+              "settings.feedback.autoApproveDisabled",
+              "已恢复逐次确认，下次任务起生效",
+            ),
+      );
     } catch (error) {
       setAgentAutoApproveCommands(settings.agentAutoApproveCommands ?? false);
-      toast.error(toUserMessage(error, t("settings.feedback.permissionFailed", "命令权限设置保存失败")));
+      toast.error(
+        toUserMessage(
+          error,
+          t("settings.feedback.permissionFailed", "命令权限设置保存失败"),
+        ),
+      );
     } finally {
       setSavingCommandPermission(false);
-    }
-  }
-
-  async function updateHtmlPreviewEnabled(enabled: boolean) {
-    try {
-      const next = await runCommand<AppSettings>(
-        "update_html_preview_enabled",
-        { enabled },
-        { ...defaultAppSettings, htmlPreviewEnabled: enabled, ai: aiSettings },
-      );
-      setHtmlPreviewEnabled(next.htmlPreviewEnabled);
-      toast.success(t("settings.feedback.previewSaved", "HTML 预览插件已更新"));
-    } catch (error) {
-      toast.error(`${t("settings.feedback.previewFailed", "HTML 预览插件更新失败")}：${toUserMessage(error)}`);
     }
   }
 
@@ -459,34 +550,43 @@ export function SettingsTab() {
         companionName,
         ai: aiSettings,
       });
-      toast.success(t("settings.feedback.onboardingReset", "引导已重置，重新打开面板后生效。"));
+      toast.success(
+        t(
+          "settings.feedback.onboardingReset",
+          "引导已重置，重新打开面板后生效。",
+        ),
+      );
     } catch (error) {
-      toast.error(`${t("settings.feedback.onboardingFailed", "重置引导失败")}：${toUserMessage(error)}`);
+      toast.error(
+        `${t("settings.feedback.onboardingFailed", "重置引导失败")}：${toUserMessage(error)}`,
+      );
     }
   }
-
-  const lastInteractionLabel = interactionStats.lastInteractionAt
-    ? new Intl.DateTimeFormat("zh-CN", {
-        month: "numeric",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      }).format(interactionStats.lastInteractionAt)
-    : "暂无";
 
   return (
     <div className="tab tab--settings">
       <SettingsGroup
         id="companion"
         icon={<PawPrint size={15} />}
-        title="伙伴"
-        defaultOpen
+        title="日常与外观"
+        description="名字、形象和互动方式"
+        status={`${sensingPaused ? "感知已暂停" : "感知已开启"} · ${quietModeOptions.find((option) => option.value === quietMode)?.label ?? "平衡"}`}
       >
-
-
         <div className="settings-actions settings-pet-actions">
-          <button type="button" className="button-secondary" onClick={() => void runCommand("show_pet")}>显示伙伴</button>
-          <button type="button" className="button-secondary" onClick={() => void runCommand("hide_pet")}>隐藏伙伴</button>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => void runCommand("show_pet")}
+          >
+            显示伙伴
+          </button>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => void runCommand("hide_pet")}
+          >
+            隐藏伙伴
+          </button>
         </div>
 
         <section className="panel-card">
@@ -496,12 +596,23 @@ export function SettingsTab() {
               <input
                 value={companionName}
                 maxLength={24}
-                onChange={(event) => updatePreferences({ companionName: event.currentTarget.value })}
+                onChange={(event) =>
+                  updatePreferences({
+                    companionName: event.currentTarget.value,
+                  })
+                }
               />
             </label>
             <label>
               <span>主题色</span>
-              <select value={theme} onChange={(event) => updatePreferences({ theme: event.currentTarget.value as Theme })}>
+              <select
+                value={theme}
+                onChange={(event) =>
+                  updatePreferences({
+                    theme: event.currentTarget.value as Theme,
+                  })
+                }
+              >
                 <option value="sage">鼠尾草绿</option>
                 <option value="blue">湖水蓝</option>
                 <option value="peach">暖桃色</option>
@@ -511,20 +622,38 @@ export function SettingsTab() {
               <span>精灵形象</span>
               <select
                 value={petVisualStyle}
-                onChange={(event) => setPetVisualStyle(event.currentTarget.value as typeof petVisualStyle)}
+                onChange={(event) =>
+                  setPetVisualStyle(
+                    event.currentTarget.value as typeof petVisualStyle,
+                  )
+                }
               >
                 {availablePetVisualStyleOptions.map(({ label, value }) => (
-                  <option key={value} value={value}>{label}</option>
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
                 ))}
               </select>
             </label>
             <div className="custom-pet-picker">
-              <span>{customPetImagePath ? customPetImagePath.split(/[\\/]/).pop() : "未选择自定义图片"}</span>
+              <span>
+                {customPetImagePath
+                  ? customPetImagePath.split(/[\\/]/).pop()
+                  : "未选择自定义图片"}
+              </span>
               <div>
-                <button type="button" onClick={() => void chooseCustomPetImage()}>
+                <button
+                  type="button"
+                  onClick={() => void chooseCustomPetImage()}
+                >
                   选择图片
                 </button>
-                <button type="button" className="is-secondary" onClick={clearCustomPetImage} disabled={!customPetImagePath}>
+                <button
+                  type="button"
+                  className="is-secondary"
+                  onClick={clearCustomPetImage}
+                  disabled={!customPetImagePath}
+                >
                   清除
                 </button>
               </div>
@@ -533,7 +662,11 @@ export function SettingsTab() {
               <input
                 type="checkbox"
                 checked={!sensingPaused}
-                onChange={(event) => updatePreferences({ sensingPaused: !event.currentTarget.checked })}
+                onChange={(event) =>
+                  updatePreferences({
+                    sensingPaused: !event.currentTarget.checked,
+                  })
+                }
               />
               <span>主动感知</span>
             </label>
@@ -557,115 +690,77 @@ export function SettingsTab() {
             </div>
           </div>
         </section>
-        <details className="panel-card companion-metrics-card">
-          <summary>
-            一起成长的记录 <span>Lv. {growthSnapshot.level} · {Math.round(interactionStats.intimacy)} 亲密</span>
-          </summary>
-          <div className="companion-metrics-detail">
-            <div className="section-heading">
-              <div>
-                <h2>互动档案</h2>
-              </div>
-              <strong>{Math.round(interactionStats.intimacy)} 亲密</strong>
-            </div>
-            <div className="status-grid">
-              <div className="status-item">
-                <span>互动总数</span>
-                <strong>{interactionStats.totalInteractions.toLocaleString("zh-CN")}</strong>
-              </div>
-              <div className="status-item">
-                <span>摸摸次数</span>
-                <strong>{interactionStats.petStrokeCount.toLocaleString("zh-CN")}</strong>
-              </div>
-              <div className="status-item">
-                <span>文件协作</span>
-                <strong>{interactionStats.dropCount.toLocaleString("zh-CN")}</strong>
-              </div>
-              <div className="status-item">
-                <span>当前等级</span>
-                <strong>{growthSnapshot.level}</strong>
-              </div>
-            </div>
-            <div className="permission-list" style={{ marginTop: "6px" }}>
-              <div>
-                <span>经验进度</span>
-                <strong>{Math.round(growthSnapshot.percentage)}%</strong>
-              </div>
-              <div>
-                <span>羁绊等级</span>
-                <strong>{growthSnapshot.attributeLevels.bond}</strong>
-              </div>
-              <div>
-                <span>社交等级</span>
-                <strong>{growthSnapshot.attributeLevels.social}</strong>
-              </div>
-              <div>
-                <span>最近互动</span>
-                <strong>{lastInteractionLabel}</strong>
-              </div>
-            </div>
-            <p className="settings-note">
-              累计 {growthSnapshot.totalXp.toLocaleString("zh-CN")} 经验 · {growthSnapshot.completedTasks} 个任务进度 ·{" "}
-              {growthSnapshot.unlockedAchievements} 项成就
-            </p>
-          </div>
-        </details>
       </SettingsGroup>
-
       <SettingsGroup
         id="ai"
         icon={<MessageCircle size={15} />}
-        title="对话与模型"
+        title="AI 与对话"
+        description="模型连接与对话偏好"
+        status={`${connectionStatus.kind === "connected" ? "已连接" : connectionStatus.kind === "connecting" ? "连接中" : connectionStatus.kind === "failed" ? "连接失败" : connectionStatus.kind === "dirty" ? "有未保存的设置" : "尚未测试连接"} · ${savedAiSettings.model || "未选择模型"}`}
       >
-      <section className="panel-card model-provider-card">
-        <div className="settings-form model-provider-form">
-          <label className="model-provider-form__provider">
+        <section className="panel-card model-provider-card">
+          <div className="settings-form model-provider-form">
+            <label className="model-provider-form__provider">
               <span>服务类型</span>
               <select
                 value={aiSettings.provider}
                 onChange={(event) => updateProvider(event.currentTarget.value)}
               >
                 {providerOptions.map(({ label, value }) => (
-                  <option key={value} value={value}>{label}</option>
-            ))}
-            </select>
-          </label>
-          <div className="model-provider-form__fields">
-            <label>
-              <span>Base URL</span>
-              <input
-                value={aiSettings.baseUrl}
-                onChange={(event) => updateAiField("baseUrl", event.currentTarget.value)}
-                placeholder="http://localhost:11434/v1"
-              />
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
             </label>
-            <label>
-              <span>Model</span>
-              <input
-                value={aiSettings.model}
-                onChange={(event) => updateAiField("model", event.currentTarget.value)}
-                placeholder={aiSettings.provider === "lmstudio" ? "可留空，LM Studio 自动使用当前加载模型" : "gemma4:e4b"}
-              />
-            </label>
-          <label>
-              <span>API Key</span>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(event) => {
-                  setApiKey(event.currentTarget.value);
-                  setApiKeyClearRequested(false);
-                  setConnectionStatus({ kind: "dirty" });
-                }}
-                placeholder={savedHasApiKey ? "已配置密钥，输入新密钥可替换" : "本地 Ollama 可留空"}
-          />
-          <small>密钥仅用于连接你选择的服务，并保存在本机。</small>
-          </label>
-          </div>
-          {(savedHasApiKey || apiKey.trim()) && (
-            <button
-              type="button"
-              className="button-secondary model-provider-form__clear-key"
+            <div className="model-provider-form__fields">
+              <label>
+                <span>Base URL</span>
+                <input
+                  value={aiSettings.baseUrl}
+                  onChange={(event) =>
+                    updateAiField("baseUrl", event.currentTarget.value)
+                  }
+                  placeholder="http://localhost:11434/v1"
+                />
+              </label>
+              <label>
+                <span>Model</span>
+                <input
+                  value={aiSettings.model}
+                  onChange={(event) =>
+                    updateAiField("model", event.currentTarget.value)
+                  }
+                  placeholder={
+                    aiSettings.provider === "lmstudio"
+                      ? "可留空，LM Studio 自动使用当前加载模型"
+                      : "gemma4:e4b"
+                  }
+                />
+              </label>
+              <label>
+                <span>API Key</span>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(event) => {
+                    setApiKey(event.currentTarget.value);
+                    setApiKeyClearRequested(false);
+                    setConnectionStatus({ kind: "dirty" });
+                  }}
+                  placeholder={
+                    savedHasApiKey
+                      ? "已配置密钥，输入新密钥可替换"
+                      : "本地 Ollama 可留空"
+                  }
+                />
+                <small>密钥仅用于连接你选择的服务，并保存在本机。</small>
+              </label>
+            </div>
+            {(savedHasApiKey || apiKey.trim()) && (
+              <button
+                type="button"
+                className="button-secondary model-provider-form__clear-key"
                 disabled={isSavingAi || isTesting}
                 onClick={() => {
                   setApiKey("");
@@ -676,36 +771,79 @@ export function SettingsTab() {
                 清除已保存的 API Key
               </button>
             )}
-          <details className="model-provider-form__advanced">
-            <summary>高级连接设置</summary>
-            <div className="settings-form__row">
-              <label>
-                <span>Temperature</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="2"
-                  step="0.1"
-                  value={aiSettings.temperature}
-                  onChange={(event) => updateAiField("temperature", Number(event.currentTarget.value))}
-                />
-              </label>
-              <label>
-                <span>超时秒数</span>
-                <input
-                  type="number"
-                  min="5"
-                  max="600"
-                  value={aiSettings.timeoutSeconds}
-                  onChange={(event) => updateAiField("timeoutSeconds", Number(event.currentTarget.value))}
-                />
-              </label>
-              <label><span>上下文窗口（0 自动）</span><input type="number" min="0" max="2000000" value={aiSettings.contextWindow ?? 0} onChange={(event) => updateAiField("contextWindow", Number(event.currentTarget.value))} /></label>
-              <label><span>最大输出 Token（0 自动）</span><input type="number" min="0" max="200000" value={aiSettings.maxOutputTokens ?? 0} onChange={(event) => updateAiField("maxOutputTokens", Number(event.currentTarget.value))} /></label>
-              <p>自动模式按模型目录确定限制；未知模型使用保守默认值，本地服务可按实际配置填写。</p>
-            </div>
-          </details>
-          <div className="model-provider-form__actions" aria-label="模型设置操作">
+            <details className="model-provider-form__advanced">
+              <summary>高级连接设置</summary>
+              <div className="settings-form__row">
+                <label>
+                  <span>Temperature</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    value={aiSettings.temperature}
+                    onChange={(event) =>
+                      updateAiField(
+                        "temperature",
+                        Number(event.currentTarget.value),
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  <span>超时秒数</span>
+                  <input
+                    type="number"
+                    min="5"
+                    max="600"
+                    value={aiSettings.timeoutSeconds}
+                    onChange={(event) =>
+                      updateAiField(
+                        "timeoutSeconds",
+                        Number(event.currentTarget.value),
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  <span>上下文窗口（0 自动）</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="2000000"
+                    value={aiSettings.contextWindow ?? 0}
+                    onChange={(event) =>
+                      updateAiField(
+                        "contextWindow",
+                        Number(event.currentTarget.value),
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  <span>最大输出 Token（0 自动）</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="200000"
+                    value={aiSettings.maxOutputTokens ?? 0}
+                    onChange={(event) =>
+                      updateAiField(
+                        "maxOutputTokens",
+                        Number(event.currentTarget.value),
+                      )
+                    }
+                  />
+                </label>
+                <p>
+                  自动模式按模型目录确定限制；未知模型使用保守默认值，本地服务可按实际配置填写。
+                </p>
+              </div>
+            </details>
+            <div
+              className="model-provider-form__actions"
+              aria-label="模型设置操作"
+            >
               <button
                 type="button"
                 className="button-secondary"
@@ -714,13 +852,21 @@ export function SettingsTab() {
               >
                 {isSavingAi ? "保存中..." : "保存设置"}
               </button>
-              <button type="button" disabled={isSavingAi || isTesting} onClick={() => void testConnection()}>
+              <button
+                type="button"
+                disabled={isSavingAi || isTesting}
+                onClick={() => void testConnection()}
+              >
                 {isTesting ? "测试中..." : "保存并测试"}
               </button>
             </div>
-            {hasUnsavedAiSettings() && <p className="settings-note">模型设置有未保存修改</p>}
-            {settings.credentialError && <p role="alert">{settings.credentialError}</p>}
-          {connectionStatus.kind === "failed" ? (
+            {hasUnsavedAiSettings() && (
+              <p className="settings-note">模型设置有未保存修改</p>
+            )}
+            {settings.credentialError && (
+              <p role="alert">{settings.credentialError}</p>
+            )}
+            {connectionStatus.kind === "failed" ? (
               <ErrorState
                 message={connectionText}
                 onRetry={() => void testConnection()}
@@ -732,11 +878,12 @@ export function SettingsTab() {
           </div>
         </section>
       </SettingsGroup>
-
       <SettingsGroup
         id="notify"
         icon={<BellRing size={15} />}
-        title="提醒与免打扰"
+        title="提醒与陪伴"
+        description="休息提醒、免打扰和主动聊天"
+        status={`${breakRemindersEnabled ? "休息提醒开启" : "休息提醒关闭"} · ${breakReminderQuietHoursEnabled ? `免打扰 ${breakReminderQuietHoursStart}–${breakReminderQuietHoursEnd}` : "免打扰关闭"}`}
       >
         <section className="panel-card">
           <h2>休息提醒</h2>
@@ -745,7 +892,11 @@ export function SettingsTab() {
               <input
                 type="checkbox"
                 checked={breakRemindersEnabled}
-                onChange={(event) => updateWorkRhythm({ breakRemindersEnabled: event.currentTarget.checked })}
+                onChange={(event) =>
+                  updateWorkRhythm({
+                    breakRemindersEnabled: event.currentTarget.checked,
+                  })
+                }
               />
               <span>开启休息提醒</span>
             </label>
@@ -758,7 +909,13 @@ export function SettingsTab() {
                   max="240"
                   step="5"
                   value={breakReminderIntervalMinutes}
-                  onChange={(event) => updateWorkRhythm({ breakReminderIntervalMinutes: Number(event.currentTarget.value) })}
+                  onChange={(event) =>
+                    updateWorkRhythm({
+                      breakReminderIntervalMinutes: Number(
+                        event.currentTarget.value,
+                      ),
+                    })
+                  }
                 />
               </label>
               <label>
@@ -769,7 +926,13 @@ export function SettingsTab() {
                   max="240"
                   step="5"
                   value={breakReminderCooldownMinutes}
-                  onChange={(event) => updateWorkRhythm({ breakReminderCooldownMinutes: Number(event.currentTarget.value) })}
+                  onChange={(event) =>
+                    updateWorkRhythm({
+                      breakReminderCooldownMinutes: Number(
+                        event.currentTarget.value,
+                      ),
+                    })
+                  }
                 />
               </label>
             </div>
@@ -777,7 +940,11 @@ export function SettingsTab() {
               <input
                 type="checkbox"
                 checked={breakReminderQuietHoursEnabled}
-                onChange={(event) => updateWorkRhythm({ breakReminderQuietHoursEnabled: event.currentTarget.checked })}
+                onChange={(event) =>
+                  updateWorkRhythm({
+                    breakReminderQuietHoursEnabled: event.currentTarget.checked,
+                  })
+                }
               />
               <span>启用静默时段</span>
             </label>
@@ -787,7 +954,11 @@ export function SettingsTab() {
                 <input
                   type="time"
                   value={breakReminderQuietHoursStart}
-                  onChange={(event) => updateWorkRhythm({ breakReminderQuietHoursStart: event.currentTarget.value })}
+                  onChange={(event) =>
+                    updateWorkRhythm({
+                      breakReminderQuietHoursStart: event.currentTarget.value,
+                    })
+                  }
                 />
               </label>
               <label>
@@ -795,7 +966,11 @@ export function SettingsTab() {
                 <input
                   type="time"
                   value={breakReminderQuietHoursEnd}
-                  onChange={(event) => updateWorkRhythm({ breakReminderQuietHoursEnd: event.currentTarget.value })}
+                  onChange={(event) =>
+                    updateWorkRhythm({
+                      breakReminderQuietHoursEnd: event.currentTarget.value,
+                    })
+                  }
                 />
               </label>
             </div>
@@ -810,26 +985,70 @@ export function SettingsTab() {
               <strong>{notificationPermission}</strong>
             </div>
             {notificationPermission === "已授权" ? null : (
-              <button type="button" disabled={notificationBusy || !isTauriRuntime} onClick={() => void enableNotifications()}>
+              <button
+                type="button"
+                disabled={notificationBusy || !isTauriRuntime}
+                onClick={() => void enableNotifications()}
+              >
                 去开启
               </button>
             )}
             <div className="settings-actions">
-              <button type="button" disabled={notificationBusy || !isTauriRuntime} onClick={() => void testNotification()}>发送测试通知</button>
-              <button type="button" disabled={notificationBusy || !isTauriRuntime} onClick={() => void refreshNotificationStatus()}>重新检查权限</button>
-              <button type="button" disabled={!isTauriRuntime} onClick={() => void runCommand("open_notification_settings").catch(error => toast.error(toUserMessage(error)))}>打开系统通知设置</button>
+              <button
+                type="button"
+                disabled={notificationBusy || !isTauriRuntime}
+                onClick={() => void testNotification()}
+              >
+                发送测试通知
+              </button>
+              <button
+                type="button"
+                disabled={notificationBusy || !isTauriRuntime}
+                onClick={() => void refreshNotificationStatus()}
+              >
+                重新检查权限
+              </button>
+              <button
+                type="button"
+                disabled={!isTauriRuntime}
+                onClick={() =>
+                  void runCommand("open_notification_settings").catch((error) =>
+                    toast.error(toUserMessage(error)),
+                  )
+                }
+              >
+                打开系统通知设置
+              </button>
             </div>
-            {notificationQueryError ? <p role="alert" className="settings-note">{notificationQueryError}</p> : null}
-            {notificationDetails?.lastError ? <p role="alert" className="settings-note">最近发送失败：{notificationDetails.lastError}</p> : null}
-            <p className="settings-note">若已授权但未出现横幅，请在系统通知设置中为 Piko 开启横幅，并检查专注模式与通知摘要。</p>
+            {notificationQueryError ? (
+              <p role="alert" className="settings-note">
+                {notificationQueryError}
+              </p>
+            ) : null}
+            {notificationDetails?.lastError ? (
+              <p role="alert" className="settings-note">
+                最近发送失败：{notificationDetails.lastError}
+              </p>
+            ) : null}
+            <p className="settings-note">
+              若已授权但未出现横幅，请在系统通知设置中为 Piko
+              开启横幅，并检查专注模式与通知摘要。
+            </p>
           </div>
         </section>
+        <details className="settings-subgroup">
+          <summary>主动聊天与人格</summary>
+          <div className="settings-subgroup__body">
+            <SoulSettings />
+          </div>
+        </details>
       </SettingsGroup>
-
       <SettingsGroup
         id="system"
         icon={<ShieldCheck size={15} />}
-        title="系统与隐私"
+        title="更多设置"
+        description="启动、权限、备份与关于"
+        status={`${autostartEnabled ? "开机启动开启" : "开机启动关闭"} · 备份与权限`}
       >
         <section className="panel-card">
           <h2>命令执行权限</h2>
@@ -838,11 +1057,16 @@ export function SettingsTab() {
               type="checkbox"
               checked={agentAutoApproveCommands}
               disabled={savingCommandPermission}
-              onChange={(event) => void updateAgentAutoApproveCommands(event.currentTarget.checked)}
+              onChange={(event) =>
+                void updateAgentAutoApproveCommands(event.currentTarget.checked)
+              }
             />
             <span>始终自动批准命令执行</span>
           </label>
-          <p className="settings-note">开启后，Shell 命令直接执行，无需逐次确认，下次任务起生效，重启后仍保留。执行详情与停止按钮仍可用；文件读写、备忘录、日历和提醒保留原有确认规则。</p>
+          <p className="settings-note">
+            开启后，Shell
+            命令直接执行，无需逐次确认，下次任务起生效，重启后仍保留。执行详情与停止按钮仍可用；文件读写、备忘录、日历和提醒保留原有确认规则。
+          </p>
         </section>
 
         <section className="panel-card">
@@ -866,17 +1090,28 @@ export function SettingsTab() {
               <span>打开对话窗口</span>
               <input
                 value={shortcutDraft ?? settings.globalShortcut}
-                onChange={(event) => setShortcutDraft(event.currentTarget.value)}
+                onChange={(event) =>
+                  setShortcutDraft(event.currentTarget.value)
+                }
                 placeholder="CmdOrCtrl+Shift+Space"
                 aria-label="全局快捷键"
               />
             </label>
-            {shortcutDraft !== null && shortcutDraft !== settings.globalShortcut ? (
+            {shortcutDraft !== null &&
+            shortcutDraft !== settings.globalShortcut ? (
               <div className="settings-subgroup">
-                <button type="button" onClick={() => void saveGlobalShortcut()} disabled={isSavingShortcut}>
+                <button
+                  type="button"
+                  onClick={() => void saveGlobalShortcut()}
+                  disabled={isSavingShortcut}
+                >
                   {isSavingShortcut ? "保存中…" : "保存快捷键"}
                 </button>
-                <button type="button" className="text-action" onClick={() => setShortcutDraft(null)}>
+                <button
+                  type="button"
+                  className="text-action"
+                  onClick={() => setShortcutDraft(null)}
+                >
                   取消
                 </button>
               </div>
@@ -885,31 +1120,26 @@ export function SettingsTab() {
         </section>
 
         <section className="panel-card">
-          <h2>我的数据</h2>
-          <div className="settings-form">
-            <button type="button" onClick={() => void exportMyData()}>
-              导出我的数据
-            </button>
-            <p className="settings-note">
-              导出一份 JSON（设置、对话、提醒、日程、专注记录）。出于安全考虑，
-              API Key 不在其中。
-            </p>
-          </div>
-        </section>
-
-        <section className="panel-card">
           <h2>清空我的数据</h2>
           <div className="settings-form">
             <p className="settings-note">
-              清空提醒、日程、备忘、对话与专注记录。会先自动备份，可从
-              backups 目录找回。设置与 Piko 记住的内容不受影响。
+              清空提醒、日程、备忘、对话与专注记录。会先自动备份，可从 backups
+              目录找回。设置与 Piko 记住的内容不受影响。
             </p>
             {confirmClear ? (
               <div className="settings-subgroup">
-                <button type="button" disabled={isClearing} onClick={() => void clearMyData()}>
+                <button
+                  type="button"
+                  disabled={isClearing}
+                  onClick={() => void clearMyData()}
+                >
                   {isClearing ? "清空中…" : "确认清空"}
                 </button>
-                <button type="button" className="text-action" onClick={() => setConfirmClear(false)}>
+                <button
+                  type="button"
+                  className="text-action"
+                  onClick={() => setConfirmClear(false)}
+                >
                   取消
                 </button>
               </div>
@@ -920,111 +1150,126 @@ export function SettingsTab() {
             )}
           </div>
         </section>
-      </SettingsGroup>
-
-      <DataSettings />
-      <SoulSettings />
-      <SoulDiagnostics />
-
-      <SettingsGroup id="about" icon={<Info size={15} />} title="关于">
-        <section className="panel-card">
-          <h2>权限中心</h2>
-          <div className="permission-list">
-            <div><span>通知权限</span><strong>{notificationPermission}</strong></div>
-            <div><span>文件访问</span><strong>仅主动拖入</strong></div>
-            <div><span>屏幕录制</span><strong>{screenCapturePermission}</strong></div>
-            <div><span>主动感知</span><strong>{sensingPaused ? "已暂停" : "运行中"}</strong></div>
-          </div>
-        </section>
-
-        <VersionSettings />
-
-        <section className="panel-card">
-          <h2>重新运行引导</h2>
-          <div className="settings-form">
-            <button type="button" onClick={() => void rerunOnboarding()}>
-              重新运行引导
-            </button>
-          </div>
-        </section>
-      </SettingsGroup>
-
-      <SettingsGroup id="advanced" icon={<SlidersHorizontal size={15} />} title="高级">
         <details className="settings-subgroup">
-          <summary>语音</summary>
-          {speechModels.length ? (
-            <div className="speech-model-list">
-              {speechModels.map((model) => {
-                const progress = speechModelProgress[model.id];
-                const percent = progress?.percent === undefined ? undefined : Math.round(progress.percent * 100);
-                const isDownloading = downloadingSpeechModelId === model.id;
-                return (
-                  <div className="speech-model-item" key={model.id}>
-                    <div>
-                      <strong>
-                        {model.name}
-                        {model.id === "sense-voice" ? (
-                          <span className="speech-model-item__badge">中文优化</span>
-                        ) : null}
-                      </strong>
-                      <span>
-                        {model.downloaded ? `${formatBytes(model.byteSize)} · 已下载` : "未下载"}
-                        {isDownloading && percent !== undefined ? ` · ${percent}%` : ""}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={model.downloaded || Boolean(downloadingSpeechModelId)}
-                      onClick={() => void downloadSpeechModel(model.id)}
-                    >
-                      {model.downloaded ? "已下载" : isDownloading ? "下载中..." : "下载"}
-                    </button>
-                  </div>
-                );
-              })}
-              {speechModels.some((model) => model.id === "sense-voice" && !model.downloaded) ? (
-                <p className="settings-note">
-                  「SenseVoice 中文优化」—— 阿里 FunAudioLLM 出品，专为中文设计，字错率比 Whisper 低一半以上，且几乎不出繁体字。
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <EmptyState
-              icon={<Volume2 size={20} />}
-              title="还没有可下载的语音模型"
-              description="连接成功后这里会列出可用模型。"
-            />
-          )}
-        </details>
-
-        <details className="settings-subgroup">
-          <summary>实验室</summary>
-          <div className="feature-toggle-card">
-            <label className="setting-toggle">
-              <input
-                type="checkbox"
-                checked={htmlPreviewEnabled}
-                onChange={(event) => void updateHtmlPreviewEnabled(event.currentTarget.checked)}
-              />
-              <span>HTML 预览插件</span>
-            </label>
-            <p className="settings-note">开启后，气泡窗口会在检测到 HTML 片段时优先使用沙箱 iframe 预览。</p>
+          <summary>备份与恢复</summary>
+          <div className="settings-subgroup__body">
+            <DataSettings />
           </div>
         </details>
+        <details className="settings-subgroup">
+          <summary>语音输入</summary>
+          <div className="settings-subgroup__body">
+            <details className="settings-subgroup">
+              <summary>语音</summary>
+              {speechModels.length ? (
+                <div className="speech-model-list">
+                  {speechModels.map((model) => {
+                    const progress = speechModelProgress[model.id];
+                    const percent =
+                      progress?.percent === undefined
+                        ? undefined
+                        : Math.round(progress.percent * 100);
+                    const isDownloading = downloadingSpeechModelId === model.id;
+                    return (
+                      <div className="speech-model-item" key={model.id}>
+                        <div>
+                          <strong>
+                            {model.name}
+                            {model.id === "sense-voice" ? (
+                              <span className="speech-model-item__badge">
+                                中文优化
+                              </span>
+                            ) : null}
+                          </strong>
+                          <span>
+                            {model.downloaded
+                              ? `${formatBytes(model.byteSize)} · 已下载`
+                              : "未下载"}
+                            {isDownloading && percent !== undefined
+                              ? ` · ${percent}%`
+                              : ""}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={
+                            model.downloaded ||
+                            Boolean(downloadingSpeechModelId)
+                          }
+                          onClick={() => void downloadSpeechModel(model.id)}
+                        >
+                          {model.downloaded
+                            ? "已下载"
+                            : isDownloading
+                              ? "下载中..."
+                              : "下载"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {speechModels.some(
+                    (model) => model.id === "sense-voice" && !model.downloaded,
+                  ) ? (
+                    <p className="settings-note">
+                      「SenseVoice 中文优化」—— 阿里 FunAudioLLM
+                      出品，专为中文设计，字错率比 Whisper
+                      低一半以上，且几乎不出繁体字。
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <EmptyState
+                  icon={<Volume2 size={20} />}
+                  title="还没有可下载的语音模型"
+                  description="连接成功后这里会列出可用模型。"
+                />
+              )}
+            </details>
+          </div>
+        </details>
+        <details className="settings-subgroup">
+          <summary>诊断信息</summary>
+          <div className="settings-subgroup__body">
+            <SoulDiagnostics />
+          </div>
+        </details>
+        <details className="settings-subgroup">
+          <summary>关于与更新</summary>
+          <div className="settings-subgroup__body">
+            <section className="panel-card">
+              <h2>权限中心</h2>
+              <div className="permission-list">
+                <div>
+                  <span>通知权限</span>
+                  <strong>{notificationPermission}</strong>
+                </div>
+                <div>
+                  <span>文件访问</span>
+                  <strong>仅主动拖入</strong>
+                </div>
+                <div>
+                  <span>屏幕录制</span>
+                  <strong>{screenCapturePermission}</strong>
+                </div>
+                <div>
+                  <span>主动感知</span>
+                  <strong>{sensingPaused ? "已暂停" : "运行中"}</strong>
+                </div>
+              </div>
+            </section>
 
-        {externalPlugins.length ? (
-          <details className="settings-subgroup">
-            <summary>插件</summary>
-            <ul className="history-list">
-              {externalPlugins.map((plugin) => (
-                <li key={plugin.manifest.id}>
-                  <strong>{plugin.manifest.name}</strong>
-                  <span>{plugin.manifest.id} · {plugin.status}</span>
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
+            <VersionSettings />
+
+            <section className="panel-card">
+              <h2>重新运行引导</h2>
+              <div className="settings-form">
+                <button type="button" onClick={() => void rerunOnboarding()}>
+                  重新运行引导
+                </button>
+              </div>
+            </section>
+          </div>
+        </details>
       </SettingsGroup>
     </div>
   );

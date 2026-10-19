@@ -3,6 +3,7 @@ use super::{MemoryCandidate, MemoryDb};
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -25,7 +26,9 @@ fn initialize(conn: &rusqlite::Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS memory_extraction_processed (entry_id TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS memory_extraction_candidates (
         id TEXT PRIMARY KEY, payload TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS memory_extraction_seen (fingerprint TEXT PRIMARY KEY);",
+        CREATE TABLE IF NOT EXISTS memory_extraction_seen (fingerprint TEXT PRIMARY KEY);
+ CREATE TABLE IF NOT EXISTS memory_extraction_semantic (
+ entry_id TEXT PRIMARY KEY, prompt_hash TEXT NOT NULL);",
     )
     .map_err(|e| e.to_string())
 }
@@ -75,9 +78,6 @@ pub fn remove_candidate(db: &MemoryDb, id: &str) -> Result<(), String> {
 
 /// Conservative sentence extraction; questions, requests, and assistant answers are excluded.
 fn conversation_candidates(prompt: &str) -> Vec<MemoryCandidate> {
-    if super::policy::contains_sensitive_content(prompt) {
-        return Vec::new();
-    }
     prompt
         .split(['。', '！', '!', '\n', ';', '；'])
         .filter_map(|sentence| {
@@ -88,6 +88,8 @@ fn conversation_candidates(prompt: &str) -> Vec<MemoryCandidate> {
                 .trim_start_matches(['：', ':', '，', ',', ' '])
                 .trim();
             let lower = statement.to_lowercase();
+            let explicit =
+                sentence.trim().starts_with("请记住") || sentence.trim().starts_with("记住");
             let markers = [
                 "我喜欢",
                 "我不喜欢",
@@ -109,8 +111,8 @@ fn conversation_candidates(prompt: &str) -> Vec<MemoryCandidate> {
             ];
             if statement.chars().count() < 5
                 || statement.chars().count() > 500
-                || statement.contains(['?', '？'])
-                || !markers.iter().any(|marker| lower.starts_with(marker))
+                || (!explicit && statement.contains(['?', '？']))
+                || (!explicit && !markers.iter().any(|marker| lower.starts_with(marker)))
             {
                 return None;
             }
@@ -150,6 +152,18 @@ fn extract_with_topics(
     force: bool,
     topic_timezone: Option<&str>,
 ) -> Result<usize, String> {
+    extract_with_candidates(db, entries, now, force, topic_timezone, None, false)
+}
+
+fn extract_with_candidates(
+    db: &MemoryDb,
+    entries: &[crate::chat_session::ChatHistoryEntry],
+    now: u64,
+    force: bool,
+    topic_timezone: Option<&str>,
+    candidates: Option<&HashMap<String, Vec<MemoryCandidate>>>,
+    rescan: bool,
+) -> Result<usize, String> {
     let mut conn = db.0.lock().map_err(|e| e.to_string())?;
     initialize(&conn)?;
     // A failed/unsupported soul migration must not disable ordinary extraction.
@@ -165,6 +179,9 @@ fn extract_with_topics(
     let mut count = 0;
     let mut processed = 0;
     for entry in entries {
+        if source_deleted(&tx, &entry.id)? {
+            continue;
+        }
         let exists = tx
             .query_row(
                 "SELECT 1 FROM memory_extraction_processed WHERE entry_id=?1",
@@ -174,15 +191,25 @@ fn extract_with_topics(
             .optional()
             .map_err(|e| e.to_string())?
             .is_some();
-        if exists {
+        if exists && !rescan && candidates.is_none() {
             continue;
         }
         // Only user statements; assistant claims of successful actions are unverified.
-        for (index, mut candidate) in conversation_candidates(&entry.prompt)
+        for (index, mut candidate) in candidates
+            .and_then(|items| items.get(&entry.id).cloned())
+            .unwrap_or_else(|| conversation_candidates(&entry.prompt))
             .into_iter()
             .enumerate()
         {
-            candidate.id = format!("auto-{}-{}", entry.id, index);
+            candidate.id = if candidates.is_some() {
+                format!(
+                    "semantic-{}-{:x}",
+                    entry.id,
+                    Sha256::digest(candidate.content.as_bytes())
+                )
+            } else {
+                format!("auto-{}-{}", entry.id, index)
+            };
             let fresh = tx
                 .execute(
                     "INSERT OR IGNORE INTO memory_extraction_seen(fingerprint) VALUES(?1)",
@@ -212,10 +239,18 @@ fn extract_with_topics(
             }
         }
         tx.execute(
-            "INSERT INTO memory_extraction_processed(entry_id) VALUES(?1)",
+            "INSERT OR IGNORE INTO memory_extraction_processed(entry_id) VALUES(?1)",
             [&entry.id],
         )
         .map_err(|e| e.to_string())?;
+        if candidates.is_some() {
+            tx.execute(
+                "INSERT INTO memory_extraction_semantic(entry_id,prompt_hash) VALUES(?1,?2)
+                 ON CONFLICT(entry_id) DO UPDATE SET prompt_hash=excluded.prompt_hash",
+                params![entry.id, prompt_hash(&entry.prompt)],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         processed += 1;
         if processed >= 100 {
             break;
@@ -234,8 +269,58 @@ fn extract_with_topics(
     Ok(count)
 }
 
-fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
-    // Preserve load failures as errors; an empty history must not advance the schedule on failure.
+fn source_deleted(conn: &rusqlite::Connection, id: &str) -> Result<bool, String> {
+    let available: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='soul_source_tombstones')",
+        [], |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+    if !available {
+        return Ok(false);
+    }
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM soul_source_tombstones WHERE source_id=?1)",
+        [id],
+        |row| row.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn prompt_hash(prompt: &str) -> String {
+    format!("v1:{:x}", Sha256::digest(prompt.as_bytes()))
+}
+
+fn semantic_backlog(
+    db: &MemoryDb,
+    entries: &[crate::chat_session::ChatHistoryEntry],
+    force: bool,
+) -> Result<Vec<crate::chat_session::ChatHistoryEntry>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    initialize(&conn)?;
+    let mut pending = Vec::new();
+    for entry in entries {
+        if source_deleted(&conn, &entry.id)? {
+            continue;
+        }
+        let previous: Option<String> = conn
+            .query_row(
+                "SELECT prompt_hash FROM memory_extraction_semantic WHERE entry_id=?1",
+                [&entry.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if force || previous.as_deref() != Some(&prompt_hash(&entry.prompt)) {
+            pending.push(entry.clone());
+        }
+    }
+    Ok(pending)
+}
+
+// Both the worker and manual command use this gate; no database lock crosses an await.
+static EXTRACTION_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
+    let _guard = EXTRACTION_GATE.lock().await;
     let sessions = crate::chat_session::repository::load_chat_sessions(app, true)?;
     let entries = crate::chat_session::entries_view(&sessions);
     let now = std::time::SystemTime::now()
@@ -243,15 +328,86 @@ fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
         .unwrap_or_default()
         .as_secs();
     let db = app.state::<Arc<MemoryDb>>();
-    let soul_ready = app
+    let current = status(&db)?;
+    if !force
+        && (!current.enabled
+            || (current.last_run_at != 0
+                && now.saturating_sub(current.last_run_at) < current.interval_minutes * 60))
+    {
+        return Ok(0);
+    }
+    let timezone = app
         .try_state::<super::soul::model::SoulBootStatus>()
-        .is_some_and(|state| state.0);
-    let timezone = if soul_ready {
-        iana_time_zone::get_timezone().ok()
+        .filter(|state| state.0)
+        .and_then(|_| iana_time_zone::get_timezone().ok());
+    let settings = crate::settings::read_settings(app);
+    let mut count = 0;
+    if crate::providers::validate_ai_settings(&settings.ai).is_ok() {
+        let pending = semantic_backlog(&db, &entries, force)?;
+        // Manual extraction reviews all history; the worker drains one bounded batch per tick.
+        for batch in
+            pending
+                .chunks(super::semantic::BATCH_SIZE)
+                .take(if force { usize::MAX } else { 1 })
+        {
+            let candidates = super::semantic::generate(&settings.ai, batch).await?;
+            if !force && !status(&db)?.enabled {
+                return Ok(count);
+            }
+            let latest = crate::chat_session::entries_view(
+                &crate::chat_session::repository::load_chat_sessions(app, true)?,
+            );
+            let live: Vec<_> = batch
+                .iter()
+                .filter(|entry| {
+                    latest
+                        .iter()
+                        .any(|current| current.id == entry.id && current.prompt == entry.prompt)
+                })
+                .cloned()
+                .collect();
+            let added = extract_with_candidates(
+                &db,
+                &live,
+                now,
+                true,
+                timezone.as_deref(),
+                Some(&candidates),
+                true,
+            )?;
+            count += added;
+            emit_extraction(app, added);
+        }
+        if !force && pending.len() > super::semantic::BATCH_SIZE {
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            conn.execute(
+                "UPDATE memory_extraction_settings SET last_run_at=0 WHERE id=1",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
     } else {
-        None
-    };
-    let count = extract_with_topics(&db, &entries, now, force, timezone.as_deref())?;
+        if force {
+            for batch in entries.chunks(100) {
+                count += extract_with_candidates(
+                    &db,
+                    batch,
+                    now,
+                    true,
+                    timezone.as_deref(),
+                    None,
+                    true,
+                )?;
+            }
+        } else {
+            count = extract_with_topics(&db, &entries, now, false, timezone.as_deref())?;
+        }
+        emit_extraction(app, count);
+    }
+    Ok(count)
+}
+
+fn emit_extraction(app: &AppHandle, count: usize) {
     if count > 0 {
         let _ = app.emit(
             "memory-captured",
@@ -260,18 +416,16 @@ fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
                 pending: count,
             },
         );
-        let _ = app.emit_to("panel", "memories-updated", ());
     }
-    Ok(count)
+    let _ = app.emit("memories-updated", ());
 }
 
 pub fn start(app: AppHandle) {
     // One worker serializes all automatic passes; missed intervals catch up on startup.
     crate::background::SUPERVISOR.spawn_async("memory-extraction", move |worker| async move {
         while !worker.cancelled() {
-            let handle = app.clone();
-            match tauri::async_runtime::spawn_blocking(move || run(&handle, false)).await {
-                Ok(Ok(_)) => worker.health(Ok(())),
+            match run(&app, false).await {
+                Ok(_) => worker.health(Ok(())),
                 result => worker.health(Err(format!("memory_extraction_failed: {result:?}"))),
             }
             if !worker.sleep(std::time::Duration::from_secs(60)).await {
@@ -312,9 +466,7 @@ pub fn configure_memory_extraction(
 
 #[tauri::command]
 pub async fn extract_memories_now(app: AppHandle) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || run(&app, true))
-        .await
-        .map_err(|e| e.to_string())?
+    run(&app, true).await
 }
 
 #[cfg(test)]
@@ -342,7 +494,7 @@ mod tests {
         assert_eq!(status(&db).unwrap().processed_count, 2);
     }
     #[test]
-    fn interval_disable_sensitive_and_batch_limit() {
+    fn interval_disable_sensitive_storage_and_batch_limit() {
         let db = super::super::open_in_memory_db().unwrap();
         extract(&db, &[], 100, false).unwrap();
         assert_eq!(
@@ -366,7 +518,7 @@ mod tests {
                 true
             )
             .unwrap(),
-            0
+            1
         );
         let entries: Vec<_> = (0..105).map(|i| entry(&format!("e{i}"), "你好")).collect();
         extract(&db, &entries, 4000, true).unwrap();
@@ -514,6 +666,99 @@ mod tests {
             })
             .unwrap();
         assert!(context.iter().any(|memory| memory.id == item.id));
+        assert!(pending(&db).unwrap().is_empty());
+    }
+    #[test]
+    fn semantic_extraction_revisits_legacy_history_and_tracks_success_atomically() {
+        let db = super::super::open_in_memory_db().unwrap();
+        let entries = [entry("legacy", "源码放在 /projects/piko")];
+        // The old rule scanner found nothing and marked this source as processed.
+        assert_eq!(extract(&db, &entries, 100, true).unwrap(), 0);
+        assert_eq!(semantic_backlog(&db, &entries, false).unwrap().len(), 1);
+        let mut fact = conversation_candidates("我喜欢喝茶").remove(0);
+        fact.content = entries[0].prompt.clone();
+        fact.memory_type = super::super::MemoryType::Semantic;
+        let candidates = HashMap::from([(entries[0].id.clone(), vec![fact])]);
+        {
+            let conn = db.0.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER semantic_failure BEFORE INSERT ON memory_extraction_semantic
+                BEGIN SELECT RAISE(ABORT,'injected failure'); END;",
+            )
+            .unwrap();
+        }
+        assert!(
+            extract_with_candidates(&db, &entries, 200, true, None, Some(&candidates), true)
+                .is_err()
+        );
+        assert!(pending(&db).unwrap().is_empty());
+        assert_eq!(semantic_backlog(&db, &entries, false).unwrap().len(), 1);
+        db.0.lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER semantic_failure;")
+            .unwrap();
+        assert_eq!(
+            extract_with_candidates(&db, &entries, 201, true, None, Some(&candidates), true)
+                .unwrap(),
+            1
+        );
+        assert!(semantic_backlog(&db, &entries, false).unwrap().is_empty());
+        // An explicit rescan includes old history but cannot resurrect rejected candidates.
+        assert_eq!(semantic_backlog(&db, &entries, true).unwrap().len(), 1);
+        remove_candidate(&db, &pending(&db).unwrap()[0].id).unwrap();
+        assert_eq!(
+            extract_with_candidates(&db, &entries, 300, true, None, Some(&candidates), true)
+                .unwrap(),
+            0
+        );
+        let edited = [entry("legacy", "源码放在 /projects/updated")];
+        assert_eq!(semantic_backlog(&db, &edited, false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn explicit_sensitive_memory_can_be_extracted_confirmed_and_recalled() {
+        let db = super::super::open_in_memory_db().unwrap();
+        let entries = [entry(
+            "config",
+            "请记住：服务配置 apiKey=example-test-key，地址 https://example.test/v1?mode=test",
+        )];
+        assert_eq!(extract(&db, &entries, 100, true).unwrap(), 1);
+        let mut candidates = pending(&db).unwrap();
+        assert!(candidates[0].content.contains("apiKey=example-test-key"));
+        let input = super::super::ApplyCandidateInput {
+            candidate_id: candidates[0].id.clone(),
+            confirmed: Some(true),
+        };
+        let saved = super::super::writer::apply_candidate(&db, &input, &mut candidates)
+            .unwrap()
+            .unwrap();
+        remove_candidate(&db, &input.candidate_id).unwrap();
+        let context = db
+            .build_context(super::super::BuildContextInput {
+                current_query: Some("apiKey".into()),
+                window_type: None,
+                limit: Some(10),
+            })
+            .unwrap();
+        assert!(context
+            .iter()
+            .any(|item| item.id == saved.id && item.content.contains("example-test-key")));
+    }
+    #[test]
+    fn rescans_do_not_restore_deleted_sources() {
+        let db = super::super::open_in_memory_db().unwrap();
+        let entries = [entry("deleted", "请记住服务配置 apiKey=example-test-key")];
+        {
+            let mut conn = db.0.lock().unwrap();
+            super::super::soul::store::migrate(&mut conn).unwrap();
+            super::super::soul::lifecycle::delete_sources(&mut conn, &["deleted".into()], 100)
+                .unwrap();
+        }
+        assert!(semantic_backlog(&db, &entries, true).unwrap().is_empty());
+        assert_eq!(
+            extract_with_candidates(&db, &entries, 200, true, None, None, true).unwrap(),
+            0
+        );
         assert!(pending(&db).unwrap().is_empty());
     }
 }
