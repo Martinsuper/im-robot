@@ -78,13 +78,14 @@ pub fn init(_app: &AppHandle) {
     }
 }
 
-pub fn notify(message: &ProactiveMessage, _text: &str) {
-    if message.category != ProactiveCategory::TaskUnresolved {
+pub fn notify(_message: &ProactiveMessage, _text: &str) {
+    #[cfg(target_os = "macos")]
+    if _message.category != ProactiveCategory::TaskUnresolved {
         return;
     }
     #[cfg(target_os = "macos")]
     if let (Ok(id), Ok(title), Ok(body)) = (
-        CString::new(message.id.as_str()),
+        CString::new(_message.id.as_str()),
         CString::new("Piko"),
         CString::new(_text),
     ) {

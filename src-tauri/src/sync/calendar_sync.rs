@@ -515,6 +515,11 @@ pub(crate) fn pull_from_system_calendar(app: &AppHandle, since: u64) -> Result<P
     })
 }
 
+#[cfg(not(target_os = "macos"))]
+fn ensure_calendar_access() -> Result<(), String> {
+    Err("当前平台尚未开放系统日历同步".into())
+}
+
 #[cfg(test)]
 fn exclude_deleted_local_events(events: &mut Vec<CalendarEvent>, deleted_ids: &HashSet<String>) {
     events.retain(|event| !deleted_ids.contains(&event.id));
@@ -707,9 +712,4 @@ mod tests {
         assert_eq!(local.location.as_deref(), Some("会议室"));
         assert_eq!(local.notes.as_deref(), Some("来自系统日历"));
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn ensure_calendar_access() -> Result<(), String> {
-    Err("当前平台尚未开放系统日历同步".into())
 }

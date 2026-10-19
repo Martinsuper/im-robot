@@ -43,8 +43,7 @@ bzip2 = { version = "0.4", optional = true }
 tar = { version = "0.4", optional = true }
 tauri-plugin-notification = "^2"
 tauri-plugin-autostart = "^2"
-# 0.8 keeps PipeWire 0.8 compatibility with Ubuntu 22.04 headers.
-xcap = "=0.8.0"
+xcap = "0.9.8"
 base64 = "0.22"
 tauri-plugin-dialog = "^2"
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }
@@ -72,3 +71,5 @@ windows = { version = "0.58", features = [
 # only its archive reader until upstream ships a fixed build dependency.
 [patch.crates-io]
 sherpa-onnx-sys = { path = "vendor/sherpa-onnx-sys" }
+
+xcap = { path = "vendor/xcap" }

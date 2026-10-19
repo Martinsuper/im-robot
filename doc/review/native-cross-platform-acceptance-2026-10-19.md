@@ -31,3 +31,9 @@
 第二轮远端结果：待完成。
 
 测试证据、配置、模拟服务日志和 CI 状态保存在 `artifacts/native-acceptance/`。文件夹仅含本轮隔离数据的相关证据，不包含正式用户资料；该目录被 Git 忽略。
+
+## 第二轮 CI 后修复
+
+Windows 严格 Clippy 发现 macOS 专属通知分支在其他平台留下无效 return，以及非 macOS 日历适配器位于测试模块之后，已调整条件编译与声明位置。
+
+xcap 0.8.0 降级实验仍无法兼容 Ubuntu 22.04 的 PipeWire 头文件，已撤回。最终保持 xcap 0.9.8，使用保留许可证及来源校验的本地补丁，将 Piko 未使用的 Linux Wayland 视频录制改为可选功能；静态截图、Wayland portal 与 X11 截图路径不变。默认 Linux 依赖树不再包含 PipeWire。macOS 上游截图接口仍有三处弃用警告，后续应随上游替换 API。
