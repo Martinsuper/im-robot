@@ -194,8 +194,9 @@ pub(crate) fn open_notification_settings() -> Result<(), String> {
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        return Err("请在系统设置中打开通知设置".into());
+        Err("请在系统设置中打开通知设置".into())
     }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     Ok(())
 }
 

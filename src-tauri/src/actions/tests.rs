@@ -32,7 +32,13 @@ fn creates_confirmation_drafts_for_model_write_tools() {
 
     assert_eq!(draft.plugin_id, "piko.calendar");
     assert!(draft.summary.contains("项目评审"));
-    assert!(draft.summary.contains("2026-06-01 11:00"));
+    assert!(draft.summary.contains(
+        &chrono::DateTime::parse_from_rfc3339("2026-06-01T11:00:00+08:00")
+            .unwrap()
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string()
+    ));
 }
 
 #[test]
@@ -72,10 +78,22 @@ fn creates_confirmation_drafts_for_deletions() {
 
     assert_eq!(reminder_draft.tool_name, "delete_reminder");
     assert!(reminder_draft.summary.contains("提交周报"));
-    assert!(reminder_draft.summary.contains("2026-06-01 18:00"));
+    assert!(reminder_draft.summary.contains(
+        &chrono::DateTime::parse_from_rfc3339("2026-06-01T18:00:00+08:00")
+            .unwrap()
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string()
+    ));
     assert_eq!(calendar_draft.tool_name, "delete_event");
     assert!(calendar_draft.summary.contains("项目评审"));
-    assert!(calendar_draft.summary.contains("2026-06-01 11:00"));
+    assert!(calendar_draft.summary.contains(
+        &chrono::DateTime::parse_from_rfc3339("2026-06-01T11:00:00+08:00")
+            .unwrap()
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string()
+    ));
 }
 
 #[test]

@@ -335,7 +335,9 @@ fn capture(
             )?;
         } else {
             fs::copy(source(roots, entry), &target).map_err(error)?;
-            fs::File::open(&target)
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&target)
                 .and_then(|file| file.sync_all())
                 .map_err(error)?;
         }

@@ -7,6 +7,8 @@ use crate::runtime_types::ChatRequests;
 use crate::runtime_types::PetVisualEvent;
 use crate::settings::read_settings;
 use serde_json::json;
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::AppHandle;
