@@ -267,7 +267,7 @@ test("does not test the connection or clear the input if saving fails", async ({
     .fill("ui-test-key-not-a-secret");
   await page.getByRole("button", { name: "保存并测试", exact: true }).click();
   await expect(
-    page.locator("#settings-group-ai").getByText(/连接失败/),
+    page.locator("#settings-group-ai").getByText(/连接失败：操作失败/),
   ).toBeVisible();
   await expect(
     page.locator('#settings-group-ai input[type="password"]'),
