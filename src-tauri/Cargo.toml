@@ -43,7 +43,8 @@ bzip2 = { version = "0.4", optional = true }
 tar = { version = "0.4", optional = true }
 tauri-plugin-notification = "^2"
 tauri-plugin-autostart = "^2"
-xcap = "0.9.8"
+# 0.8 keeps PipeWire 0.8 compatibility with Ubuntu 22.04 headers.
+xcap = "=0.8.0"
 base64 = "0.22"
 tauri-plugin-dialog = "^2"
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }

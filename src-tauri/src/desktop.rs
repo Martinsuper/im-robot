@@ -12,6 +12,7 @@ use tauri::menu::ContextMenu;
 use tauri::menu::Menu;
 use tauri::menu::MenuItem;
 use tauri::menu::PredefinedMenuItem;
+#[cfg(target_os = "macos")]
 use tauri::menu::Submenu;
 use tauri::tray::TrayIconBuilder;
 use tauri::AppHandle;

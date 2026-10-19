@@ -19,6 +19,7 @@ use crate::chat_session::repository::migrate_chat_sessions;
 use crate::companion;
 use crate::credentials;
 use crate::desktop;
+#[cfg(target_os = "macos")]
 use crate::desktop::configure_application_menu;
 use crate::desktop::configure_global_shortcut;
 use crate::desktop::configure_tray;

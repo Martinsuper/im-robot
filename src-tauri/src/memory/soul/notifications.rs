@@ -1,10 +1,16 @@
 //! Local notification identity is the ledger message ID. No permission prompts.
 use super::model::*;
+#[cfg(target_os = "macos")]
+use std::ffi::CString;
+#[cfg(target_os = "macos")]
 use std::{
-    ffi::{c_char, CStr, CString},
+    ffi::{c_char, CStr},
     sync::OnceLock,
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(target_os = "macos")]
+use tauri::Manager;
+#[cfg(target_os = "macos")]
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
 pub fn log_gate(reason: &str) {
@@ -32,6 +38,7 @@ extern "C" {
     fn piko_soul_remove_notifications(active_json: *const c_char);
 }
 
+#[cfg(target_os = "macos")]
 extern "C" fn allowed(id: *const c_char) -> bool {
     if id.is_null() {
         return false;
@@ -44,6 +51,7 @@ extern "C" fn allowed(id: *const c_char) -> bool {
     let Ok(conn) = db.0.lock() else { return false };
     conn.query_row("SELECT EXISTS(SELECT 1 FROM soul_proactive_ledger l,soul_control c WHERE l.id=?1 AND l.state IN ('dispatching','shown') AND c.enabled=1 AND c.paused=0)",[id],|r|r.get::<_,bool>(0)).unwrap_or(false)
 }
+#[cfg(target_os = "macos")]
 extern "C" fn open(id: *const c_char) {
     if !allowed(id) {
         return;
@@ -59,8 +67,9 @@ extern "C" fn open(id: *const c_char) {
     }
 }
 
-pub fn init(app: &AppHandle) {
-    let _ = APP.set(app.clone());
+pub fn init(_app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = APP.set(_app.clone());
     // UNUserNotificationCenter requires a bundled application. Unit-test hosts
     // intentionally never initialize it.
     #[cfg(target_os = "macos")]
@@ -69,7 +78,7 @@ pub fn init(app: &AppHandle) {
     }
 }
 
-pub fn notify(message: &ProactiveMessage, text: &str) {
+pub fn notify(message: &ProactiveMessage, _text: &str) {
     if message.category != ProactiveCategory::TaskUnresolved {
         return;
     }
@@ -77,7 +86,7 @@ pub fn notify(message: &ProactiveMessage, text: &str) {
     if let (Ok(id), Ok(title), Ok(body)) = (
         CString::new(message.id.as_str()),
         CString::new("Piko"),
-        CString::new(text),
+        CString::new(_text),
     ) {
         unsafe {
             piko_soul_notify(id.as_ptr(), title.as_ptr(), body.as_ptr());
@@ -86,9 +95,9 @@ pub fn notify(message: &ProactiveMessage, text: &str) {
     // Other platforms stay bubble-only until their permission/click adapters
     // can preserve this same identity. The generic plugin drops this metadata.
 }
-pub fn reconcile(ids: &[String]) {
+pub fn reconcile(_ids: &[String]) {
     #[cfg(target_os = "macos")]
-    if let Ok(json) = CString::new(serde_json::to_string(ids).unwrap_or_default()) {
+    if let Ok(json) = CString::new(serde_json::to_string(_ids).unwrap_or_default()) {
         unsafe {
             piko_soul_remove_notifications(json.as_ptr());
         }
