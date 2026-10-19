@@ -14,3 +14,9 @@ cache/
 
 # Hook markers
 .dirty
+
+# runtime files
+daemon.pid
+daemon.sock
+daemon.out
+codegraph.lock
