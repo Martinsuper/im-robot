@@ -2713,7 +2713,7 @@ dependencies = [
 name = "im-robot"
 version = "1.2.11"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bzip2 0.4.4",
  "chrono",
  "chrono-tz",

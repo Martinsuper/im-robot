@@ -44,7 +44,7 @@ tar = { version = "0.4", optional = true }
 tauri-plugin-notification = "^2"
 tauri-plugin-autostart = "^2"
 xcap = "0.9.8"
-base64 = "0.22"
+base64 = "0.23"
 tauri-plugin-dialog = "^2"
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }
 chrono = "0.4"
