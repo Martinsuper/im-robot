@@ -13,6 +13,8 @@ import {
   MemoryExport,
   MEMORY_TYPE_OPTIONS,
 } from "./memoryTypes";
+import { MemoryVaultPanel } from "./MemoryVaultPanel";
+import { KnowledgePanel } from "./KnowledgePanel";
 import { MemoryExtractionControls } from "./MemoryExtractionControls";
 import { OpenLoopReview } from "../soul/OpenLoopReview";
 import { MemoryCard } from "./MemoryCard";
@@ -58,7 +60,7 @@ export function MemoryCenter() {
 
   // Sub-tab for advanced views
   const [subView, setSubView] = useState<
-    "memories" | "pending" | "reflections"
+    "memories" | "pending" | "reflections" | "knowledge"
   >("memories");
 
   const toast = useToast();
@@ -308,6 +310,7 @@ export function MemoryCenter() {
 
       {/* Sub-view tabs */}
       <MemoryExtractionControls />
+      <MemoryVaultPanel />
 
       <nav className="memory-sub-tabs">
         <button
@@ -330,7 +333,9 @@ export function MemoryCenter() {
             `待确认 (${pendingCandidates.length})`,
           ).replace("{count}", String(pendingCandidates.length))}
         </button>
+        <button type="button" className={subView === "knowledge" ? "is-active" : ""} onClick={() => setSubView("knowledge")}>知识库</button>
       </nav>
+      {subView === "knowledge" && <KnowledgePanel />}
 
       {subView === "memories" && (
         <>

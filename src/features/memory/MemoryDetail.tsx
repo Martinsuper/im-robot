@@ -1,3 +1,4 @@
+import { MemoryHistory } from "./MemoryHistory";
 import type { ComponentProps } from "react";
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -155,7 +156,8 @@ function MemoryDetailEditor({
           )}
         </div>
 
-        <div className="memory-detail__meta">
+        <MemoryHistory memory={memory} onReplaced={async () => { await onDeleted(); onClose(); }} />
+      <div className="memory-detail__meta">
           <div className="meta-grid">
             <div>
               <span className="meta-label">来源</span>

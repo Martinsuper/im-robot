@@ -20,7 +20,7 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) use builtins::calendar_events_tool_result;
-use builtins::{CalendarPlugin, MemoPlugin, ReminderPlugin};
+use builtins::{CalendarPlugin, KnowledgePlugin, MemoPlugin, ReminderPlugin};
 use declarative::{read_external_plugin_packages, validate_declarative_plugin, DeclarativePlugin};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -80,10 +80,12 @@ impl PluginRegistry {
         let reminder_plugin: Arc<dyn PikoPlugin> = Arc::new(ReminderPlugin);
         let memo_plugin: Arc<dyn PikoPlugin> = Arc::new(MemoPlugin);
         let calendar_plugin: Arc<dyn PikoPlugin> = Arc::new(CalendarPlugin);
+        let knowledge_plugin: Arc<dyn PikoPlugin> = Arc::new(KnowledgePlugin);
         let mut plugins = HashMap::new();
         plugins.insert(reminder_plugin.manifest().id, reminder_plugin);
         plugins.insert(memo_plugin.manifest().id, memo_plugin);
         plugins.insert(calendar_plugin.manifest().id, calendar_plugin);
+        plugins.insert(knowledge_plugin.manifest().id, knowledge_plugin);
         Self {
             plugins: Mutex::new(plugins),
         }

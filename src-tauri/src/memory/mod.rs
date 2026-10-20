@@ -1,10 +1,12 @@
 pub mod commands;
 pub mod extraction;
+pub mod knowledge;
 pub mod model;
 pub mod policy;
 pub mod reflection;
 pub mod soul;
 pub mod store;
+pub mod vault;
 pub mod writer;
 
 pub use commands::*;

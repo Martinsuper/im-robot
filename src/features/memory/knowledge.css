@@ -1,0 +1,83 @@
+.knowledge-panel {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.knowledge-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+}
+.knowledge-panel label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.knowledge-panel input:not([type="checkbox"]) {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid var(--border-color, #d6d6d6);
+  border-radius: 8px;
+  color: inherit;
+  background: var(--surface, transparent);
+}
+.knowledge-query {
+  flex: 1;
+  min-width: 180px;
+}
+.knowledge-help,
+.knowledge-source {
+  font-size: 12px;
+  opacity: 0.75;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.knowledge-excerpt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  max-height: 280px;
+  overflow: auto;
+}
+.knowledge-panel section {
+  display: grid;
+  gap: 10px;
+}
+.knowledge-panel h3,
+.knowledge-panel h4,
+.knowledge-panel p {
+  margin: 0;
+}
+.knowledge-panel small {
+  font-weight: normal;
+  opacity: 0.75;
+}
+.knowledge-panel button {
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.knowledge-panel button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.knowledge-panel summary {
+  cursor: pointer;
+  padding-block: 8px;
+}
+.knowledge-settings {
+  display: grid;
+  gap: 12px;
+  padding-block: 14px;
+}
+.knowledge-settings label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: start;
+}
+.knowledge-error {
+  color: var(--danger, #b42318);
+}

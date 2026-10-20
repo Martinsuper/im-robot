@@ -102,6 +102,8 @@ pub fn open_in_memory_db() -> Result<MemoryDb, String> {
 }
 
 fn run_migrations(conn: &Connection) -> Result<(), String> {
+    super::knowledge::migrate(conn)?;
+    super::vault::migrate(conn)?;
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS memory_items (
@@ -401,9 +403,24 @@ impl MemoryDb {
     }
 
     pub fn update(&self, id: &str, input: UpdateMemoryInput) -> Result<MemoryItem, String> {
-        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
-
-        let existing = self.get(id)?.ok_or_else(|| "未找到该记忆".to_string())?;
+        let mut db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let existing = db
+            .query_row(
+                &format!("{SELECT_COLS} FROM memory_items WHERE id = ?1"),
+                [id],
+                row_to_memory_item,
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "未找到该记忆".to_string())?;
+        if existing.status != MemoryStatus::Active {
+            return Err("只能编辑有效记忆".into());
+        }
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        tx.execute("INSERT INTO memory_revisions(memory_id,previous_json,changed_at,reason) VALUES(?1,?2,?3,'userCorrection')",
+            params![id, serde_json::to_string(&existing).map_err(|e| e.to_string())?, crate::common::unix_timestamp()]).map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM retrieval_vectors WHERE id=?1", [id])
+            .map_err(|e| e.to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -416,7 +433,7 @@ impl MemoryDb {
         let new_tags = input.tags.as_ref().unwrap_or(&existing.tags);
         let tags_json = serde_json::to_string(&new_tags).map_err(|e| e.to_string())?;
 
-        db.execute(
+        tx.execute(
             "UPDATE memory_items \
              SET title = ?1, content = ?2, importance = ?3, \
                  tags = ?4, updated_at = ?5 \
@@ -425,6 +442,7 @@ impl MemoryDb {
         )
         .map_err(|e| e.to_string())?;
 
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(MemoryItem {
             title: new_title.to_string(),
             content: new_content.to_string(),
@@ -436,7 +454,7 @@ impl MemoryDb {
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
-        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let mut db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -445,17 +463,25 @@ impl MemoryDb {
         let deleted_str =
             serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
 
-        db.execute(
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        tx.execute(
             "UPDATE memory_items SET status = ?1, updated_at = ?2 WHERE id = ?3",
             params![deleted_str, now, id],
         )
         .map_err(|e| e.to_string())?;
 
+        tx.execute("DELETE FROM retrieval_vectors WHERE id=?1", [id])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM memory_revisions WHERE memory_id=?1", [id])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM memory_provenance WHERE memory_id=?1", [id])
+            .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub fn clear_type(&self, memory_type: MemoryType) -> Result<usize, String> {
-        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let mut db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -466,15 +492,26 @@ impl MemoryDb {
         let type_str = serde_json::to_string(&memory_type).map_err(|e| e.to_string())?;
         let deleted_status = enum_sql_literal(&MemoryStatus::Deleted)?;
 
-        db.execute(
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        for table in ["retrieval_vectors", "memory_revisions", "memory_provenance"] {
+            let column = if table == "retrieval_vectors" {
+                "id"
+            } else {
+                "memory_id"
+            };
+            tx.execute(&format!("DELETE FROM {table} WHERE {column} IN (SELECT id FROM memory_items WHERE memory_type=?1)"), [&type_str]).map_err(|e|e.to_string())?;
+        }
+        let count = tx.execute(
             &format!("UPDATE memory_items SET status = ?1, updated_at = ?2 WHERE memory_type = ?3 AND status != {deleted_status}"),
             params![deleted_str, now, type_str],
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(count)
     }
 
     pub fn clear_all(&self) -> Result<usize, String> {
-        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let mut db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -484,11 +521,26 @@ impl MemoryDb {
             serde_json::to_string(&MemoryStatus::Deleted).map_err(|e| e.to_string())?;
         let deleted_status = enum_sql_literal(&MemoryStatus::Deleted)?;
 
-        db.execute(
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        for table in ["retrieval_vectors", "memory_revisions", "memory_provenance"] {
+            let column = if table == "retrieval_vectors" {
+                "id"
+            } else {
+                "memory_id"
+            };
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE {column} IN (SELECT id FROM memory_items)"),
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let count = tx.execute(
             &format!("UPDATE memory_items SET status = ?1, updated_at = ?2 WHERE status != {deleted_status}"),
             params![deleted_str, now],
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(count)
     }
 
     // === Phase 2: Search ===

@@ -464,20 +464,10 @@ pub async fn agent_start(
         Vec::new()
     };
     let memory_db = app.state::<Arc<crate::memory::MemoryDb>>();
-    let memory_context = memory_db
-        .build_context(crate::memory::BuildContextInput {
-            current_query: Some(input.prompt.clone()),
-            window_type: None,
-            limit: Some(10),
-        })
+    let memory_context = crate::memory::knowledge::context(&memory_db, &input.prompt)
+        .await
         .ok()
-        .map(|items| {
-            items
-                .iter()
-                .map(|m| format!("- {}: {}", m.title, m.content))
-                .collect::<Vec<_>>()
-                .join("\n")
-        });
+        .filter(|text| !text.is_empty());
     if let Some(kind) = crate::memory::soul::mood::direct_user_event(&input.prompt) {
         if let Ok(mut conn) = memory_db.0.lock() {
             let source = crate::memory::soul::model::SourceRef {

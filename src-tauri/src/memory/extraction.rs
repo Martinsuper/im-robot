@@ -19,7 +19,8 @@ pub struct ExtractionStatus {
 
 fn initialize(conn: &rusqlite::Connection) -> Result<(), String> {
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS memory_extraction_settings (
+        "CREATE TABLE IF NOT EXISTS memory_provenance (memory_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, captured_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS memory_extraction_settings (
         id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 1,
         interval_minutes INTEGER NOT NULL DEFAULT 30, last_run_at INTEGER NOT NULL DEFAULT 0);
         INSERT OR IGNORE INTO memory_extraction_settings(id) VALUES(1);
@@ -228,6 +229,7 @@ fn extract_with_candidates(
                 params![candidate.id, payload],
             )
             .map_err(|e| e.to_string())?;
+            tx.execute("INSERT OR REPLACE INTO memory_provenance(memory_id,source_id,captured_at) VALUES(?1,?2,?3)", params![format!("memory-{}", candidate.id), entry.id, now]).map_err(|e|e.to_string())?;
             count += 1;
         }
         // Manual memory extraction may bypass its timer, but must never bypass

@@ -569,21 +569,10 @@ async fn stream_chat(
         .clone();
 
     // Build memory context from relevant long-term memories
-    let memory_context_text = memory_db
-        .build_context(memory::BuildContextInput {
-            current_query: Some(prompt.to_string()),
-            window_type: None,
-            limit: Some(10),
-        })
+    let memory_context_text = memory::knowledge::context(memory_db, prompt)
+        .await
         .ok()
-        .map(|memories| {
-            memories
-                .iter()
-                .map(|m| format!("- [{}] {}: {}", m.memory_type.label(), m.title, m.content))
-                .collect::<Vec<_>>()
-                .join("\n")
-        });
-
+        .filter(|text| !text.is_empty());
     if let Ok(mut conn) = memory_db.0.lock() {
         let source = memory::soul::model::SourceRef {
             kind: "user_input".into(),

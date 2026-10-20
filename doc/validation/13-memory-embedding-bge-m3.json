@@ -1,0 +1,90 @@
+{
+  "cases": [
+    {
+      "correct": true,
+      "expected": "eval-0",
+      "hybridTop1": "eval-0",
+      "label": "饮食",
+      "lexicalTop1": null,
+      "query": "推荐午餐时需要避开什么食材？",
+      "semanticScore": 0.4852752032054705,
+      "semanticTop1": "eval-0"
+    },
+    {
+      "correct": true,
+      "expected": "eval-1",
+      "hybridTop1": "eval-1",
+      "label": "出行",
+      "lexicalTop1": null,
+      "query": "平时通勤用什么交通工具？",
+      "semanticScore": 0.6802250994514007,
+      "semanticTop1": "eval-1"
+    },
+    {
+      "correct": true,
+      "expected": "eval-2",
+      "hybridTop1": "eval-2",
+      "label": "发布",
+      "lexicalTop1": null,
+      "query": "部署新版本有哪些前置步骤？",
+      "semanticScore": 0.6145088390330767,
+      "semanticTop1": "eval-2"
+    },
+    {
+      "correct": true,
+      "expected": "eval-3",
+      "hybridTop1": "eval-3",
+      "label": "沟通",
+      "lexicalTop1": null,
+      "query": "回答问题时应该怎样组织表达？",
+      "semanticScore": 0.5438832989272727,
+      "semanticTop1": "eval-3"
+    },
+    {
+      "correct": true,
+      "expected": "eval-4",
+      "hybridTop1": "eval-4",
+      "label": "专注",
+      "lexicalTop1": null,
+      "query": "什么时候适合安排不被打扰的工作？",
+      "semanticScore": 0.5318994327565365,
+      "semanticTop1": "eval-4"
+    },
+    {
+      "correct": false,
+      "expected": "eval-5",
+      "hybridTop1": "eval-2",
+      "label": "备份",
+      "lexicalTop1": "eval-2",
+      "query": "线上数据的灾难恢复策略是什么？",
+      "semanticScore": 0.4915442884111649,
+      "semanticTop1": "eval-2"
+    },
+    {
+      "correct": true,
+      "expected": "eval-6",
+      "hybridTop1": "eval-6",
+      "label": "技术",
+      "lexicalTop1": null,
+      "query": "这个软件的技术栈由哪些部分组成？",
+      "semanticScore": 0.5845977748599549,
+      "semanticTop1": "eval-6"
+    },
+    {
+      "correct": true,
+      "expected": "eval-7",
+      "hybridTop1": "eval-7",
+      "label": "城市",
+      "lexicalTop1": null,
+      "query": "Where do I live now?",
+      "semanticScore": 0.6319890793302778,
+      "semanticTop1": "eval-7"
+    }
+  ],
+  "data": "synthetic fixtures only; no user data",
+  "hybridTop1Correct": 7,
+  "lexicalTop1Correct": 0,
+  "model": "bge-m3",
+  "semanticTop1Correct": 7,
+  "total": 8
+}

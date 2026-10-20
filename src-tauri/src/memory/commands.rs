@@ -157,11 +157,11 @@ pub fn clear_memories(
 // === Phase 2: Search & Retrieval ===
 
 #[tauri::command]
-pub fn search_memories(
+pub async fn search_memories(
     db: State<'_, Arc<MemoryDb>>,
     input: SearchMemoriesInput,
 ) -> Result<Vec<MemoryItem>, String> {
-    db.search(input)
+    super::knowledge::search_memory(&db, input).await
 }
 
 #[tauri::command]

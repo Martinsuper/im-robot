@@ -132,6 +132,8 @@ pub(crate) fn run() {
             app.manage(Arc::new(memory_db));
             app.manage(memory::CandidateCache::default());
             memory::extraction::start(app.handle().clone());
+            memory::knowledge::start(app.handle().clone());
+            memory::vault::start(app.handle().clone());
             // S08：调度循环自身 fail closed（未启用/未迁移时保持静默）。
             memory::soul::commands::start(app.handle().clone());
             memory::soul::desktop::start(app.handle().clone());
@@ -321,6 +323,22 @@ pub(crate) fn run() {
             agent::agent_list_tasks,
             agent::agent_get_task_snapshot,
             agent::agent_get_diagnostics,
+            memory::vault::memory_vault_status,
+            memory::vault::memory_vault_open_directory,
+            memory::vault::memory_vault_configure,
+            memory::vault::memory_vault_sync,
+            memory::vault::memory_vault_preview,
+            memory::vault::memory_vault_resolve,
+            memory::knowledge::knowledge_get_settings,
+            memory::knowledge::knowledge_save_settings,
+            memory::knowledge::knowledge_list_documents,
+            memory::knowledge::knowledge_import,
+            memory::knowledge::knowledge_delete_document,
+            memory::knowledge::knowledge_search,
+            memory::knowledge::knowledge_reindex,
+            memory::knowledge::memory_revisions,
+            memory::knowledge::memory_get_provenance,
+            memory::knowledge::supersede_memory,
             memory::soul::commands::soul_diagnostics,
             memory::soul::commands::soul_report_activity,
             memory::soul::commands::soul_ack_message,

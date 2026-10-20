@@ -467,10 +467,10 @@ fn apply(
         .ok_or("快照缺少数据库")?;
     let image = stored(directory, sqlite);
     if let Some(db) = db {
-        db.0.lock()
-            .map_err(error)?
-            .restore("main", &image, None::<fn(rusqlite::backup::Progress)>)
+        let mut conn = db.0.lock().map_err(error)?;
+        conn.restore("main", &image, None::<fn(rusqlite::backup::Progress)>)
             .map_err(error)?;
+        crate::memory::vault::pause_after_restore(&conn)?;
     } else {
         // Startup recovery happens before any connection opens, so stale WAL files must not replay.
         for suffix in ["-wal", "-shm"] {
@@ -480,6 +480,8 @@ fn apply(
             }
         }
         copy_atomic(&image, &roots.config.join("memory.db"))?;
+        let conn = rusqlite::Connection::open(roots.config.join("memory.db")).map_err(error)?;
+        crate::memory::vault::pause_after_restore(&conn)?;
     }
     crate::storage::invalidate_all();
     revoke_agent_authorizations(roots)?;

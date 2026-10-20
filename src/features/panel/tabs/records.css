@@ -85,7 +85,7 @@
   position: sticky;
   top: 0;
   z-index: var(--z-raised, 2);
-  background: rgba(118, 118, 128, 0.12);
+  background: var(--piko-soft, #e9f0e7);
 }
 
 /* --- ④ 分类 chip --- */
@@ -451,7 +451,7 @@
 }
 .memory-center .memory-sub-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 3px;
   margin: 0;

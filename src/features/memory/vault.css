@@ -1,0 +1,79 @@
+.memory-vault {
+  border: 1px solid var(--piko-line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.memory-vault summary {
+  cursor: pointer;
+  color: var(--piko-ink);
+}
+.memory-vault summary span {
+  float: right;
+  color: var(--piko-muted);
+}
+.memory-vault__body {
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  min-width: 0;
+}
+.memory-vault p,
+.memory-vault h4,
+.memory-vault h5 {
+  margin: 0;
+}
+.memory-vault__path,
+.memory-vault__issue,
+.memory-vault__comparison {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.memory-vault__path {
+  color: var(--piko-muted);
+}
+.memory-vault__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.memory-vault button {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--piko-line);
+  border-radius: 7px;
+  background: var(--piko-fill);
+  color: var(--piko-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.memory-vault button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.memory-vault__issue {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--piko-line);
+  border-radius: 8px;
+}
+.memory-vault__comparison {
+  display: grid;
+  gap: 12px;
+}
+.memory-vault__comparison article {
+  padding: 10px;
+  background: var(--piko-soft);
+  border-radius: 8px;
+}
+.memory-vault__comparison pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  max-height: 220px;
+  font: inherit;
+}
+.memory-vault [role="alert"] {
+  color: #b42318;
+}
