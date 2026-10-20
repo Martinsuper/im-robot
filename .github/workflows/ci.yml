@@ -19,6 +19,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - run: node --test scripts/prepare-release.test.mjs
       - run: npm audit
       - run: cargo test --manifest-path tools/contracts/Cargo.toml
       - run: npm run check

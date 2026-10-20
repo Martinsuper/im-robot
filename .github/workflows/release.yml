@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
 
-  # Prepare: delete auto-created release, create fresh draft
+  # Prepare a new draft or resume an unfinished release without deleting assets.
   prepare:
     needs: verify
     runs-on: ubuntu-latest
@@ -38,38 +38,17 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version: $VERSION"
 
-      - name: Create draft release (abort if already published)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Create or resume draft release (abort if already published)
         id: create_release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          TAG="v${{ steps.version.outputs.version }}"
-          REPO="${{ github.repository }}"
-
-          echo "Looking for existing release: $TAG"
-          EXISTING=$(gh api "repos/$REPO/releases/tags/$TAG" 2>/dev/null || echo "")
-          if [ -n "$EXISTING" ]; then
-            EXISTING_ID=$(echo "$EXISTING" | jq -r '.id')
-            IS_DRAFT=$(echo "$EXISTING" | jq -r '.draft')
-            if [ "$IS_DRAFT" != "true" ]; then
-              echo "release $TAG 已存在且已发布（id=$EXISTING_ID），中止以避免误删正式版。"
-              echo "如确需重建，请先在 GitHub 上手动删除该 release 或删除对应 tag。"
-              exit 1
-            fi
-            echo "Found draft release ID: $EXISTING_ID, deleting..."
-            gh api -X DELETE "repos/$REPO/releases/$EXISTING_ID"
-            echo "Deleted draft release"
-            sleep 2
-          fi
-
-          # Create a published release
-          echo "Creating release for $TAG..."
-          RELEASE_BODY="See the assets to download this version and install."
-          RELEASE_ID=$(echo "{\"tag_name\":\"$TAG\",\"name\":\"Piko ${{ steps.version.outputs.version }}\",\"body\":\"$RELEASE_BODY\",\"draft\":true,\"prerelease\":false}" | gh api "repos/$REPO/releases" --input - --jq '.id')
-
-          echo "Created release ID: $RELEASE_ID"
-          echo "releaseId=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/prepare-release.mjs
 
   build:
     needs: prepare
