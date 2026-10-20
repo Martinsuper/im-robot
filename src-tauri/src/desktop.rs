@@ -363,6 +363,7 @@ pub(crate) fn watch_bubble_resize(app: &AppHandle) {
 }
 
 pub(crate) fn watch_panel_close(app: &AppHandle) {
+    watch_bubble_close(app);
     let Some(panel) = app.get_webview_window("panel") else {
         return;
     };
@@ -382,6 +383,22 @@ pub(crate) fn watch_panel_close(app: &AppHandle) {
             .unwrap_or(false);
         if !pet_is_visible {
             show_and_focus(&app, "pet");
+        }
+    });
+}
+
+/// Keep quick chat alive when its native close button is used, preserving tasks and drafts.
+fn watch_bubble_close(app: &AppHandle) {
+    let Some(bubble) = app.get_webview_window("bubble") else {
+        return;
+    };
+    let app = app.clone();
+    bubble.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            if let Some(bubble) = app.get_webview_window("bubble") {
+                let _ = bubble.hide();
+            }
         }
     });
 }
@@ -407,46 +424,21 @@ pub(crate) fn enable_bubble_background_drag(_app: &AppHandle) {}
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn enable_bubble_background_drag(_app: &AppHandle) {}
 
-/// Panel and quick chat share one work surface. Hide, rather than close, the
-/// previous window so drafts, conversation state and running tasks survive.
-fn hide_other_assistant_window(app: &AppHandle, shown: &str) {
-    let other = match shown {
-        "panel" => "bubble",
-        "bubble" => "panel",
-        _ => return,
-    };
-    if let Some(window) = app.get_webview_window(other) {
-        let _ = window.hide();
-    }
-}
-
 pub(crate) fn show_and_focus(app: &AppHandle, label: &str) {
-    if label == "bubble" {
-        place_bubble_near_pet(app);
-    }
     if let Some(window) = app.get_webview_window(label) {
+        // Only anchor a hidden quick surface. Never move an already visible or
+        // expanded conversation while the user is working in it.
+        if label == "bubble"
+            && !window.is_visible().unwrap_or(false)
+            && !window.is_decorated().unwrap_or(true)
+        {
+            place_bubble_near_pet(app);
+        }
         let _ = window.unminimize();
         if window.show().is_ok() {
-            hide_other_assistant_window(app, label);
             let _ = window.set_focus();
         }
     }
-}
-
-pub(crate) fn focus_pet_after_bubble_show(app: &AppHandle) {
-    if let Some(pet_window) = app.get_webview_window("pet") {
-        let _ = pet_window.set_focus();
-    }
-
-    let app = app.clone();
-    crate::background::SUPERVISOR.spawn_effect("pet-refocus", move |worker| {
-        if !worker.wait(Duration::from_millis(40)) {
-            return;
-        }
-        if let Some(pet_window) = app.get_webview_window("pet") {
-            let _ = pet_window.set_focus();
-        }
-    });
 }
 
 #[tauri::command]
@@ -464,17 +456,10 @@ pub(crate) fn hide_bubble(app: AppHandle) {
 #[tauri::command]
 pub(crate) fn toggle_bubble(app: AppHandle) {
     if let Some(window) = app.get_webview_window("bubble") {
-        if window.is_visible().unwrap_or(false) {
+        if window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false) {
             let _ = window.hide();
         } else {
-            // 显示气泡但不抢焦点，保持宠物窗口为焦点窗口
-            // 这样再次点击宠物时可以立即触发切换，不需要先激活窗口
-            place_bubble_near_pet(&app);
-            let _ = window.unminimize();
-            if window.show().is_ok() {
-                hide_other_assistant_window(&app, "bubble");
-                focus_pet_after_bubble_show(&app);
-            }
+            show_and_focus(&app, "bubble");
         }
     }
 }
@@ -490,7 +475,7 @@ pub(crate) fn open_panel(app: AppHandle, tab: Option<String>) {
 #[tauri::command]
 pub(crate) fn toggle_panel(app: AppHandle) {
     if let Some(window) = app.get_webview_window("panel") {
-        if window.is_visible().unwrap_or(false) {
+        if window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false) {
             let _ = window.hide();
         } else {
             show_and_focus(&app, "panel");

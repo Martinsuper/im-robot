@@ -45,24 +45,24 @@ function getIdleRhythmProfile(style: PetMotionStyle): IdleRhythmProfile {
         fidgetDelayMin: 17000,
         fidgetDelayMax: 30000,
         fidgetResetDelay: 1100,
-        attentionPulseAfterSeconds: 20,
-        attentionPulseIntervalMs: 6500,
+        attentionPulseAfterSeconds: 300,
+        attentionPulseIntervalMs: 60000,
       };
     case "lively":
       return {
         fidgetDelayMin: 7000,
         fidgetDelayMax: 15000,
         fidgetResetDelay: 1400,
-        attentionPulseAfterSeconds: 10,
-        attentionPulseIntervalMs: 3500,
+        attentionPulseAfterSeconds: 180,
+        attentionPulseIntervalMs: 60000,
       };
     default:
       return {
         fidgetDelayMin: 11000,
         fidgetDelayMax: 20000,
         fidgetResetDelay: 1300,
-        attentionPulseAfterSeconds: 15,
-        attentionPulseIntervalMs: 5000,
+        attentionPulseAfterSeconds: 300,
+        attentionPulseIntervalMs: 60000,
       };
   }
 }
@@ -188,11 +188,10 @@ function PetWindowContent() {
       void getPetSpeechForInteraction(event.type, bondTier, livePersonality, describePersonality(livePersonality)).then((message) => {
         setBubbleCompanionMessage(message);
       });
-      // 点击交互始终切换对话框显隐：第一次点击打开，第二次点击收起
-      void runCommand(event.type === "click" ? "toggle_bubble" : "show_bubble");
+      // Explicit user intent opens/focuses chat; only the chat's own controls hide it.
+      void runCommand("show_bubble");
     } else if (event.type === "click") {
-      // 即使没有触发宠物语音，点击仍然切换对话框
-      void runCommand("toggle_bubble");
+      void runCommand("show_bubble");
     }
 
     if (result.openPanel) {
@@ -234,15 +233,21 @@ function PetWindowContent() {
     if (petState.mode !== "idle" || quietMode === "minimal") {
       return;
     }
+    let pulseTimer: number | undefined;
     const interval = window.setInterval(() => {
       const idleSeconds = (Date.now() - idleStartRef.current) / 1000;
       if (idleSeconds > idleRhythm.attentionPulseAfterSeconds) {
         setAttentionPulse(true);
+        idleStartRef.current = Date.now();
+        pulseTimer = window.setTimeout(() => setAttentionPulse(false), 1600);
       } else {
         setAttentionPulse(false);
       }
     }, idleRhythm.attentionPulseIntervalMs);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(pulseTimer);
+    };
   }, [petState.mode, quietMode, idleRhythm]);
 
   useEffect(() => {
@@ -407,7 +412,8 @@ function PetWindowContent() {
           else if (petState.emotion === "surprised") audio.playSurprised();
           else audio.playNotice();
           break;
-        case "idle_fidget": audio.playCurious(); break;
+        // Idle motion is decorative and must not produce unsolicited audio.
+        case "idle_fidget": break;
       }
       prevReaction.current = petState.reaction;
     }
@@ -454,7 +460,15 @@ function PetWindowContent() {
       <div
         ref={petRef}
         className={`pet pet--${petVisualStyle} pet--${petState.mode} pet--bond-${bondTier} pet-reaction--${petState.reaction}${isDragOver ? " is-drag-over" : ""}${isDragging ? " is-dragging" : ""}${isLongPressing ? " is-long-pressing" : ""}${attentionPulse && petState.mode === "idle" && quietMode !== "minimal" ? " is-attention-pulse" : ""}`}
-        aria-label="拖动 Piko"
+        role="button"
+        tabIndex={0}
+        aria-label="打开 Piko 对话（可拖动）"
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            void runCommand("show_bubble");
+          }
+        }}
         onMouseEnter={() => {
           handleHumanInteraction({
             type: "hover",

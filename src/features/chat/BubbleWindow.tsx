@@ -1,4 +1,5 @@
 import { ChatContextMenu } from "./ChatContextMenu";
+import { useConversationSurface } from "./useConversationSurface";
 import { useWorkspaceSelection } from "./useWorkspaceSelection";
 import { useStableEvent } from "../../hooks/useStableEvent";
 import { HtmlFavoriteDialog } from "./HtmlFavoriteDialog";
@@ -19,7 +20,7 @@ import {
   openModelSettings,
   textForSpeech,
 } from "./ChatPresentation";
-import { ArrowDown, ArrowUp, Mic, PanelRight, Paperclip, Pin, Plus, ScanLine, Square, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Maximize2, Minimize2, Mic, PanelRight, Paperclip, Pin, Plus, ScanLine, Square, X } from "lucide-react";
 import { FormEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -57,6 +58,7 @@ const WHISPER_SAMPLE_RATE = 16000;
 
 export function BubbleWindow() {
   const toast = useToast();
+  const surface = useConversationSurface((error) => toast.error(toUserMessage(error, "窗口切换失败，请重试。")));
   const [prompt, setPrompt] = useState("");
   const [isPinned, setIsPinned] = useState(false);
   const [voiceAvailable, setVoiceAvailable] = useState(true);
@@ -1068,7 +1070,7 @@ export function BubbleWindow() {
 
   return (
     <main
-      className={`bubble-shell bubble-shell--${theme}`}
+      className={`bubble-shell bubble-shell--${theme}${surface.expanded ? " bubble-shell--expanded" : ""}`}
       onKeyDown={handleWindowKeyDown}
       tabIndex={-1}
     >
@@ -1085,6 +1087,14 @@ export function BubbleWindow() {
           </span>
         </div>
         <div className="bubble-topbar__right">
+          <button
+            type="button"
+            className="bubble-topbar__btn"
+            disabled={surface.pending}
+            onClick={() => void surface.toggle()}
+            aria-label={surface.expanded ? "返回快捷浮层" : "在完整窗口继续"}
+            title={surface.expanded ? "返回快捷浮层（会话与任务保留）" : "在完整窗口继续（会话与任务保留）"}
+          >{surface.expanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button>
           <button
             type="button"
             className={`bubble-topbar__btn${isPinned ? " bubble-topbar__btn--active" : ""}`}

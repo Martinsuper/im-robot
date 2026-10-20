@@ -25,6 +25,13 @@ const setAlwaysOnTopMock = vi.fn(() => Promise.resolve());
 const getCurrentWindowMock = vi.fn(() => ({
   setAlwaysOnTop: setAlwaysOnTopMock,
   startDragging: vi.fn(() => Promise.resolve()),
+  innerSize: vi.fn(async () => ({ toLogical: () => ({ width: 480, height: 420 }) })),
+  scaleFactor: vi.fn(async () => 1),
+  setDecorations: vi.fn(async () => {}),
+  setSkipTaskbar: vi.fn(async () => {}),
+  setSize: vi.fn(async () => {}),
+  isFullscreen: vi.fn(async () => false),
+  isMaximized: vi.fn(async () => false),
   onFocusChanged: vi.fn((handler: (event: { payload: boolean }) => void) => {
     focusHandlers.add(handler);
     return Promise.resolve<UnlistenFn>(() => { focusHandlers.delete(handler); });
@@ -34,6 +41,7 @@ const getCurrentWindowMock = vi.fn(() => ({
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => getCurrentWindowMock(),
+  LogicalSize: class { constructor(public width: number, public height: number) {} },
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -280,6 +288,20 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     fireEvent.click(screen.getByRole("button", { name: "回到最新消息" }));
     expect(thread.scrollTop).toBe(1000);
     expect(screen.queryByRole("button", { name: "回到最新消息" })).toBeNull();
+  });
+
+  it("浮层与完整窗口切换保留草稿，不创建会话或停止任务", async () => {
+    render(<BubbleWindow />);
+    const input = await screen.findByLabelText("发送给 Piko 的问题");
+    fireEvent.change(input, { target: { value: "切换时保留的草稿" } });
+    const before = runCommandMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "在完整窗口继续" }));
+    await screen.findByRole("button", { name: "返回快捷浮层" });
+    expect((input as HTMLTextAreaElement).value).toBe("切换时保留的草稿");
+    fireEvent.click(screen.getByRole("button", { name: "返回快捷浮层" }));
+    await screen.findByRole("button", { name: "在完整窗口继续" });
+    expect((input as HTMLTextAreaElement).value).toBe("切换时保留的草稿");
+    expect(runCommandMock.mock.calls.slice(before)).toEqual([]);
   });
 
   it("Esc 先收起工作空间，再收起对话；展开时保留原有输入", async () => {

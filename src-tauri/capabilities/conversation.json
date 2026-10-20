@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "conversation-surface",
+  "description": "Allow quick chat to expand in place without recreating its conversation",
+  "windows": ["bubble"],
+  "permissions": [
+    "core:window:allow-set-decorations",
+    "core:window:allow-set-skip-taskbar",
+    "core:window:allow-set-size",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-unmaximize"
+  ]
+}

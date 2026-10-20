@@ -9,6 +9,13 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .bubble-topbar { gap: 10px; padding: 0 0 10px; border-bottom-color: var(--piko-line); }
+.bubble-shell--expanded { border-radius: 0; }
+.bubble-shell--expanded .bubble-thread,
+.bubble-shell--expanded .prompt-form { width: 100%; max-width: 960px; margin-inline: auto; }
+@media (max-width: 520px) {
+  .bubble-topbar__subtitle { display: none; }
+  .bubble-topbar__right { gap: 2px; }
+}
 .bubble-topbar__left { gap: 8px; }
 .bubble-topbar__name { font-size: 14px; letter-spacing: 0; }
 .bubble-topbar__center { justify-content: flex-start; }
