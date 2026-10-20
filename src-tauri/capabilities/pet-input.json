@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pet-input",
+  "description": "OS cursor polling and click-through for the pet window only",
+  "windows": [
+    "pet"
+  ],
+  "permissions": [
+    "core:window:allow-cursor-position",
+    "core:window:allow-set-ignore-cursor-events"
+  ]
+}

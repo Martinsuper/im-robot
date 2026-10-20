@@ -25,6 +25,7 @@ import {
   type HumanInteractionEvent,
   type PetMotionStyle,
 } from "./interaction";
+import { usePetClickThrough } from "./hooks/usePetClickThrough";
 import { usePetDrag } from "./hooks/usePetDrag";
 import { usePetNotice } from "./hooks/usePetNotice";
 import { useTauriEventSubscription } from "./hooks/useTauriEventSubscription";
@@ -437,17 +438,20 @@ function PetWindowContent() {
     }
   }, [petState.emotion, petState.mode, quietMode]);
 
+  const clickThroughHandlers = usePetClickThrough();
+
   return (
     <main
       className={`pet-stage pet-stage--${theme} pet-stage--${quietMode}${sensingPaused ? " is-sensing-paused" : ""}`}
       aria-label={`桌面精灵 ${companionName}`}
-      {...dragHandlers}
+      {...clickThroughHandlers}
     >
       {petNotice && (
         <button
           className="pet-notice-bubble"
           type="button"
-          onMouseDown={(event) => event.stopPropagation()}
+          data-pet-interactive
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             clearPetNotice();
@@ -458,6 +462,8 @@ function PetWindowContent() {
         </button>
       )}
       <div
+        {...dragHandlers}
+        data-pet-interactive
         ref={petRef}
         className={`pet pet--${petVisualStyle} pet--${petState.mode} pet--bond-${bondTier} pet-reaction--${petState.reaction}${isDragOver ? " is-drag-over" : ""}${isDragging ? " is-dragging" : ""}${isLongPressing ? " is-long-pressing" : ""}${attentionPulse && petState.mode === "idle" && quietMode !== "minimal" ? " is-attention-pulse" : ""}`}
         role="button"

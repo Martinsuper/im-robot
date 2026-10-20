@@ -36,9 +36,10 @@ export interface UsePetDragReturn {
   isDragging: boolean;
   isLongPressing: boolean;
   handlers: {
-    onMouseDown: (event: React.MouseEvent) => void;
-    onMouseUp: (event: React.MouseEvent) => void;
-    onMouseMove: (event: React.MouseEvent) => void;
+    onPointerDown: (event: React.PointerEvent) => void;
+    onPointerUp: (event: React.PointerEvent) => void;
+    onPointerMove: (event: React.PointerEvent) => void;
+    onPointerCancel: () => void;
     onClick: () => void;
   };
 }
@@ -106,8 +107,9 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     dragSamples.current = [...dragSamples.current.slice(-5), { x, y, t: performance.now() }];
   }
 
-  const onMouseDown = (event: React.MouseEvent) => {
+  const onPointerDown = (event: React.PointerEvent) => {
     if (!isTauriRuntime || event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
     isPrimaryPointerDown.current = true;
     stopInertia();
     didDrag.current = false;
@@ -147,9 +149,12 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     setDragOrigin({ x: event.screenX, y: event.screenY });
   };
 
-  const onMouseUp = (event: React.MouseEvent) => {
+  const onPointerUp = (event: React.PointerEvent) => {
     if (event.button !== 0 || !isPrimaryPointerDown.current) return;
     isPrimaryPointerDown.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
 
     if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
     // 清除长按状态
@@ -182,7 +187,7 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     dragSamples.current = [];
   };
 
-  const onMouseMove = (event: React.MouseEvent) => {
+  const onPointerMove = (event: React.PointerEvent) => {
     if ((event.buttons & 1) === 0 || !isTauriRuntime) return;
     if (!dragOrigin) return;
     rememberDragPoint(event.screenX, event.screenY);
@@ -224,9 +229,19 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     isDragging,
     isLongPressing,
     handlers: {
-      onMouseDown,
-      onMouseUp,
-      onMouseMove,
+      onPointerDown,
+      onPointerUp,
+      onPointerMove,
+      onPointerCancel: () => {
+        isPrimaryPointerDown.current = false;
+        if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+        setIsDragging(false);
+        setIsLongPressing(false);
+        setDragOrigin(null);
+        dragSamples.current = [];
+        onLongPressEnd?.();
+        suppressClickRef.current = true;
+      },
       onClick: handleClick,
     },
   };
