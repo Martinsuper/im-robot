@@ -1,0 +1,2072 @@
+{
+  "acceptance": {
+    "minimumEvidenceRecallAt8": 0.9,
+    "passed": true
+  },
+  "cases": [
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "应用配置目录下的 `memory-vault`",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q01",
+      "lexicalEvidenceRank": 1,
+      "query": "Markdown 记忆文件默认保存在哪里？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04838709677419355,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.047371031746031744,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04524201288907172,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.045028884159318945,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 91 行",
+          "scope": "piko",
+          "score": 0.04479638009049774,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.044763513513513514,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04318407960199005,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "每约 15 秒比较一次",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q02",
+      "lexicalEvidenceRank": 1,
+      "query": "我在外部改完笔记，一般多久能同步？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04865990111891751,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04788306451612903,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04787506400409626,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 122 行",
+          "scope": "piko",
+          "score": 0.045291571521079724,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 31 行",
+          "scope": "piko",
+          "score": 0.045062229437229435,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.044583251360744966,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 76 行",
+          "scope": "piko",
+          "score": 0.043036130536130535,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.042553917553917554,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "在分类目录中新建普通 `.md` 笔记",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q03",
+      "lexicalEvidenceRank": 1,
+      "query": "没有 piko_id 的普通 Markdown 新笔记能加入记忆吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.048131080389144903,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04762704813108039,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04480274214213215,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 42 行",
+          "scope": "piko",
+          "score": 0.04462063757838406,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04410984848484849,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.043844395866454694,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04297924297924298,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "移动到其他分类目录会更新记忆类别",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q04",
+      "lexicalEvidenceRank": 1,
+      "query": "怎样通过文件管理器改变一条记忆的分类？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04838709677419355,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.047619047619047616,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.046875,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.045028884159318945,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.044782770638784684,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 122 行",
+          "scope": "piko",
+          "score": 0.04382350203245726,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04336895980731597,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "未知的 YAML 属性会在 Piko 写回文件时保留",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q05",
+      "lexicalEvidenceRank": 1,
+      "query": "Obsidian 自定义的 YAML 属性会被写回时抹掉吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.048131080389144903,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04738666351569577,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04550427136028541,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04525625548726953,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.04434294871794872,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 59 行",
+          "scope": "piko",
+          "score": 0.04423476067311684,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 76 行",
+          "scope": "piko",
+          "score": 0.04312219416386083,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 2,
+      "expectedEvidence": "保留双方，面板中比较并选择",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 2,
+      "id": "Q06",
+      "lexicalEvidenceRank": 5,
+      "query": "Piko 和文件里的内容都被改了，系统怎么处理？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04839549075403121,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04667577413479053,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.046342571558382555,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04596351361057244,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04568764568764569,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.04529114263053264,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.04459570280465803,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 42 行",
+          "scope": "piko",
+          "score": 0.043502633799770284,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "不自动删记忆",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q07",
+      "lexicalEvidenceRank": 1,
+      "query": "我把 Markdown 笔记删了，Piko 会马上忘记吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.048131080389144903,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04538690476190476,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04533450704225352,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04441552599447336,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04423476067311684,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.042977602108036896,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04119582430084713,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "每条有效、非私密记忆",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q08",
+      "lexicalEvidenceRank": 1,
+      "query": "私密或失效记忆也会导出到 Markdown 吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04839549075403121,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04814747488101534,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.0474478480153437,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04688263125763126,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04596351361057244,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.045454545454545456,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.04402951248992748,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.043502633799770284,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "每篇笔记最多 1 MB",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q09",
+      "lexicalEvidenceRank": 1,
+      "query": "单篇记忆笔记最大能有多大？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04839549075403121,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04839549075403121,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04715356328259554,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04603771139765438,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04525625548726953,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04480274214213215,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 57 行",
+          "scope": "piko",
+          "score": 0.04434294871794872,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.04416308329351808,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "从快照恢复数据库后自动暂停 Markdown 同步",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q10",
+      "lexicalEvidenceRank": 1,
+      "query": "数据库回滚后如何避免旧快照被新笔记覆盖？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04891591750396616,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04814747488101534,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04762704813108039,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04568764568764569,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 91 行",
+          "scope": "piko",
+          "score": 0.045582522915269395,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04534213829988478,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.044583251360744966,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04372294372294372,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "尚未导入的编辑",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q11",
+      "lexicalEvidenceRank": 1,
+      "query": "数据库快照是否也保护尚未导入的外部笔记编辑？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04787506400409626,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04738666351569577,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.047379032258064516,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04639423076923077,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.044782770638784684,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 92 行",
+          "scope": "piko",
+          "score": 0.044362602571557795,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 91 行",
+          "scope": "piko",
+          "score": 0.043590401799357026,
+          "source": "README.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "原始参考文档变化目前仍需重新导入",
+      "expectedSource": "doc/design/12-markdown-memory-vault.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q12",
+      "lexicalEvidenceRank": 2,
+      "query": "参考资料文档被修改后，会跟个人记忆文件一样自动同步吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.048915917503966164,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04814747488101534,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.047619047619047616,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.047379032258064516,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04592074592074592,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "",
+          "score": 0.04412400911045794,
+          "source": "[synthetic] 通用资料.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.043935253310910236,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.04259512417407154,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "http://localhost:11434/v1/embeddings",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q13",
+      "lexicalEvidenceRank": 1,
+      "query": "本机 Ollama 的向量接口默认怎么填写？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04639423076923077,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 104 行",
+          "scope": "piko",
+          "score": 0.04529532967032967,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 57 行",
+          "scope": "piko",
+          "score": 0.04510903806678455,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 91 行",
+          "scope": "piko",
+          "score": 0.044753035529379176,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.044723161161517325,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.04466027597918165,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04332988562425583,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 3,
+      "expectedEvidence": "API Key 单独保存在系统钥匙串",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 3,
+      "id": "Q14",
+      "lexicalEvidenceRank": 6,
+      "query": "Embedding 的访问密钥会写进 SQLite 吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 78 行",
+          "scope": "piko",
+          "score": 0.047379032258064516,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04643902077700826,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04640914640914641,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 91 行",
+          "scope": "piko",
+          "score": 0.04623878536922015,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 46 行",
+          "scope": "piko",
+          "score": 0.044099711270410194,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04352173647948296,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04307610368090898,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 2,
+      "expectedEvidence": "远程服务必须使用 HTTPS",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 2,
+      "id": "Q15",
+      "lexicalEvidenceRank": 2,
+      "query": "允许把资料发给云端向量服务需要什么条件？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.048651507139079855,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.047891458495966696,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.047169957774465976,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 46 行",
+          "scope": "piko",
+          "score": 0.044882896049597755,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "",
+          "score": 0.044882896049597755,
+          "source": "[synthetic] 通用资料.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04395511921458625,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 78 行",
+          "scope": "piko",
+          "score": 0.042802455760202245,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 122 行",
+          "scope": "piko",
+          "score": 0.04273125248735005,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "超时 15 秒",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q16",
+      "lexicalEvidenceRank": 1,
+      "query": "向量服务请求多久超时，失败以后还可以搜索吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04839549075403121,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04738666351569577,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04727963886909005,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.04664224664224664,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.04598642976252085,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 122 行",
+          "scope": "piko",
+          "score": 0.04456964190903192,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04414311179017061,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04375,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "最多 32 个待处理片段",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q17",
+      "lexicalEvidenceRank": 1,
+      "query": "自动向量索引每轮最多处理多少片段？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04817150063051703,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.047891458495966696,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04762704813108039,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.04696394686907021,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.045928030303030304,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04569460390355913,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.044882896049597755,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.044362602571557795,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "每批最多 128 个",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q18",
+      "lexicalEvidenceRank": 1,
+      "query": "手动建立语义索引一次最多处理多少条？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04841188524590165,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04839549075403121,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04787506400409626,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04666516279419505,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.045934988518943745,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.045028884159318945,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.04424900327131466,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04309997630893153,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "当前没有引入 sqlite-vec 扩展",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q19",
+      "lexicalEvidenceRank": 2,
+      "query": "目前必须安装 sqlite-vec 扩展才能搜索吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.048651507139079855,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04839549075403121,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 78 行",
+          "scope": "piko",
+          "score": 0.047371031746031744,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.044563279857397504,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 92 行",
+          "scope": "piko",
+          "score": 0.04443926202321725,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 91 行",
+          "scope": "piko",
+          "score": 0.04439449556119727,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 46 行",
+          "scope": "piko",
+          "score": 0.04410984848484849,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.043036130536130535,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 2,
+      "expectedEvidence": "通过 RRF 融合",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 2,
+      "id": "Q20",
+      "lexicalEvidenceRank": 5,
+      "query": "全文和向量检索结果是怎样合并排序的？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04865990111891752,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.047162673392181595,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04715356328259554,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 78 行",
+          "scope": "piko",
+          "score": 0.04512062889671998,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.04482184482184482,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 59 行",
+          "scope": "piko",
+          "score": 0.044407894736842105,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.043546872633651375,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.043488777089783284,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "每次最多导入 200 个文件",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q21",
+      "lexicalEvidenceRank": 1,
+      "query": "一次最多导入多少参考文件，单个文件上限多少？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.048131080389144903,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04563492063492063,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.045454545454545456,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04480274214213215,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04449925358603232,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.04416751012145749,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04399522132796781,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 2,
+      "expectedEvidence": "搜索指定项目会同时检索通用资料",
+      "expectedSource": "doc/design/11-persistent-memory-and-knowledge.md",
+      "hybridEvidenceRank": 2,
+      "id": "Q22",
+      "lexicalEvidenceRank": 2,
+      "query": "选择特定项目后，还能查到通用资料吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "",
+          "score": 0.04918032786885246,
+          "source": "[synthetic] 通用资料.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04838709677419355,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 52 行",
+          "scope": "piko",
+          "score": 0.04642338900734423,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.04618300439195962,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.045934988518943745,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 78 行",
+          "scope": "piko",
+          "score": 0.04526926877470356,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04479638009049774,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.043157782288217074,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 9,
+      "expectedEvidence": "schedule-items.json",
+      "expectedSource": "doc/design/10-piko-runtime-boundaries.md",
+      "hybridEvidenceRank": null,
+      "id": "Q23",
+      "lexicalEvidenceRank": null,
+      "query": "统一日程和会话分别保存在哪些 JSON 文件中？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 27 行",
+          "scope": "piko",
+          "score": 0.04839549075403121,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.046943815757279184,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 91 行",
+          "scope": "piko",
+          "score": 0.045582522915269395,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04556626169529395,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04508697131647951,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 32 行",
+          "scope": "piko",
+          "score": 0.043961876050057316,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 59 行",
+          "scope": "piko",
+          "score": 0.043928260057292313,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.043283143018383104,
+          "source": "README.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "禁止自动重建",
+      "expectedSource": "doc/design/10-piko-runtime-boundaries.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q24",
+      "lexicalEvidenceRank": 1,
+      "query": "迁移与恢复过程如何保护旧文件，允许自动重建吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 42 行",
+          "scope": "piko",
+          "score": 0.048915917503966164,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.047162673392181595,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 59 行",
+          "scope": "piko",
+          "score": 0.04623878536922015,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.045771578029642546,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 91 行",
+          "scope": "piko",
+          "score": 0.045015870871884925,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 65 行",
+          "scope": "piko",
+          "score": 0.04483608742004264,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 78 行",
+          "scope": "piko",
+          "score": 0.044161395328097035,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 122 行",
+          "scope": "piko",
+          "score": 0.04410984848484849,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 2,
+      "expectedEvidence": "JSONL",
+      "expectedSource": "doc/design/10-piko-runtime-boundaries.md",
+      "hybridEvidenceRank": 2,
+      "id": "Q25",
+      "lexicalEvidenceRank": 2,
+      "query": "Node sidecar 的通信协议采用什么格式和版本？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 46 行",
+          "scope": "piko",
+          "score": 0.04839549075403121,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 59 行",
+          "scope": "piko",
+          "score": 0.047643442622950824,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04762704813108039,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 91 行",
+          "scope": "piko",
+          "score": 0.04643206256109482,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 78 行",
+          "scope": "piko",
+          "score": 0.04531024531024531,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 40 行",
+          "scope": "piko",
+          "score": 0.043826250778650544,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04311675689450307,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 104 行",
+          "scope": "piko",
+          "score": 0.04272460093355616,
+          "source": "README.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 9,
+      "expectedEvidence": "actions/",
+      "expectedSource": "doc/design/10-piko-runtime-boundaries.md",
+      "hybridEvidenceRank": null,
+      "id": "Q26",
+      "lexicalEvidenceRank": null,
+      "query": "插件工具真正执行副作用前由哪一层负责审批？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 122 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.047619047619047616,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.046679405392392875,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 92 行",
+          "scope": "piko",
+          "score": 0.04666516279419505,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04666516279419505,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04529532967032967,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 46 行",
+          "scope": "piko",
+          "score": 0.043076103680908986,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 57 行",
+          "scope": "piko",
+          "score": 0.04286740177909563,
+          "source": "README.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "piko_select_workspace",
+      "expectedSource": "doc/design/08-piko-agent-runtime.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q27",
+      "lexicalEvidenceRank": 1,
+      "query": "用户还没选工作目录时，模型如何请求选择文件夹？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.048131080389144903,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.047371031746031744,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04548239750445633,
+          "source": "doc/design/11-persistent-memory-and-knowledge.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 78 行",
+          "scope": "piko",
+          "score": 0.04391696977298382,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 46 行",
+          "scope": "piko",
+          "score": 0.043883706467661696,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 27 行",
+          "scope": "piko",
+          "score": 0.04386946386946387,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.0433205292360222,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "所有命令需逐次批准",
+      "expectedSource": "doc/design/08-piko-agent-runtime.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q28",
+      "lexicalEvidenceRank": 1,
+      "query": "目录外读取和运行命令能自动批准吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04865990111891752,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 92 行",
+          "scope": "piko",
+          "score": 0.046543778801843315,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 46 行",
+          "scope": "piko",
+          "score": 0.04642338900734423,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 122 行",
+          "scope": "piko",
+          "score": 0.04616113053613054,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.045928030303030304,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.045750384880819665,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 42 行",
+          "scope": "piko",
+          "score": 0.045327668234194096,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 78 行",
+          "scope": "piko",
+          "score": 0.045235361653272105,
+          "source": "README.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 1,
+      "expectedEvidence": "只读核对",
+      "expectedSource": "doc/design/08-piko-agent-runtime.md",
+      "hybridEvidenceRank": 1,
+      "id": "Q29",
+      "lexicalEvidenceRank": 1,
+      "query": "中断任务的只读核对允许执行 write、edit 和 bash 吗？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 92 行",
+          "scope": "piko",
+          "score": 0.04918032786885246,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 109 行",
+          "scope": "piko",
+          "score": 0.04762704813108039,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 75 行",
+          "scope": "piko",
+          "score": 0.04715356328259554,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 42 行",
+          "scope": "piko",
+          "score": 0.04666516279419505,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04525625548726954,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 59 行",
+          "scope": "piko",
+          "score": 0.045028884159318945,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 122 行",
+          "scope": "piko",
+          "score": 0.04390451832907076,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 31 行",
+          "scope": "piko",
+          "score": 0.04305037313432836,
+          "source": "README.md"
+        }
+      ]
+    },
+    {
+      "expandedEvidenceRank": 10,
+      "expectedEvidence": "npm run tauri dev",
+      "expectedSource": "README.md",
+      "hybridEvidenceRank": null,
+      "id": "Q30",
+      "lexicalEvidenceRank": null,
+      "query": "本地开发启动 Piko 的命令是什么？",
+      "topResults": [
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 23 行",
+          "scope": "piko",
+          "score": 0.04787506400409626,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04727963886909005,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": true,
+          "location": "第 46 行",
+          "scope": "piko",
+          "score": 0.046176046176046176,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.04598642976252085,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 57 行",
+          "scope": "piko",
+          "score": 0.043790702896923425,
+          "source": "README.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 1 行",
+          "scope": "piko",
+          "score": 0.043708267871170464,
+          "source": "doc/design/12-markdown-memory-vault.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 27 行",
+          "scope": "piko",
+          "score": 0.04278915022411164,
+          "source": "doc/design/10-piko-runtime-boundaries.md"
+        },
+        {
+          "containsExpectedEvidence": false,
+          "location": "第 122 行",
+          "scope": "piko",
+          "score": 0.04269788182831662,
+          "source": "doc/design/08-piko-agent-runtime.md"
+        }
+      ]
+    }
+  ],
+  "corpus": "5 real repository documents plus 2 explicitly synthetic isolation probes",
+  "documents": [
+    "doc/design/12-markdown-memory-vault.md",
+    "doc/design/11-persistent-memory-and-knowledge.md",
+    "doc/design/10-piko-runtime-boundaries.md",
+    "doc/design/08-piko-agent-runtime.md",
+    "README.md"
+  ],
+  "generationEvaluation": "Not performed: retrieval citations are checked against source text and line numbers; this does not validate generated answers or model-authored citations.",
+  "indexedChunks": 26,
+  "lifecycle": {
+    "deleteRemovesChunksAndFts": true,
+    "sqliteReopen": true,
+    "unknownProjectOnlyGetsGeneralSources": true,
+    "updateInvalidatesOldVectors": true
+  },
+  "metrics": {
+    "checkedCitations": 240,
+    "expandedCheckedCitations": 380,
+    "expandedEvidenceRecall": 30,
+    "hybridTop1": 21,
+    "hybridTop5": 27,
+    "hybridTop8": 27,
+    "invalidCitations": 0,
+    "lexicalTop1": 19,
+    "lexicalTop8": 27,
+    "scopedForeignHits": 0
+  },
+  "model": "bge-m3",
+  "negativeQueries": [
+    {
+      "note": "No answer exists in corpus. Returning candidates does not itself prove the generation model will hallucinate.",
+      "query": "Piko 项目的首席财务官叫什么名字？",
+      "returnedEvidenceCount": 8,
+      "topSource": "doc/design/08-piko-agent-runtime.md"
+    },
+    {
+      "note": "No answer exists in corpus. Returning candidates does not itself prove the generation model will hallucinate.",
+      "query": "这个项目 2025 年净利润是多少？",
+      "returnedEvidenceCount": 8,
+      "topSource": "doc/design/11-persistent-memory-and-knowledge.md"
+    },
+    {
+      "note": "No answer exists in corpus. Returning candidates does not itself prove the generation model will hallucinate.",
+      "query": "生产服务器的数据库管理员密码是什么？",
+      "returnedEvidenceCount": 8,
+      "topSource": "doc/design/10-piko-runtime-boundaries.md"
+    }
+  ],
+  "questions": 30,
+  "unscopedChatRisk": {
+    "foreignHitsInTop8": 1,
+    "note": "Unbound conversations search all projects; explicit scoped retrieval is tested separately."
+  }
+}

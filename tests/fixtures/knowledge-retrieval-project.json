@@ -1,0 +1,197 @@
+{
+  "scope": "piko",
+  "documents": [
+    "doc/design/12-markdown-memory-vault.md",
+    "doc/design/11-persistent-memory-and-knowledge.md",
+    "doc/design/10-piko-runtime-boundaries.md",
+    "doc/design/08-piko-agent-runtime.md",
+    "README.md"
+  ],
+  "cases": [
+    {
+      "id": "Q01",
+      "query": "Markdown 记忆文件默认保存在哪里？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "应用配置目录下的 `memory-vault`"
+    },
+    {
+      "id": "Q02",
+      "query": "我在外部改完笔记，一般多久能同步？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "每约 15 秒比较一次"
+    },
+    {
+      "id": "Q03",
+      "query": "没有 piko_id 的普通 Markdown 新笔记能加入记忆吗？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "在分类目录中新建普通 `.md` 笔记"
+    },
+    {
+      "id": "Q04",
+      "query": "怎样通过文件管理器改变一条记忆的分类？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "移动到其他分类目录会更新记忆类别"
+    },
+    {
+      "id": "Q05",
+      "query": "Obsidian 自定义的 YAML 属性会被写回时抹掉吗？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "未知的 YAML 属性会在 Piko 写回文件时保留"
+    },
+    {
+      "id": "Q06",
+      "query": "Piko 和文件里的内容都被改了，系统怎么处理？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "保留双方，面板中比较并选择"
+    },
+    {
+      "id": "Q07",
+      "query": "我把 Markdown 笔记删了，Piko 会马上忘记吗？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "不自动删记忆"
+    },
+    {
+      "id": "Q08",
+      "query": "私密或失效记忆也会导出到 Markdown 吗？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "每条有效、非私密记忆"
+    },
+    {
+      "id": "Q09",
+      "query": "单篇记忆笔记最大能有多大？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "每篇笔记最多 1 MB"
+    },
+    {
+      "id": "Q10",
+      "query": "数据库回滚后如何避免旧快照被新笔记覆盖？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "从快照恢复数据库后自动暂停 Markdown 同步"
+    },
+    {
+      "id": "Q11",
+      "query": "数据库快照是否也保护尚未导入的外部笔记编辑？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "尚未导入的编辑"
+    },
+    {
+      "id": "Q12",
+      "query": "参考资料文档被修改后，会跟个人记忆文件一样自动同步吗？",
+      "source": "doc/design/12-markdown-memory-vault.md",
+      "evidence": "原始参考文档变化目前仍需重新导入"
+    },
+    {
+      "id": "Q13",
+      "query": "本机 Ollama 的向量接口默认怎么填写？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "http://localhost:11434/v1/embeddings"
+    },
+    {
+      "id": "Q14",
+      "query": "Embedding 的访问密钥会写进 SQLite 吗？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "API Key 单独保存在系统钥匙串"
+    },
+    {
+      "id": "Q15",
+      "query": "允许把资料发给云端向量服务需要什么条件？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "远程服务必须使用 HTTPS"
+    },
+    {
+      "id": "Q16",
+      "query": "向量服务请求多久超时，失败以后还可以搜索吗？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "超时 15 秒"
+    },
+    {
+      "id": "Q17",
+      "query": "自动向量索引每轮最多处理多少片段？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "最多 32 个待处理片段"
+    },
+    {
+      "id": "Q18",
+      "query": "手动建立语义索引一次最多处理多少条？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "每批最多 128 个"
+    },
+    {
+      "id": "Q19",
+      "query": "目前必须安装 sqlite-vec 扩展才能搜索吗？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "当前没有引入 sqlite-vec 扩展"
+    },
+    {
+      "id": "Q20",
+      "query": "全文和向量检索结果是怎样合并排序的？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "通过 RRF 融合"
+    },
+    {
+      "id": "Q21",
+      "query": "一次最多导入多少参考文件，单个文件上限多少？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "每次最多导入 200 个文件"
+    },
+    {
+      "id": "Q22",
+      "query": "选择特定项目后，还能查到通用资料吗？",
+      "source": "doc/design/11-persistent-memory-and-knowledge.md",
+      "evidence": "搜索指定项目会同时检索通用资料"
+    },
+    {
+      "id": "Q23",
+      "query": "统一日程和会话分别保存在哪些 JSON 文件中？",
+      "source": "doc/design/10-piko-runtime-boundaries.md",
+      "evidence": "schedule-items.json"
+    },
+    {
+      "id": "Q24",
+      "query": "迁移与恢复过程如何保护旧文件，允许自动重建吗？",
+      "source": "doc/design/10-piko-runtime-boundaries.md",
+      "evidence": "禁止自动重建"
+    },
+    {
+      "id": "Q25",
+      "query": "Node sidecar 的通信协议采用什么格式和版本？",
+      "source": "doc/design/10-piko-runtime-boundaries.md",
+      "evidence": "JSONL"
+    },
+    {
+      "id": "Q26",
+      "query": "插件工具真正执行副作用前由哪一层负责审批？",
+      "source": "doc/design/10-piko-runtime-boundaries.md",
+      "evidence": "actions/"
+    },
+    {
+      "id": "Q27",
+      "query": "用户还没选工作目录时，模型如何请求选择文件夹？",
+      "source": "doc/design/08-piko-agent-runtime.md",
+      "evidence": "piko_select_workspace"
+    },
+    {
+      "id": "Q28",
+      "query": "目录外读取和运行命令能自动批准吗？",
+      "source": "doc/design/08-piko-agent-runtime.md",
+      "evidence": "所有命令需逐次批准"
+    },
+    {
+      "id": "Q29",
+      "query": "中断任务的只读核对允许执行 write、edit 和 bash 吗？",
+      "source": "doc/design/08-piko-agent-runtime.md",
+      "evidence": "只读核对"
+    },
+    {
+      "id": "Q30",
+      "query": "本地开发启动 Piko 的命令是什么？",
+      "source": "README.md",
+      "evidence": "npm run tauri dev"
+    }
+  ],
+  "negativeQueries": [
+    "Piko 项目的首席财务官叫什么名字？",
+    "这个项目 2025 年净利润是多少？",
+    "生产服务器的数据库管理员密码是什么？"
+  ]
+}

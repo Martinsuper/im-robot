@@ -135,6 +135,15 @@ export function BubbleWindow() {
   const { favorites, toggle: toggleFavorite, remove: removeFavorite } = useHtmlFavorites();
   const [favoritesOpen, setFavoritesOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
+  const [knowledgeProjects, setKnowledgeProjects] = useState<string[]>([]);
+  useEffect(() => {
+    if (!contextOpen || !isTauriRuntime) return;
+    let active = true;
+    void runCommand("knowledge_list_documents").then(documents => {
+      if (active && Array.isArray(documents)) setKnowledgeProjects([...new Set(documents.map(document => document.scope).filter(Boolean))].sort());
+    }).catch(() => { /* Manual project entry remains available. */ });
+    return () => { active = false; };
+  }, [contextOpen]);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const followThreadRef = useRef(true);
   const [selectedFavoriteId, setSelectedFavoriteId] = useState<string | null>(null);
@@ -477,7 +486,7 @@ export function BubbleWindow() {
       onEvent: (event) => {
         if (event.requestId !== activeRequestId.current && event.conversationId && event.prompt !== undefined
           && ["started", "completed", "failed", "cancelled"].includes(event.type)) {
-          restoreSnapshot({ requestId: event.requestId, conversationId: event.conversationId, cwd: event.cwd || null,
+          restoreSnapshot({ requestId: event.requestId, conversationId: event.conversationId, knowledgeScope: event.knowledgeScope, cwd: event.cwd || null,
             prompt: event.prompt, response: event.response || "", eventSequence: event.eventSequence || 0,
             events: event.type === "started" ? [] : [event] });
         }
@@ -658,7 +667,7 @@ export function BubbleWindow() {
     void agentReady.current.then(() => runCommand<void>("agent_start", {
       input: {
         requestId: currentRequestId,
-        conversationId: nextConversation.id, cwd: nextConversation.cwd || undefined, unified: true, importHistory: nextConversation.importHistory,
+        conversationId: nextConversation.id, knowledgeScope: nextConversation.knowledgeScope, cwd: nextConversation.cwd || undefined, unified: true, importHistory: nextConversation.importHistory,
         prompt: requestPrompt,
         attachmentAction: attachment ? attachmentAction : undefined,
         includeScreenshot: Boolean(screenshot),
@@ -727,7 +736,7 @@ export function BubbleWindow() {
   function resumeTask(record: { requestId: string; conversationId: string }) {
     if (agentBusyRef.current) return;
     setVerificationOf(undefined); setResumeOf(record.requestId);
-    const next = { ...conversationRef.current, id: record.conversationId, importHistory: false, turnIds: [] };
+    const next = { ...conversationRef.current, id: record.conversationId, knowledgeScope: undefined, importHistory: false, turnIds: [] };
     conversationRef.current = next; setConversation(next); setChatHistory([]);
     void sendPrompt(`请根据原会话和操作检查点先核对任务 ${record.requestId} 的实际结果，再安全继续未完成的步骤。已完成步骤不能重复执行；无法证明幂等的操作请先说明并等待新的明确指令。`, null, record.requestId);
   }
@@ -1315,7 +1324,15 @@ export function BubbleWindow() {
             )}
           </div>
         )}
-        <ChatContextMenu cwd={conversation.cwd} disabled={!isTauriRuntime || agentBusy}
+        {contextOpen && <label className="chat-workspace__directory">
+        知识库项目
+        <input list="piko-knowledge-projects" aria-label="知识库项目" placeholder="留空检索全部项目" maxLength={120}
+          value={conversation.knowledgeScope || ""} disabled={agentBusy || conversation.turnIds.length > 0}
+          onChange={event => setConversation(current => ({ ...current, knowledgeScope: event.target.value }))} />
+        <datalist id="piko-knowledge-projects">{knowledgeProjects.map(project => <option key={project} value={project} />)}</datalist>
+        <small>首轮发送后固定；切换项目请新建对话。通用资料始终可用。</small>
+      </label>}
+      <ChatContextMenu cwd={conversation.cwd} disabled={!isTauriRuntime || agentBusy}
           open={contextOpen} onToggle={() => setContextOpen(!contextOpen)} onChoose={() => void chooseWorkspace()}
           favoritesOpen={favoritesOpen} onToggleFavorites={() => setFavoritesOpen(open => !open)}
           favoritesButtonRef={favoritesButtonRef} favorites={favorites}

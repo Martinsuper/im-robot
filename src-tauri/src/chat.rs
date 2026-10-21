@@ -569,7 +569,7 @@ async fn stream_chat(
         .clone();
 
     // Build memory context from relevant long-term memories
-    let memory_context_text = memory::knowledge::context(memory_db, prompt)
+    let mut memory_context_text = memory::knowledge::context(memory_db, prompt)
         .await
         .ok()
         .filter(|text| !text.is_empty());
@@ -741,12 +741,35 @@ async fn stream_chat(
                 return Ok(StreamChatOutcome::ActionProposed);
             }
             let result = registry.execute(app, call.clone())?;
+            if call.plugin_id == "piko.knowledge" && call.tool_name == "search_knowledge" {
+                if let Some(hits) = result.get("hits") {
+                    let evidence = memory_context_text.get_or_insert_with(String::new);
+                    evidence.push('\n');
+                    evidence.push_str(&hits.to_string());
+                }
+            }
             received_read_tool_result = true;
             tool_results.push((id, call, result));
         }
         append_provider_tool_results(&mut request_body, &settings.ai.provider, &tool_results)?;
     }
 
+    let citation_note = memory::knowledge::citation_note(
+        &assistant_response,
+        memory_context_text.as_deref().unwrap_or_default(),
+    );
+    if !citation_note.is_empty() {
+        sequence += 1;
+        emit_chat_event(
+            app,
+            ChatEvent::Delta {
+                request_id: request_id.to_string(),
+                sequence,
+                text: citation_note.clone(),
+            },
+        );
+        assistant_response.push_str(&citation_note);
+    }
     let history_entry = ChatHistoryEntry {
         id: request_id.to_string(),
         prompt: history_prompt.to_string(),

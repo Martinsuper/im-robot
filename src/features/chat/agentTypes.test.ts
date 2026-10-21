@@ -17,3 +17,9 @@ it("keeps the new conversation instead of reverting to a legacy task", () => {
   expect(loadConversation().id).toBe("new-session");
   expect(loadConversation().importHistory).toBe(false);
 });
+
+it("restores the conversation knowledge project across reloads", () => {
+  storage({ [CONVERSATION_STORAGE]: JSON.stringify({ id: "piko-chat", cwd: "", knowledgeScope: "piko", turnIds: ["r1"] }) });
+  expect(loadConversation().knowledgeScope).toBe("piko");
+  expect(loadConversation().turnIds).toEqual(["r1"]);
+});

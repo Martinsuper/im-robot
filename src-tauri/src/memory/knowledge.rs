@@ -29,6 +29,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(chunk_id UNINDEXED, 
 CREATE TABLE IF NOT EXISTS retrieval_vectors (
  id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, signature TEXT NOT NULL, vector TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS knowledge_conversations (id TEXT PRIMARY KEY, scope TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS knowledge_requests (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS retrieval_settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS memory_provenance (
  memory_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, captured_at INTEGER NOT NULL
@@ -554,6 +556,9 @@ fn rank(
     if terms.is_empty() {
         return Vec::new();
     }
+    let stable_order = |a: usize, b: usize| all[a].hit.source.cmp(&all[b].hit.source)
+        .then_with(|| all[a].hit.locator.cmp(&all[b].hit.locator))
+        .then_with(|| all[a].hit.id.cmp(&all[b].hit.id));
     let mut lexical: Vec<(usize,f64)> = all.iter().enumerate().filter_map(|(i,e)| {
         let title = e.hit.title.to_lowercase(); let content = e.hit.content.to_lowercase();
         let score = terms.iter().map(|t| if title.contains(t) { 3.0 } else { 0.0 } + if content.contains(t) { 1.0 } else { 0.0 }).sum::<f64>();
@@ -561,7 +566,7 @@ fn rank(
     }).collect();
     lexical.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
-            .then_with(|| all[a.0].hit.id.cmp(&all[b.0].hit.id))
+            .then_with(|| stable_order(a.0, b.0))
     });
     let mut semantic: Vec<(usize, f64)> = all
         .iter()
@@ -571,7 +576,7 @@ fn rank(
             (score > 0.35).then_some((i, score))
         })
         .collect();
-    semantic.sort_by(|a, b| b.1.total_cmp(&a.1));
+    semantic.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| stable_order(a.0, b.0)));
     let mut scores: HashMap<usize, f64> = HashMap::new();
     for list in [&lexical, &semantic] {
         for (rank, (i, _)) in list.iter().take(60).enumerate() {
@@ -591,7 +596,7 @@ fn rank(
     let mut scores: Vec<_> = scores.into_iter().collect();
     scores.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
-            .then_with(|| all[a.0].hit.id.cmp(&all[b.0].hit.id))
+            .then_with(|| stable_order(a.0, b.0))
     });
     scores
         .into_iter()
@@ -603,7 +608,12 @@ fn rank(
         })
         .collect()
 }
+#[cfg(test)]
 fn fts_hits(db: &MemoryDb, query: &str) -> Result<Vec<String>, String> {
+    scoped_fts_hits(db, query, None)
+}
+
+fn scoped_fts_hits(db: &MemoryDb, query: &str, scope: Option<&str>) -> Result<Vec<String>, String> {
     let terms = tokens(query)
         .into_iter()
         .take(64)
@@ -614,9 +624,9 @@ fn fts_hits(db: &MemoryDb, query: &str) -> Result<Vec<String>, String> {
         return Ok(Vec::new());
     }
     let conn = db.0.lock().map_err(lock_error)?;
-    let mut stmt = conn.prepare("SELECT chunk_id FROM knowledge_fts WHERE knowledge_fts MATCH ?1 ORDER BY bm25(knowledge_fts) LIMIT 60").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT knowledge_fts.chunk_id FROM knowledge_fts JOIN knowledge_chunks c ON c.id=knowledge_fts.chunk_id JOIN knowledge_documents d ON d.id=c.document_id WHERE knowledge_fts MATCH ?1 AND (?2 IS NULL OR d.scope='' OR d.scope=?2) ORDER BY bm25(knowledge_fts),d.path,c.ordinal LIMIT 60").map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([terms], |r| r.get(0))
+        .query_map(params![terms, scope], |r| r.get(0))
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
@@ -650,14 +660,157 @@ async fn retrieve(
         return Err("检索配置已变化，请重新搜索".into());
     }
     let all = entries(db, &signature, scope)?;
-    let fts = fts_hits(db, query)?;
+    let fts = scoped_fts_hits(db, query, scope)?;
     Ok((rank(&all, query, vector.as_deref(), &fts, limit), warning))
+}
+
+/// A conversation keeps its first project binding across restarts and resumed tasks.
+pub(crate) fn bind_conversation(
+    db: &MemoryDb,
+    conversation: &str,
+    request: &str,
+    requested: Option<&str>,
+) -> Result<Option<String>, String> {
+    let scope = requested.unwrap_or_default().trim();
+    if scope.chars().count() > 120 {
+        return Err("项目名不能超过 120 字".into());
+    }
+    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let saved: Option<String> = tx
+        .query_row(
+            "SELECT scope FROM knowledge_conversations WHERE id=?1",
+            [conversation],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if requested.is_some() && saved.as_deref().is_some_and(|old| old != scope) {
+        return Err("此会话已绑定其他知识库项目，请新建对话后切换项目".into());
+    }
+    let scope = saved.unwrap_or_else(|| scope.to_string());
+    tx.execute(
+        "INSERT OR IGNORE INTO knowledge_conversations(id,scope) VALUES(?1,?2)",
+        params![conversation, scope],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT OR REPLACE INTO knowledge_requests(id,conversation_id) VALUES(?1,?2)",
+        params![request, conversation],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok((!scope.is_empty()).then_some(scope))
+}
+
+pub(crate) fn request_scope(db: &MemoryDb, request: &str) -> Result<Option<String>, String> {
+    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let scope: Option<String> = conn.query_row("SELECT c.scope FROM knowledge_conversations c JOIN knowledge_requests r ON r.conversation_id=c.id WHERE r.id=?1", [request], |row| row.get(0)).optional().map_err(|e| e.to_string())?;
+    Ok(scope.filter(|s| !s.is_empty()))
+}
+
+/// Check source locators, not the truth of claims. Never silently manufacture model citations.
+pub(crate) fn citation_note(answer: &str, context: &str) -> String {
+    let compact = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let mut sources = Vec::new();
+    for line in context.lines() {
+        let Ok(serde_json::Value::Array(items)) = serde_json::from_str(line) else {
+            continue;
+        };
+        for item in items {
+            let title = item["title"].as_str().unwrap_or("");
+            let location = item["location"]
+                .as_str()
+                .or_else(|| item["locator"].as_str())
+                .unwrap_or("");
+            if !title.is_empty() && location.starts_with("第 ") {
+                let citation = format!("{title} · {location}");
+                if !sources.contains(&citation) {
+                    sources.push(citation);
+                }
+            }
+        }
+    }
+    let mut cited = 0;
+    let mut invalid = 0;
+    for part in answer.split('[').skip(1) {
+        let Some((text, _)) = part.split_once(']') else {
+            continue;
+        };
+        if !text.contains('·') || !text.contains('第') {
+            continue;
+        }
+        cited += 1;
+        if !sources
+            .iter()
+            .any(|source| compact(source) == compact(text))
+        {
+            invalid += 1;
+        }
+    }
+    if sources.is_empty() && cited == 0 {
+        return String::new();
+    }
+    let status = if invalid > 0 {
+        format!("检测到 {invalid} 处引用无法对应本次提供的资料位置，请勿据此采信。")
+    } else if cited == 0 {
+        "模型未标注可核对的文档引用。".to_string()
+    } else {
+        "文档引用位置与本次资料一致；尚未逐项核实答案中的结论。".to_string()
+    };
+    let safe = |s: &str| s.replace(['[', ']', '<', '>', '`', '\n', '\r'], " ");
+    let references = sources
+        .iter()
+        .take(14)
+        .map(|s| format!("- {}", safe(s)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("\n\n---\n引用检查：{status}\n\n本次检索资料（供核对，不代表支持答案全部结论）：\n{references}")
+}
+
+/// Include nearby paragraphs so a matching overview does not hide the adjacent storage or approval details.
+fn expand_neighbors(
+    db: &MemoryDb,
+    hits: Vec<RetrievalHit>,
+    scope: Option<&str>,
+) -> Result<Vec<RetrievalHit>, String> {
+    let mut expanded = hits.clone();
+    let mut seen: HashSet<String> = hits.iter().map(|h| h.id.clone()).collect();
+    let all = entries(db, "", scope)?;
+    let by_id: HashMap<_, _> = all
+        .into_iter()
+        .map(|entry| (entry.hit.id.clone(), entry.hit))
+        .collect();
+    let conn = db.0.lock().map_err(lock_error)?;
+    let mut stmt = conn.prepare("SELECT n.id FROM knowledge_chunks c JOIN knowledge_chunks n ON n.document_id=c.document_id AND ABS(n.ordinal-c.ordinal)=1 WHERE c.id=?1 ORDER BY n.ordinal").map_err(|e| e.to_string())?;
+    for hit in hits {
+        let neighbors = stmt
+            .query_map([&hit.id], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for id in neighbors {
+            let id = id.map_err(|e| e.to_string())?;
+            if expanded.len() >= 14 {
+                return Ok(expanded);
+            }
+            if seen.insert(id.clone()) {
+                if let Some(neighbor) = by_id.get(&id) {
+                    expanded.push(neighbor.clone());
+                }
+            }
+        }
+    }
+    Ok(expanded)
 }
 
 /// Small core profile budget plus shared hybrid retrieval, bounded by a character budget.
 /// Retrieved content is quoted evidence, never a source of system/tool instructions.
 pub async fn context(db: &MemoryDb, query: &str) -> Result<String, String> {
-    let (hits, _) = retrieve(db, query, None, 8).await.unwrap_or_default();
+    scoped_context(db, query, None).await
+}
+
+pub async fn scoped_context(db: &MemoryDb, query: &str, scope: Option<&str>) -> Result<String, String> {
+    let (hits, _) = retrieve(db, query, scope, 8).await.unwrap_or_default();
+    let hits = expand_neighbors(db, hits.clone(), scope).unwrap_or(hits);
     let core = db.build_context(BuildContextInput {
         current_query: Some(query.into()),
         window_type: None,
@@ -1410,7 +1563,7 @@ pub(crate) fn search_local(
         return Err("请提供 1 至 10000 字的检索问题".into());
     }
     let all = entries(db, "", scope)?;
-    Ok(rank(&all, query, None, &fts_hits(db, query)?, 10))
+    Ok(rank(&all, query, None, &scoped_fts_hits(db, query, scope)?, 10))
 }
 
 #[cfg(test)]
@@ -1465,5 +1618,90 @@ mod real_embedding_acceptance {
         if let Ok(path)=std::env::var("PIKO_EMBEDDING_REPORT") {std::fs::write(path,serde_json::to_vec_pretty(&report).unwrap()).unwrap();}
         assert!(semantic_correct>=7,"real semantic recall below 7/8");
         assert!(hybrid_correct>=7,"production hybrid recall below 7/8");
+    }
+}
+
+#[cfg(test)]
+#[path = "knowledge_project_tests.rs"]
+mod project_acceptance;
+
+#[cfg(test)]
+mod conversation_tests {
+    use super::*;
+    #[test]
+    fn project_binding_is_durable_and_cannot_be_overridden() {
+        let db = crate::memory::open_in_memory_db().unwrap();
+        assert_eq!(
+            bind_conversation(&db, "chat", "r1", Some(" piko "))
+                .unwrap()
+                .as_deref(),
+            Some("piko")
+        );
+        assert_eq!(
+            bind_conversation(&db, "chat", "r2", None)
+                .unwrap()
+                .as_deref(),
+            Some("piko")
+        );
+        assert!(bind_conversation(&db, "chat", "r3", Some("other")).is_err());
+        assert_eq!(request_scope(&db, "r2").unwrap().as_deref(), Some("piko"));
+        assert_eq!(request_scope(&db, "r3").unwrap(), None);
+        assert!(bind_conversation(&db, "new", "r4", Some(&"x".repeat(121))).is_err());
+    }
+    #[tokio::test]
+    async fn bound_project_retrieves_only_project_and_general_sources_after_reopen() {
+        let db = crate::memory::open_in_memory_db().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for (name, scope, content) in [
+            ("piko.md", "piko", "知识库 PIKO_PROJECT_FACT"),
+            ("other.md", "other", "知识库 OTHER_PROJECT_SECRET"),
+            ("general.md", "", "知识库 GENERAL_FACT"),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, content).unwrap();
+            import_file(&db, &path, scope).unwrap();
+        }
+        bind_conversation(&db, "chat", "r1", Some("piko")).unwrap();
+        let path = dir.path().join("memory.db");
+        db.0.lock().unwrap().backup("main", &path, None).unwrap();
+        drop(db);
+        let db = MemoryDb(crate::data_gate::DataMutex::new(
+            Connection::open(path).unwrap(),
+        ));
+        let scope = bind_conversation(&db, "chat", "r2", None).unwrap();
+        let context = scoped_context(&db, "知识库", scope.as_deref())
+            .await
+            .unwrap();
+        assert!(context.contains("PIKO_PROJECT_FACT"));
+        assert!(context.contains("GENERAL_FACT"));
+        assert!(!context.contains("OTHER_PROJECT_SECRET"));
+        assert_eq!(request_scope(&db, "r2").unwrap().as_deref(), Some("piko"));
+    }
+    #[test]
+    fn unscoped_conversations_stay_unscoped() {
+        let db = crate::memory::open_in_memory_db().unwrap();
+        assert_eq!(bind_conversation(&db, "chat", "r1", None).unwrap(), None);
+        assert!(bind_conversation(&db, "chat", "r2", Some("piko")).is_err());
+    }
+    fn evidence() -> String {
+        serde_json::json!([{"title":"说明.md","location":"第 12 行","content":"正文"}]).to_string()
+    }
+    #[test]
+    fn citation_audit_distinguishes_missing_invalid_and_matching_locations() {
+        assert!(citation_note("回答", &evidence()).contains("未标注"));
+        assert!(citation_note("回答[说明.md · 第12行]", &evidence()).contains("位置与本次资料一致"));
+        assert!(citation_note("回答[说明.md · 第 13 行]", &evidence()).contains("1 处引用无法对应"));
+        assert!(citation_note("回答[别的.md · 第 12 行]", &evidence()).contains("1 处引用无法对应"));
+        assert!(citation_note("[说明.md · 第 12 行]", "").contains("无法对应"));
+        assert!(citation_note("你好", "").is_empty());
+    }
+    #[test]
+    fn tool_evidence_and_markdown_in_titles_are_handled() {
+        let evidence =
+            serde_json::json!([{"title":"[link](evil).md","locator":"第 2 页"}]).to_string();
+        let note = citation_note("回答", &evidence);
+        assert!(!note.contains("[link]"));
+        assert!(note.contains("第 2 页"));
+        assert!(note.contains("不代表支持答案全部结论"));
     }
 }

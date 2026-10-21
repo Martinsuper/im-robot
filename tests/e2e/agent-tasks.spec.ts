@@ -460,3 +460,18 @@ test("attachment picker, remove and screenshot entry use native command boundari
   await page.getByRole("button", { name: "截图提问", exact: true }).click();
   expect(await calls(page, "begin_screen_capture")).toHaveLength(1);
 });
+
+test("knowledge project binds the conversation and survives follow-up requests", async ({ page }) => {
+  await installAgentBackend(page);
+  await page.getByTestId("chat-context-toggle").click();
+  const project = page.getByLabel("知识库项目", { exact: true });
+  await project.fill("piko");
+  const first = await start(page, "介绍知识库");
+  expect((await calls(page, "agent_start"))[0].args.input).toMatchObject({ knowledgeScope: "piko" });
+  await expect(project).toBeDisabled();
+  await emit(page, first.requestId, { type: "delta", text: "知识库说明\n\n引用检查：模型未标注可核对的文档引用。" });
+  await emit(page, first.requestId, { type: "completed" });
+  await expect(page.getByText("引用检查：模型未标注可核对的文档引用。", { exact: false })).toBeVisible();
+  await start(page, "继续说明");
+  expect((await calls(page, "agent_start"))[1].args.input).toMatchObject({ knowledgeScope: "piko", conversationId: first.conversationId });
+});

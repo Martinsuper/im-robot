@@ -10,6 +10,7 @@ const RECENT_TOOLS: usize = 64;
 pub(crate) struct TaskSnapshot {
     pub request_id: String,
     pub conversation_id: String,
+    pub knowledge_scope: Option<String>,
     pub cwd: Option<String>,
     pub prompt: String,
     pub response: String,
@@ -27,6 +28,7 @@ impl TaskSnapshot {
         Self {
             request_id,
             conversation_id,
+            knowledge_scope: None,
             cwd,
             prompt,
             response: String::new(),

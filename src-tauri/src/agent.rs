@@ -79,6 +79,7 @@ struct RunningTask {
 pub struct AgentStartInput {
     request_id: String,
     conversation_id: String,
+    knowledge_scope: Option<String>,
     cwd: Option<String>,
     prompt: String,
     #[serde(default)]
@@ -164,6 +165,7 @@ fn emit(app: &AppHandle, request_id: &str, mut event: Value) {
             Some("started" | "completed" | "failed" | "cancelled")
         ) {
             event["conversationId"] = json!(snapshot.conversation_id);
+            event["knowledgeScope"] = json!(snapshot.knowledge_scope);
             event["prompt"] = json!(snapshot.prompt);
             event["cwd"] = json!(snapshot.cwd);
             if event["type"] != "started" {
@@ -405,6 +407,13 @@ pub async fn agent_start(
     if settings.ai.model.trim().is_empty() || settings.ai.base_url.trim().is_empty() {
         return Err("请先在模型设置中配置模型和 API 地址".into());
     }
+    let knowledge_db = app.state::<Arc<crate::memory::MemoryDb>>();
+    let knowledge_scope = crate::memory::knowledge::bind_conversation(
+        &knowledge_db,
+        &conversation_id,
+        &input.request_id,
+        input.knowledge_scope.as_deref(),
+    )?;
     let (node, resources) = runtime_paths(&app)?;
     if !node.is_file() || !resources.join("sidecar.mjs").is_file() {
         return Err("Agent 运行时未准备好，请运行 npm run agent:prepare 后重启 Piko".into());
@@ -451,7 +460,7 @@ pub async fn agent_start(
     } else {
         json!([])
     };
-    let history = if input.import_history {
+    let history = if input.import_history && knowledge_scope.is_none() {
         crate::chat_session::repository::read_chat_history(&app)
             .into_iter()
             .rev()
@@ -464,10 +473,14 @@ pub async fn agent_start(
         Vec::new()
     };
     let memory_db = app.state::<Arc<crate::memory::MemoryDb>>();
-    let memory_context = crate::memory::knowledge::context(&memory_db, &input.prompt)
-        .await
-        .ok()
-        .filter(|text| !text.is_empty());
+    let memory_context = crate::memory::knowledge::scoped_context(
+        &memory_db,
+        &input.prompt,
+        knowledge_scope.as_deref(),
+    )
+    .await
+    .ok()
+    .filter(|text| !text.is_empty());
     if let Some(kind) = crate::memory::soul::mood::direct_user_event(&input.prompt) {
         if let Ok(mut conn) = memory_db.0.lock() {
             let source = crate::memory::soul::model::SourceRef {
@@ -537,14 +550,16 @@ pub async fn agent_start(
         )?;
         return Err(error);
     }
-    *runtime.1.lock().unwrap_or_else(|error| error.into_inner()) = Some(TaskSnapshot::new(
+    let mut task_snapshot = TaskSnapshot::new(
         input.request_id.clone(),
-        input.conversation_id.clone(),
+        conversation_id.clone(),
         selected_workspace
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
         history_prompt.clone(),
-    ));
+    );
+    task_snapshot.knowledge_scope = knowledge_scope.clone();
+    *runtime.1.lock().unwrap_or_else(|error| error.into_inner()) = Some(task_snapshot);
     let request_id = input.request_id;
     let history_prompt = Arc::new(Mutex::new(history_prompt));
     let pending_actions = Arc::new(Mutex::new(HashMap::new()));
@@ -566,6 +581,7 @@ pub async fn agent_start(
         let mut lines = BufReader::new(stdout).lines();
         let deadline = tokio::time::Instant::now() + AGENT_TASK_TIMEOUT;
         let mut response = String::new();
+        let mut citation_evidence = memory_context.unwrap_or_default();
         let mut terminal_event = loop {
             let line = match next_agent_line(&mut lines, deadline, AGENT_IDLE_TIMEOUT).await {
                 Ok(Some(line)) => line,
@@ -597,10 +613,15 @@ pub async fn agent_start(
                 break json!({"type":"failed", "message":"任务进度保存失败，已停止。此前可能已有部分操作完成，请先核对结果。"});
             }
             if kind == "app-tool" {
-                handle_app_tool(&app, &request_id, &stdin, &pending_actions, &event).await;
+                handle_app_tool(&app, &request_id, &stdin, &pending_actions, &event, &mut citation_evidence).await;
                 continue;
             }
             if kind == "completed" {
+                let note = crate::memory::knowledge::citation_note(&response, &citation_evidence);
+                if !note.is_empty() {
+                    response.push_str(&note);
+                    emit(&app, &request_id, json!({"type":"delta", "text":note}));
+                }
                 let entry = crate::chat_session::ChatHistoryEntry {
                     id: request_id.clone(),
                     prompt: history_prompt.lock().await.clone(),
@@ -778,6 +799,7 @@ async fn handle_app_tool(
     stdin: &Arc<Mutex<ChildStdin>>,
     pending: &Arc<Mutex<HashMap<String, String>>>,
     event: &Value,
+    evidence: &mut String,
 ) {
     let call_id = event["callId"].as_str().unwrap_or("").to_string();
     let name = event["name"].as_str().unwrap_or("");
@@ -805,7 +827,17 @@ async fn handle_app_tool(
     };
     let result = (|| -> Result<Option<Value>, String> {
         let registry = app.state::<crate::plugins::PluginRegistry>();
-        let call = registry.decode_tool_call(name, event["arguments"].clone())?;
+        let mut call = registry.decode_tool_call(name, event["arguments"].clone())?;
+        if call.plugin_id == "piko.knowledge" && call.tool_name == "search_knowledge" {
+            let db = app.state::<Arc<crate::memory::MemoryDb>>();
+            if let Some(scope) = crate::memory::knowledge::request_scope(&db, request_id)? {
+                let arguments = call
+                    .arguments
+                    .as_object_mut()
+                    .ok_or("知识库工具参数必须是对象")?;
+                arguments.insert("scope".into(), json!(scope));
+            }
+        }
         let manifest = registry.tool_manifest(&call)?;
         let supported = crate::agent_operations::supported(&call.plugin_id, &call.tool_name);
         if (read_only || resuming && !supported)
@@ -858,6 +890,14 @@ async fn handle_app_tool(
             );
         }
         Ok(value) => {
+            if let Some(hits) = value
+                .as_ref()
+                .filter(|_| name == "piko_knowledge__search_knowledge")
+                .and_then(|v| v["result"]["hits"].as_array())
+            {
+                evidence.push('\n');
+                evidence.push_str(&serde_json::to_string(hits).unwrap_or_default());
+            }
             let _ = write_command(stdin, json!({"type":"app-result", "callId":call_id, "result":value.map(|value| if value.get("verification").is_some() { value } else { value["result"].clone() })})).await;
         }
         Err(error) => {
