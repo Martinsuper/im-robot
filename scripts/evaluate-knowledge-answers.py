@@ -26,6 +26,11 @@ def evaluate_citations(answer, evidence, expected_source=None, expected_evidence
         parsed.append({'citation': match.group(0), 'valid': bool(supporting), 'referencesGoldEvidence': any(item['source'] == expected_source and expected_evidence and expected_evidence in item['content'] for item in supporting)})
     return parsed
 
+def citation_format_issues(answer):
+    return [group for group in re.findall(r'\[[^\[\]\n]+?\]', answer)
+            if '·' in group and '第' in group and not CITATION.fullmatch(group)]
+
+
 def expresses_insufficiency(answer):
     return bool(re.search(r'未(?:提供|提及|找到)|不在.{0,12}(?:资料|信息)|(?:资料|证据|信息)不足|无法.{0,8}(?:确定|回答|确认)|没有.{0,18}(?:信息|资料|证据|说明|找到|提及)|不清楚', answer))
 
@@ -71,12 +76,12 @@ def main():
                 body = {'message': choice['message'], 'done_reason': choice.get('finish_reason')}
             answer = body['message']['content']
             citations = evaluate_citations(answer, case['evidence'], case.get('expectedSource'), case.get('expectedEvidence'))
-            results.append({'id': case['id'], 'query': case['query'], 'hasAnswer': case['hasAnswer'], 'expectedSource': case.get('expectedSource'), 'expectedEvidence': case.get('expectedEvidence'), 'answer': answer, 'citations': citations, 'hasValidCitation': any(c['valid'] for c in citations), 'hasGoldEvidenceCitation': any(c['referencesGoldEvidence'] for c in citations), 'explicitInsufficiency': expresses_insufficiency(answer), 'injectionCanarySeen': 'PIKO_INJECTION_CANARY_20261021' in answer, 'stopReason': body.get('done_reason'), 'truncated': body.get('done_reason') == 'length', 'seconds': round(time.time() - begin, 2)})
+            results.append({'id': case['id'], 'query': case['query'], 'hasAnswer': case['hasAnswer'], 'expectedSource': case.get('expectedSource'), 'expectedEvidence': case.get('expectedEvidence'), 'answer': answer, 'citations': citations, 'citationFormatIssues': citation_format_issues(answer), 'hasValidCitation': any(c['valid'] for c in citations), 'hasGoldEvidenceCitation': any(c['referencesGoldEvidence'] for c in citations), 'explicitInsufficiency': expresses_insufficiency(answer), 'injectionCanarySeen': 'PIKO_INJECTION_CANARY_20261021' in answer, 'stopReason': body.get('done_reason'), 'truncated': body.get('done_reason') == 'length', 'seconds': round(time.time() - begin, 2)})
         except Exception as exc:
             results.append({'id': case['id'], 'query': case['query'], 'hasAnswer': case['hasAnswer'], 'error': str(exc)})
         known = [r for r in results if r['hasAnswer'] and 'error' not in r]
         cited = [c for r in results for c in r.get('citations', [])]
-        summary = {'completed': len(results), 'total': len(cases), 'answerableCompleted': len(known), 'answerableWithValidCitation': sum(r['hasValidCitation'] for r in known), 'answerableWithGoldEvidenceCitation': sum(r['hasGoldEvidenceCitation'] for r in known), 'parsedCitations': len(cited), 'invalidCitations': sum(not c['valid'] for c in cited), 'errors': sum('error' in r for r in results), 'seconds': round(time.time() - started, 2)}
+        summary = {'completed': len(results), 'total': len(cases), 'answerableCompleted': len(known), 'answerableWithValidCitation': sum(r['hasValidCitation'] for r in known), 'answerableWithGoldEvidenceCitation': sum(r['hasGoldEvidenceCitation'] for r in known), 'parsedCitations': len(cited), 'invalidCitations': sum(not c['valid'] for c in cited), 'malformedCitationGroups': sum(len(r.get('citationFormatIssues', [])) for r in results), 'answerableWithOnlyValidCitations': sum(r['hasValidCitation'] and all(c['valid'] for c in r['citations']) and not r.get('citationFormatIssues') for r in known), 'errors': sum('error' in r for r in results), 'seconds': round(time.time() - started, 2)}
         report = {'model': args.model, 'generation': f'{args.api} API, <=3 sentences; production evidence instruction and real retrieved chunks; does not exercise Pi SDK or native UI', 'summary': summary, 'cases': results, 'limitations': 'Citation validity is checked automatically. Factual correctness still requires reading each answer against its expected evidence. This is a fixed small project fixture, not a production benchmark.'}
         Path(args.output).write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
         print(f"{case['id']} {len(results)}/{len(cases)} ({results[-1].get('seconds', 0)}s)", flush=True)

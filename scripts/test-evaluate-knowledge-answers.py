@@ -39,5 +39,14 @@ class CitationScoringTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn('Only a local loopback', result.stderr)
 
+class CitationFormatTests(unittest.TestCase):
+    def test_ranges_and_combined_locations_are_explicitly_flagged(self):
+        answer = '[手册.md · 第 12-13 行] [手册.md · 第 1 行/第 12 行]'
+        self.assertEqual(len(module.citation_format_issues(answer)), 2)
+
+    def test_valid_citations_and_ordinary_brackets_are_not_format_issues(self):
+        self.assertEqual(module.citation_format_issues('[手册.md · 第 12 行] [普通文字]'), [])
+
+
 if __name__ == '__main__':
     unittest.main()

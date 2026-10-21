@@ -713,6 +713,7 @@ pub(crate) fn request_scope(db: &MemoryDb, request: &str) -> Result<Option<Strin
 pub(crate) fn citation_note(answer: &str, context: &str) -> String {
     let compact = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
     let mut sources = Vec::new();
+    let mut allowed = HashSet::new();
     for line in context.lines() {
         let Ok(serde_json::Value::Array(items)) = serde_json::from_str(line) else {
             continue;
@@ -725,6 +726,10 @@ pub(crate) fn citation_note(answer: &str, context: &str) -> String {
                 .unwrap_or("");
             if !title.is_empty() && location.starts_with("第 ") {
                 let citation = format!("{title} · {location}");
+                allowed.insert(compact(&citation));
+                if let Some(source) = item["source"].as_str().filter(|source| !source.is_empty()) {
+                    allowed.insert(compact(&format!("{source} · {location}")));
+                }
                 if !sources.contains(&citation) {
                     sources.push(citation);
                 }
@@ -741,10 +746,7 @@ pub(crate) fn citation_note(answer: &str, context: &str) -> String {
             continue;
         }
         cited += 1;
-        if !sources
-            .iter()
-            .any(|source| compact(source) == compact(text))
-        {
+        if !allowed.contains(&compact(text)) {
             invalid += 1;
         }
     }
@@ -1695,6 +1697,20 @@ mod conversation_tests {
         assert!(citation_note("[说明.md · 第 12 行]", "").contains("无法对应"));
         assert!(citation_note("你好", "").is_empty());
     }
+    #[test]
+    fn citations_accept_exact_supplied_source_paths_but_not_invented_paths() {
+        let context =
+            serde_json::json!([{"title":"说明.md","source":"doc/说明.md","location":"第 12 行"}])
+                .to_string();
+        assert!(
+            citation_note("回答[doc/说明.md · 第 12 行]", &context).contains("位置与本次资料一致")
+        );
+        assert!(citation_note("回答[other/说明.md · 第 12 行]", &context).contains("无法对应"));
+        assert!(
+            citation_note("回答[doc/说明.md · 第 1 行/第 12 行]", &context).contains("无法对应")
+        );
+    }
+
     #[test]
     fn tool_evidence_and_markdown_in_titles_are_handled() {
         let evidence =
