@@ -183,7 +183,7 @@ async fn repository_documents_retrieval_and_isolation() {
     }
     let mut negatives = Vec::new();
     for query in &fixture.negatives {
-        let vector = embed_request(&config, &[query.clone()], None)
+        let vector = embed_request(&config, std::slice::from_ref(query), None)
             .await
             .unwrap()
             .remove(0);
@@ -255,7 +255,12 @@ async fn repository_documents_retrieval_and_isolation() {
     println!("unscoped foreign hits: {foreign_global}; detailed report: {output}");
     assert_eq!(bad_citations, 0, "source text/line citation mismatch");
     assert_eq!(scoped_leaks, 0, "explicit project scope leaked");
-    assert!(results.iter().all(|case| !case["expandedEvidenceRank"].is_null()), "expanded context missed fixed project evidence");
+    assert!(
+        results
+            .iter()
+            .all(|case| !case["expandedEvidenceRank"].is_null()),
+        "expanded context missed fixed project evidence"
+    );
     assert!(
         hybrid_top8 >= 27,
         "evidence recall@8 below 90%; inspect report for failed questions"

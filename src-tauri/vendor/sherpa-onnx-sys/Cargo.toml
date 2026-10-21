@@ -59,8 +59,7 @@ version = "0.4"
 version = "0.4"
 
 [build-dependencies.ureq]
-version = "2.12"
-features = ["proxy-from-env"]
+version = "3.4.2"
 
 [build-dependencies.zip]
 version = "9.0.0"

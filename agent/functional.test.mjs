@@ -105,7 +105,9 @@ test("cancelling a running shell stops its child process", async (t) => {
   const pending = f.run({ onEvent(event, send) {
     if (event.type === "approval") send({ type: "approval", approvalId: event.approvalId, allowed: true });
   } });
-  await poll(() => existsSync(path.join(f.cwd, "child.pid")));
+  // Packaged SDK cold starts can exceed four seconds on shared CI runners.
+  // Allow startup to finish; keep the separate post-cancel termination bound strict.
+  await poll(() => existsSync(path.join(f.cwd, "child.pid")), 15000);
   const pid = Number(await readFile(path.join(f.cwd, "child.pid"), "utf8"));
   // Cleanup remains registered even if the cancellation assertion fails.
   t.after(() => { try { process.kill(pid, "SIGKILL"); } catch { /* Already terminated. */ } });

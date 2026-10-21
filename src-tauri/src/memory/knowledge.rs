@@ -556,18 +556,20 @@ fn rank(
     if terms.is_empty() {
         return Vec::new();
     }
-    let stable_order = |a: usize, b: usize| all[a].hit.source.cmp(&all[b].hit.source)
-        .then_with(|| all[a].hit.locator.cmp(&all[b].hit.locator))
-        .then_with(|| all[a].hit.id.cmp(&all[b].hit.id));
+    let stable_order = |a: usize, b: usize| {
+        all[a]
+            .hit
+            .source
+            .cmp(&all[b].hit.source)
+            .then_with(|| all[a].hit.locator.cmp(&all[b].hit.locator))
+            .then_with(|| all[a].hit.id.cmp(&all[b].hit.id))
+    };
     let mut lexical: Vec<(usize,f64)> = all.iter().enumerate().filter_map(|(i,e)| {
         let title = e.hit.title.to_lowercase(); let content = e.hit.content.to_lowercase();
         let score = terms.iter().map(|t| if title.contains(t) { 3.0 } else { 0.0 } + if content.contains(t) { 1.0 } else { 0.0 }).sum::<f64>();
         (score > 0.0).then_some((i,score))
     }).collect();
-    lexical.sort_by(|a, b| {
-        b.1.total_cmp(&a.1)
-            .then_with(|| stable_order(a.0, b.0))
-    });
+    lexical.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| stable_order(a.0, b.0)));
     let mut semantic: Vec<(usize, f64)> = all
         .iter()
         .enumerate()
@@ -594,10 +596,7 @@ fn rank(
         }
     }
     let mut scores: Vec<_> = scores.into_iter().collect();
-    scores.sort_by(|a, b| {
-        b.1.total_cmp(&a.1)
-            .then_with(|| stable_order(a.0, b.0))
-    });
+    scores.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| stable_order(a.0, b.0)));
     scores
         .into_iter()
         .take(limit.min(30))
@@ -810,7 +809,11 @@ pub async fn context(db: &MemoryDb, query: &str) -> Result<String, String> {
     scoped_context(db, query, None).await
 }
 
-pub async fn scoped_context(db: &MemoryDb, query: &str, scope: Option<&str>) -> Result<String, String> {
+pub async fn scoped_context(
+    db: &MemoryDb,
+    query: &str,
+    scope: Option<&str>,
+) -> Result<String, String> {
     let (hits, _) = retrieve(db, query, scope, 8).await.unwrap_or_default();
     let hits = expand_neighbors(db, hits.clone(), scope).unwrap_or(hits);
     let core = db.build_context(BuildContextInput {
@@ -997,12 +1000,12 @@ async fn index_pending(db: &MemoryDb, batch_limit: usize) -> Result<IndexReport,
     static INDEX_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
     let _guard = INDEX_LOCK.lock().await;
-    let config = settings(&db)?;
+    let config = settings(db)?;
     if !config.enabled {
         return Err("请先启用语义检索并保存 Embedding 配置".into());
     }
     let signature = config.signature();
-    let pending: Vec<_> = entries(&db, &signature, None)?
+    let pending: Vec<_> = entries(db, &signature, None)?
         .into_iter()
         .filter(|e| e.vector.is_none())
         .take(batch_limit)
@@ -1024,7 +1027,7 @@ async fn index_pending(db: &MemoryDb, batch_limit: usize) -> Result<IndexReport,
             })
             .collect();
         let vectors = embed(&config, &texts).await?;
-        if settings(&db)?.signature() != signature {
+        if settings(db)?.signature() != signature {
             return Err("配置已变更，请重新建立索引".into());
         }
         let mut conn = db.0.lock().map_err(lock_error)?;
@@ -1061,7 +1064,7 @@ async fn index_pending(db: &MemoryDb, batch_limit: usize) -> Result<IndexReport,
         }
         tx.commit().map_err(|e| e.to_string())?;
     }
-    let remaining = entries(&db, &signature, None)?
+    let remaining = entries(db, &signature, None)?
         .iter()
         .filter(|e| e.vector.is_none())
         .count();
@@ -1222,7 +1225,7 @@ mod tests {
         assert!(all[0].hit.content.contains("杭州"));
         assert!(fts_hits(&db, "上海").unwrap().is_empty());
         let conn = db.0.lock().unwrap();
-        remove_chunks(&conn, &all[0].hit.id.split(':').next().unwrap()).unwrap();
+        remove_chunks(&conn, all[0].hit.id.split(':').next().unwrap()).unwrap();
         drop(conn);
         assert!(entries(&db, "v1", None).unwrap().is_empty());
         assert!(fts_hits(&db, "杭州").unwrap().is_empty());
@@ -1243,7 +1246,7 @@ mod tests {
             fingerprint: String::new(),
             vector: Some(vec![1.0, 0.0]),
         };
-        assert!(rank(&[item.clone()], "coffee", None, &[], 5).is_empty());
+        assert!(rank(std::slice::from_ref(&item), "coffee", None, &[], 5).is_empty());
         assert_eq!(
             rank(&[item], "coffee", Some(&[0.99, 0.01]), &[], 5).len(),
             1
@@ -1500,7 +1503,7 @@ pub async fn search_memory(
         .filter(|e| e.hit.source_type == "memory")
         .collect();
     let vector = if config.enabled && all.iter().any(|e| e.vector.is_some()) {
-        embed(&config, &[input.query.clone()])
+        embed(&config, std::slice::from_ref(&input.query))
             .await
             .ok()
             .and_then(|v| v.into_iter().next())
@@ -1565,7 +1568,13 @@ pub(crate) fn search_local(
         return Err("请提供 1 至 10000 字的检索问题".into());
     }
     let all = entries(db, "", scope)?;
-    Ok(rank(&all, query, None, &scoped_fts_hits(db, query, scope)?, 10))
+    Ok(rank(
+        &all,
+        query,
+        None,
+        &scoped_fts_hits(db, query, scope)?,
+        10,
+    ))
 }
 
 #[cfg(test)]
@@ -1574,52 +1583,119 @@ mod real_embedding_acceptance {
     #[tokio::test]
     #[ignore = "requires a real local OpenAI-compatible embedding service"]
     async fn chinese_recall_with_real_model() {
-        let endpoint=std::env::var("PIKO_EMBEDDING_TEST_ENDPOINT").expect("set PIKO_EMBEDDING_TEST_ENDPOINT");
-        let model=std::env::var("PIKO_EMBEDDING_TEST_MODEL").unwrap_or_else(|_|"bge-m3".into());
-        let config=RetrievalSettings{enabled:true,endpoint,model,allow_remote:false,revision:1};
-        let facts=[
-            ("饮食","我不吃任何肉类，也不吃鱼，只选择植物性食物。","推荐午餐时需要避开什么食材？"),
-            ("出行","去公司通常搭乘地铁和公交，不自己开车。","平时通勤用什么交通工具？"),
-            ("发布","上线之前必须运行数据库迁移，再检查服务健康状态。","部署新版本有哪些前置步骤？"),
-            ("沟通","请先给结论，再补充依据，不用长篇铺垫。","回答问题时应该怎样组织表达？"),
-            ("专注","上午九点到十一点是我的深度专注时段。","什么时候适合安排不被打扰的工作？"),
-            ("备份","生产环境的数据库副本每晚自动保存，保留三十天。","线上数据的灾难恢复策略是什么？"),
-            ("技术","主要使用 Rust 编写桌面应用后端，界面使用 React。","这个软件的技术栈由哪些部分组成？"),
-            ("城市","我已经搬到杭州，之前住在上海。","Where do I live now?"),
+        let endpoint = std::env::var("PIKO_EMBEDDING_TEST_ENDPOINT")
+            .expect("set PIKO_EMBEDDING_TEST_ENDPOINT");
+        let model = std::env::var("PIKO_EMBEDDING_TEST_MODEL").unwrap_or_else(|_| "bge-m3".into());
+        let config = RetrievalSettings {
+            enabled: true,
+            endpoint,
+            model,
+            allow_remote: false,
+            revision: 1,
+        };
+        let facts = [
+            (
+                "饮食",
+                "我不吃任何肉类，也不吃鱼，只选择植物性食物。",
+                "推荐午餐时需要避开什么食材？",
+            ),
+            (
+                "出行",
+                "去公司通常搭乘地铁和公交，不自己开车。",
+                "平时通勤用什么交通工具？",
+            ),
+            (
+                "发布",
+                "上线之前必须运行数据库迁移，再检查服务健康状态。",
+                "部署新版本有哪些前置步骤？",
+            ),
+            (
+                "沟通",
+                "请先给结论，再补充依据，不用长篇铺垫。",
+                "回答问题时应该怎样组织表达？",
+            ),
+            (
+                "专注",
+                "上午九点到十一点是我的深度专注时段。",
+                "什么时候适合安排不被打扰的工作？",
+            ),
+            (
+                "备份",
+                "生产环境的数据库副本每晚自动保存，保留三十天。",
+                "线上数据的灾难恢复策略是什么？",
+            ),
+            (
+                "技术",
+                "主要使用 Rust 编写桌面应用后端，界面使用 React。",
+                "这个软件的技术栈由哪些部分组成？",
+            ),
+            (
+                "城市",
+                "我已经搬到杭州，之前住在上海。",
+                "Where do I live now?",
+            ),
         ];
-        let db=crate::memory::open_in_memory_db().unwrap();
-        for (i,(_,content,_)) in facts.iter().enumerate() {
+        let db = crate::memory::open_in_memory_db().unwrap();
+        for (i, (_, content, _)) in facts.iter().enumerate() {
             let item:crate::memory::MemoryItem=serde_json::from_value(serde_json::json!({"id":format!("eval-{i}"),"memoryType":"semantic","title":format!("资料 {i}"),"content":content,"source":"userExplicit","importance":3,"confidence":1.0,"recencyScore":1.0,"privacyLevel":"publicToUser","status":"active","createdAt":1,"updatedAt":1,"tags":[],"isPinned":false})).unwrap();
             db.create(&item).unwrap();
         }
-        let signature=config.signature();
-        let all=entries(&db,&signature,None).unwrap();
-        let inputs:Vec<_>=all.iter().map(|e|format!("{}\n{}",e.hit.title,e.hit.content)).collect();
-        let vectors=embed_request(&config,&inputs,None).await.unwrap();
-        for (entry,vector) in all.iter().zip(vectors) {
-            db.0.lock().unwrap().execute("INSERT INTO retrieval_vectors VALUES(?1,?2,?3,?4)",params![entry.hit.id,entry.fingerprint,signature,serde_json::to_string(&vector).unwrap()]).unwrap();
+        let signature = config.signature();
+        let all = entries(&db, &signature, None).unwrap();
+        let inputs: Vec<_> = all
+            .iter()
+            .map(|e| format!("{}\n{}", e.hit.title, e.hit.content))
+            .collect();
+        let vectors = embed_request(&config, &inputs, None).await.unwrap();
+        for (entry, vector) in all.iter().zip(vectors) {
+            db.0.lock()
+                .unwrap()
+                .execute(
+                    "INSERT INTO retrieval_vectors VALUES(?1,?2,?3,?4)",
+                    params![
+                        entry.hit.id,
+                        entry.fingerprint,
+                        signature,
+                        serde_json::to_string(&vector).unwrap()
+                    ],
+                )
+                .unwrap();
         }
         // Re-read persisted embeddings using the production fingerprint/model checks.
-        let all=entries(&db,&signature,None).unwrap();assert!(all.iter().all(|e|e.vector.is_some()));
-        let queries:Vec<_>=facts.iter().map(|(_,_,q)|q.to_string()).collect();
-        let query_vectors=embed_request(&config,&queries,None).await.unwrap();
-        let mut cases=Vec::new();let mut hybrid_correct=0;let mut semantic_correct=0;let mut lexical_correct=0;
-        for (i,((label,_,query),vector)) in facts.iter().zip(query_vectors).enumerate() {
-            let expected=format!("eval-{i}");
-            let lexical=rank(&all,query,None,&[],3);
-            let hybrid=rank(&all,query,Some(&vector),&[],3);
-            let semantic=all.iter().filter_map(|e|cosine(&vector,e.vector.as_deref()?).map(|s|(e.hit.id.clone(),s))).max_by(|a,b|a.1.total_cmp(&b.1)).unwrap();
-            let l=lexical.first().map(|h|h.id.as_str())==Some(expected.as_str());
-            let h=hybrid.first().map(|h|h.id.as_str())==Some(expected.as_str());
-            let s=semantic.0==expected;
-            lexical_correct+=usize::from(l);hybrid_correct+=usize::from(h);semantic_correct+=usize::from(s);
+        let all = entries(&db, &signature, None).unwrap();
+        assert!(all.iter().all(|e| e.vector.is_some()));
+        let queries: Vec<_> = facts.iter().map(|(_, _, q)| q.to_string()).collect();
+        let query_vectors = embed_request(&config, &queries, None).await.unwrap();
+        let mut cases = Vec::new();
+        let mut hybrid_correct = 0;
+        let mut semantic_correct = 0;
+        let mut lexical_correct = 0;
+        for (i, ((label, _, query), vector)) in facts.iter().zip(query_vectors).enumerate() {
+            let expected = format!("eval-{i}");
+            let lexical = rank(&all, query, None, &[], 3);
+            let hybrid = rank(&all, query, Some(&vector), &[], 3);
+            let semantic = all
+                .iter()
+                .filter_map(|e| {
+                    cosine(&vector, e.vector.as_deref()?).map(|s| (e.hit.id.clone(), s))
+                })
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .unwrap();
+            let l = lexical.first().map(|h| h.id.as_str()) == Some(expected.as_str());
+            let h = hybrid.first().map(|h| h.id.as_str()) == Some(expected.as_str());
+            let s = semantic.0 == expected;
+            lexical_correct += usize::from(l);
+            hybrid_correct += usize::from(h);
+            semantic_correct += usize::from(s);
             cases.push(serde_json::json!({"label":label,"query":query,"expected":expected,"lexicalTop1":lexical.first().map(|h|&h.id),"hybridTop1":hybrid.first().map(|h|&h.id),"semanticTop1":semantic.0,"semanticScore":semantic.1,"correct":h}));
         }
-        let report=serde_json::json!({"model":config.model,"cases":cases,"total":facts.len(),"hybridTop1Correct":hybrid_correct,"semanticTop1Correct":semantic_correct,"lexicalTop1Correct":lexical_correct,"data":"synthetic fixtures only; no user data"});
-        println!("{}",serde_json::to_string_pretty(&report).unwrap());
-        if let Ok(path)=std::env::var("PIKO_EMBEDDING_REPORT") {std::fs::write(path,serde_json::to_vec_pretty(&report).unwrap()).unwrap();}
-        assert!(semantic_correct>=7,"real semantic recall below 7/8");
-        assert!(hybrid_correct>=7,"production hybrid recall below 7/8");
+        let report = serde_json::json!({"model":config.model,"cases":cases,"total":facts.len(),"hybridTop1Correct":hybrid_correct,"semanticTop1Correct":semantic_correct,"lexicalTop1Correct":lexical_correct,"data":"synthetic fixtures only; no user data"});
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+        if let Ok(path) = std::env::var("PIKO_EMBEDDING_REPORT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        }
+        assert!(semantic_correct >= 7, "real semantic recall below 7/8");
+        assert!(hybrid_correct >= 7, "production hybrid recall below 7/8");
     }
 }
 

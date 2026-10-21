@@ -1,6 +1,6 @@
 [package]
 name = "im-robot"
-version = "1.2.15"
+version = "1.2.16"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -25,7 +25,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 sha2 = "0.10"
-lopdf = "0.38"
+lopdf = "0.42"
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "time", "process", "io-util", "fs"] }
 tokio-util = "0.7"
@@ -52,8 +52,8 @@ rusqlite = { version = "0.37", features = ["bundled", "backup"] }
 chrono = "0.4"
 chrono-tz = "0.10"
 iana-time-zone = "0.1"
-wasmtime = { version = "49.0.3", optional = true }
-wasmtime-wasi = { version = "49.0.3", optional = true }
+wasmtime = { version = "49.0.4", optional = true }
+wasmtime-wasi = { version = "49.0.4", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3"
@@ -70,7 +70,7 @@ windows = { version = "0.58", features = [
 ] }
 
 # Upstream 1.13.8 still requires zip 2; keep the FFI unchanged and upgrade
-# only its archive reader until upstream ships a fixed build dependency.
+# its archive reader and HTTPS downloader until upstream ships fixed dependencies.
 [patch.crates-io]
 sherpa-onnx-sys = { path = "vendor/sherpa-onnx-sys" }
 

@@ -199,13 +199,13 @@ fn download_prebuilt_libs(
             let url = download_url(&archive_name);
             eprintln!("Downloading sherpa-onnx libs from {url}");
 
-            let response = ureq::builder()
-                .try_proxy_from_env(true)
-                .build()
+            // ureq 3 retains environment-proxy discovery by default and uses
+            // current webpki roots instead of the vulnerable 0.26 bundle.
+            let mut response = ureq::Agent::new_with_defaults()
                 .get(&url)
                 .call()
                 .map_err(|e| format!("Failed to download sherpa-onnx archive from {url}: {e}"))?;
-            let mut reader = response.into_reader();
+            let mut reader = response.body_mut().as_reader();
             write_reader_atomically(&mut reader, &archive_path)?;
         }
     }
