@@ -29,9 +29,12 @@ test("reads real workspace files and returns their content to the model without 
   assert.ok(events.some((event) => event.type === "tool-end" && event.output.includes("READ_MARKER")));
 });
 
-test("edits existing files only after approval and preserves unrelated content", async (t) => {
+for (const format of ["legacy", "batch"]) test(`edits existing files with ${format} arguments only after approval and verifies content`, async (t) => {
+  const args = format === "legacy"
+    ? { path: "edit.txt", oldText: "before", newText: "after" }
+    : { path: "edit.txt", edits: [{ oldText: "before", newText: "after" }] };
   const f = await fixture(t, (_req, res, requests) => requests.length === 1
-    ? toolResponse(res, "edit", { path: "edit.txt", oldText: "before", newText: "after" }) : finish(res));
+    ? toolResponse(res, "edit", args) : finish(res));
   const target = path.join(f.cwd, "edit.txt"); await writeFile(target, "header\nbefore\nfooter\n");
   const events = await f.run({ onEvent(event, send) {
     if (event.type === "approval") {
@@ -40,6 +43,7 @@ test("edits existing files only after approval and preserves unrelated content",
     }
   } });
   completed(events); assert.equal(await readFile(target, "utf8"), "header\nafter\nfooter\n");
+  assert.ok(events.some(event => event.type === "tool-end" && event.verification?.state === "verified"));
 });
 
 for (const allowed of [true, false]) test(`real shell execution ${allowed ? "runs after approval" : "is blocked on denial"}`, async (t) => {

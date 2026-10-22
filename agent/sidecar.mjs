@@ -76,9 +76,14 @@ async function start(input) {
         let approved = false;
         const approve = async () => { if (approved) return; if (await needsApproval(tool.name, args, workspace, input.autoApproveCommands)) await gate.request(tool.name, args, signal); if (signal?.aborted) throw new Error("操作已取消"); approved = true; };
         const run = () => { if (signal?.aborted) throw new Error("操作已取消"); return fileTools(workspace, { readOnly: input.readOnly, resuming: Boolean(input.resumeRoot) })[index].execute(id, args, signal, onUpdate, { ...context, cwd: workspace }); };
-        if (["write", "edit"].includes(tool.name) && await needsApproval("read", args, workspace)) await approve();
-        if (["write", "edit"].includes(tool.name)) return fileOperations.execute(tool.name, args, workspace, run, approve);
-        await approve(); return run();
+        if (input.serializeSystemTools) await bridge.request("piko_acquire_system_tools", {}, signal);
+        try {
+          if (["write", "edit"].includes(tool.name) && await needsApproval("read", args, workspace)) await approve();
+          if (["write", "edit"].includes(tool.name)) return await fileOperations.execute(tool.name, args, workspace, run, approve);
+          await approve(); return await run();
+        } finally {
+          if (input.serializeSystemTools) await bridge.request("piko_release_system_tools", {});
+        }
       },
     }));
     const appTools = applicationTools(input.businessTools || [], bridge);

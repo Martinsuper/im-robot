@@ -1,3 +1,6 @@
+import { loadConversationView, saveConversationView } from "./conversationView";
+import { claimCapture, captureBelongsTo, releaseCapture } from "./captureOwnership";
+import { WorkspaceDivider } from "./WorkspaceDivider";
 import { ChatContextMenu } from "./ChatContextMenu";
 import { useConversationSurface } from "./useConversationSurface";
 import { WorkspaceMenu } from "./WorkspaceMenu";
@@ -11,7 +14,7 @@ import { TaskDiagnostics } from "./TaskDiagnostics";
 import { TaskOutcome } from "./TaskOutcome";
 import { useAgentTask } from "./useAgentTask";
 import { connectAgentTask } from "./agentTaskRecovery";
-import { CONVERSATION_STORAGE, loadConversation, type AgentEvent, type AgentTaskSnapshot } from "./agentTypes";
+import { CONVERSATION_STORAGE, loadConversation, type AgentEvent, type AgentTaskSnapshot, type Conversation } from "./agentTypes";
 import {
   CollapsibleReply,
   HistoryItem,
@@ -21,8 +24,8 @@ import {
   WelcomeState,
   textForSpeech,
 } from "./ChatPresentation";
-import { ArrowDown, ArrowUp, Maximize2, Minimize2, Mic, PanelRight, Paperclip, Pin, Plus, ScanLine, Square, X } from "lucide-react";
-import { FormEvent, lazy, Suspense, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDown, ArrowUp, ExternalLink, CornerDownLeft, Mic, PanelRight, Paperclip, Pin, Plus, ScanLine, Square } from "lucide-react";
+import { FormEvent, lazy, Suspense, type CSSProperties, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -58,12 +61,44 @@ const PanelWindow = lazy(() => import("../panel/PanelWindow").then((module) => (
 
 // --- Main Component ---
 
-export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspaceOpen?: boolean } = {}) {
+export type ConversationTabState = { title: string; busy: boolean; waiting: boolean; status: string };
+type BubbleWindowProps = {
+  initialWorkspaceOpen?: boolean;
+  tabId?: string;
+  active?: boolean;
+  onNewConversation?: () => void;
+  onTabState?: (id: string, state: ConversationTabState) => void;
+  onDetach?: () => Promise<void>;
+  onReturn?: () => Promise<void>;
+  onResumeConversation?: (record: { requestId: string; conversationId: string }) => void;
+  resumeRequest?: string;
+  onResumeConsumed?: () => void;
+};
+export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = true, onNewConversation, onTabState, onDetach, onReturn, onResumeConversation, resumeRequest, onResumeConsumed }: BubbleWindowProps = {}) {
+  const activeTabRef = useRef(active);
+  activeTabRef.current = active;
+  const attachmentContext = useMemo(() => tabId ? { contextId: tabId } : undefined, [tabId]);
   const toast = useToast();
   const surface = useConversationSurface((error) => toast.error(toUserMessage(error, "窗口切换失败，请重试。")));
   const { settings: sharedSettings, applyServer } = useAppSettings();
   const [workspaceOpen, setWorkspaceOpen] = useState(initialWorkspaceOpen);
   const [workspaceVisited, setWorkspaceVisited] = useState(initialWorkspaceOpen);
+  const [panelWidth, setPanelWidth] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem("piko.workspace.width"));
+      return saved >= 360 && saved <= 480 ? saved : 400;
+    } catch { return 400; }
+  });
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const resize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+  const visiblePanelWidth = Math.min(panelWidth, Math.max(360, viewportWidth - 480));
+  useEffect(() => {
+    try { localStorage.setItem("piko.workspace.width", String(panelWidth)); } catch { /* Optional preference. */ }
+  }, [panelWidth]);
   const [workspaceTab, setWorkspaceTab] = useState<PanelTab>(() => {
     try {
       const saved = localStorage.getItem("piko.workspace.tab");
@@ -93,6 +128,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     if (!isTauriRuntime) return;
     let disposed = false;
     const pending = listen<PanelTab | null>("workspace-open", ({ payload }) => {
+      if (!activeTabRef.current) return;
       void openWorkspace(payload && ["today", "records", "settings"].includes(payload) ? payload : undefined);
     });
     void pending.then(() => { if (!disposed) void emit("workspace-ready"); });
@@ -117,8 +153,16 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
   }
 
   const lastTypingAt = useRef(0);
-  const [conversation, setConversation] = useState(loadConversation);
+  const [conversation, setConversation] = useState<Conversation>(() => {
+    if (!tabId) return loadConversation();
+    try {
+      const saved = JSON.parse(localStorage.getItem(`${CONVERSATION_STORAGE}:${tabId}`) || "null");
+      if (saved?.id === tabId && typeof saved.cwd === "string" && Array.isArray(saved.turnIds)) return { ...saved, importHistory: false };
+    } catch { /* Optional session metadata. */ }
+    return { id: tabId, cwd: "", importHistory: false, turnIds: [] };
+  });
   const conversationRef = useRef(conversation);
+  const contextReset = useRef<Promise<unknown>>(Promise.resolve());
   conversationRef.current = conversation;
   const { agentBusy, agentStatus, agentTools, taskTerminal, agentApprovals, workspaceRequired,
     setAgentBusy, beginAgentTask, resetAgentTask, restoreAgentTask, applyAgentEvent } = useAgentTask();
@@ -131,7 +175,8 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
   const businessAction = useRef(false);
   const businessCardRef = useRef<HTMLDivElement>(null);
   const agentReady = useRef<Promise<unknown>>(Promise.resolve());
-  useEffect(() => { try { localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(conversation)); } catch { /* Optional. */ } }, [conversation]);
+  const [taskStateLoaded, setTaskStateLoaded] = useState(!isTauriRuntime);
+  useEffect(() => { try { localStorage.setItem(tabId ? `${CONVERSATION_STORAGE}:${tabId}` : CONVERSATION_STORAGE, JSON.stringify(conversation)); } catch { /* Optional. */ } }, [conversation, tabId]);
 
   const [message, setMessage] = useState("");
   const { companionName, theme, htmlPreviewEnabled } = sharedSettings;
@@ -147,6 +192,97 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
   const [attachment, setAttachment] = useState<AttachmentPreview>();
   const [attachmentAction, setAttachmentAction] = useState<AttachmentAction>("summarize");
   const [screenshot, setScreenshot] = useState<ScreenshotPreview>();
+  const [viewLoaded, setViewLoaded] = useState(!tabId);
+  const [handoffPending, setHandoffPending] = useState(false);
+  const viewReady = useRef<Promise<unknown>>(Promise.resolve());
+  const viewSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const viewLeaving = useRef(false);
+  const currentView = useStableEvent(() => ({ prompt, cwd: conversationRef.current.cwd, knowledgeScope: conversationRef.current.knowledgeScope,
+    attachmentAction, attachment: attachment ?? null, screenshot: screenshot ?? null,
+    previewTurn: isTauriRuntime ? undefined : { history: chatHistory, prompt: currentPrompt, response: message, requestId: displayedRequestId.current, thinking: isThinking, status: replyStatus } }));
+  const saveViewNow = useStableEvent(() => {
+    if (!tabId) return Promise.resolve();
+    const view = currentView();
+    const saving = viewSaveQueue.current.catch(() => {}).then(() => viewLeaving.current ? undefined : saveConversationView(tabId, view));
+    viewSaveQueue.current = saving;
+    return saving;
+  });
+  const saveBeforeLeaving = useStableEvent(() => {
+    if (!tabId || !viewLoaded || viewLeaving.current) return;
+    viewLeaving.current = true;
+    void saveConversationView(tabId, currentView()).catch(error => console.error("[conversation-view]", error));
+  });
+  useEffect(() => {
+    const returned = () => { viewLeaving.current = false; };
+    window.addEventListener("beforeunload", saveBeforeLeaving);
+    window.addEventListener("pagehide", saveBeforeLeaving);
+    window.addEventListener("pageshow", returned);
+    return () => {
+      window.removeEventListener("beforeunload", saveBeforeLeaving);
+      window.removeEventListener("pagehide", saveBeforeLeaving);
+      window.removeEventListener("pageshow", returned);
+    };
+  }, [saveBeforeLeaving]);
+  useEffect(() => {
+    if (!tabId) return;
+    let disposed = false;
+    const loading = loadConversationView(tabId).then(view => {
+      if (disposed) return;
+      if (view) {
+        setPrompt(view.prompt || "");
+        if (!isTauriRuntime && view.previewTurn) {
+          const turn = view.previewTurn;
+          setChatHistory(turn.history || []);
+          setCurrentPrompt(turn.prompt || "");
+          setMessage(turn.response || "");
+          setReplyStatus(turn.status);
+          displayedRequestId.current = turn.requestId;
+          if (turn.thinking) {
+            setIsThinking(true);
+            setShowReplySkeleton(true);
+            previewReplyTimer.current = window.setTimeout(() => {
+              setMessage(`这是浏览器预览回复：${turn.prompt}`);
+              setReplyStatus("done"); setIsThinking(false); setShowReplySkeleton(false);
+            }, 450);
+          }
+        }
+        setAttachment(view.attachment ?? undefined);
+        setScreenshot(view.screenshot ?? undefined);
+        setAttachmentAction(view.attachmentAction || "summarize");
+        setConversation(current => ({ ...current, cwd: view.cwd || current.cwd, knowledgeScope: view.knowledgeScope ?? current.knowledgeScope }));
+      }
+      setViewLoaded(true);
+    });
+    viewReady.current = loading;
+    void loading.catch(error => { if (!disposed) toast.error(toUserMessage(error, "会话草稿恢复失败，请重新打开会话。")); });
+    return () => { disposed = true; };
+  }, [tabId, toast]);
+  useEffect(() => {
+    if (!tabId || !viewLoaded) return;
+    const timer = window.setTimeout(() => { void saveViewNow().catch(error => toast.error(toUserMessage(error, "会话草稿保存失败"))); }, 150);
+    return () => window.clearTimeout(timer);
+  }, [tabId, viewLoaded, prompt, message, replyStatus, attachment, screenshot, attachmentAction, conversation.cwd, conversation.knowledgeScope, saveViewNow, toast]);
+  const handoffView = useStableEvent(async (returning = false) => {
+    if (handoffPending || (!returning && !onDetach) || (returning && !onReturn)) return;
+    setHandoffPending(true);
+    try {
+      await viewReady.current;
+      await saveViewNow();
+      if (returning) await onReturn?.(); else await onDetach?.();
+    } catch (error) { toast.error(toUserMessage(error, "窗口切换失败，当前会话仍保留，请重试。")); }
+    finally { setHandoffPending(false); }
+  });
+  useEffect(() => {
+    if (!onReturn) return;
+    const requested = () => { void handoffView(true); };
+    window.addEventListener("conversation-request-return", requested);
+    const subscription = isTauriRuntime
+      ? listen<string>("conversation-close-requested", ({ payload }) => { if (payload === tabId) requested(); }) : undefined;
+    return () => {
+      window.removeEventListener("conversation-request-return", requested);
+      if (subscription) void subscription.then(dispose => dispose());
+    };
+  }, [onReturn, tabId, handoffView]);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   // S08 灵魂主动消息：气泡与通知共用同一消息身份；回应只进入普通聊天。
   const [soulMessage, setSoulMessage] = useState<SoulProactiveMessage | null>(null);
@@ -229,6 +365,15 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     return { label: "在线", pulse: false };
   }, [isThinking, isSpeaking, memoryActivity, agentBusy, agentStatus, agentApprovals.length, pendingAction, workspaceRequired]);
 
+  useEffect(() => {
+    if (!tabId || !onTabState || !viewLoaded || !taskStateLoaded) return;
+    onTabState(tabId, {
+      title: (chatHistory[0]?.prompt || currentPrompt || "新对话").slice(0, 24),
+      busy: agentBusy || isThinking,
+      waiting: Boolean(agentApprovals.length || pendingAction || workspaceRequired),
+      status: replyStatus || "idle",
+    });
+  }, [tabId, onTabState, viewLoaded, taskStateLoaded, currentPrompt, chatHistory, agentBusy, isThinking, agentApprovals.length, pendingAction, workspaceRequired, replyStatus]);
   const hasCurrentTurn = Boolean(currentPrompt || message || pendingAction || showReplySkeleton || agentTools.length || workspaceRequired);
   const showWelcome = !hasCurrentTurn && chatHistory.length === 0;
 
@@ -249,7 +394,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     }
     if (event.key === "Escape") {
       event.preventDefault();
-      void runCommand("hide_bubble");
+      if (onReturn) void handoffView(true); else void runCommand("hide_bubble");
       return;
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -285,12 +430,15 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     }, 220);
   });
 
-  function refreshChatHistory() {
+  const refreshChatHistory = useStableEvent(() => {
     if (!isTauriRuntime) return;
-    void runCommand<ChatHistoryEntry[]>("get_bubble_chat_history", undefined, []).then((entries) => {
-      if (entries) { const current = conversationRef.current; setChatHistory((current.importHistory ? entries : entries.filter((entry) => current.turnIds.includes(entry.id))).filter((entry) => entry.id !== displayedRequestId.current)); }
+    const history = tabId
+      ? runCommand<ChatHistoryEntry[]>("conversation_chat_history", { conversationId: tabId }, [])
+      : runCommand<ChatHistoryEntry[]>("get_bubble_chat_history", undefined, []);
+    void history.then((entries) => {
+      if (entries) { const current = conversationRef.current; setChatHistory((tabId || current.importHistory ? entries : entries.filter((entry) => current.turnIds.includes(entry.id))).filter((entry) => entry.id !== displayedRequestId.current)); }
     });
-  }
+  });
 
   const stopVoiceRecording = useStableEvent((shouldTranscribe = true) => {
     const samples = voiceSamplesRef.current;
@@ -308,6 +456,12 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
   });
 
   useEffect(() => {
+    if (active && viewLoaded) {
+      if (!document.activeElement?.closest('[role="tablist"]')) promptInputRef.current?.focus();
+    }
+    else { stopVoiceRecording(false); }
+  }, [active, viewLoaded, stopVoiceRecording]);
+  useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -317,29 +471,30 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
   useEffect(() => {
     void void runCommand("get_data_health").then(health => setVoiceAvailable(health?.speechRecognition !== false)).catch(error => console.error("[capabilities]", error));
     refreshChatHistory();
-  }, []);
+  }, [refreshChatHistory]);
 
   useEffect(() => {
     return () => {
       stopVoiceRecording(false);
       voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
-      if (isTauriRuntime) void runCommand("stop_local_speech");
+      if (isTauriRuntime && activeTabRef.current) void runCommand("stop_local_speech");
       clearSkeletonHideTimer();
+      if (previewReplyTimer.current) window.clearTimeout(previewReplyTimer.current);
     };
   }, [stopVoiceRecording]);
 
 
   // S07：输入活动以最近按键为准，保留草稿不会永久阻止提醒。
   useEffect(() => {
-    if (!isTauriRuntime) return;
+    if (!isTauriRuntime || !active) return;
     reportSoulActivity(currentActivitySnapshot(Date.now() - lastTypingAt.current < 5000));
     const timer = window.setInterval(
       () => reportSoulActivity(currentActivitySnapshot(Date.now() - lastTypingAt.current < 5000)),
       ACTIVITY_HEARTBEAT_SECONDS * 1000,
     );
     return () => window.clearInterval(timer);
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -371,13 +526,13 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
   useEffect(() => {
     if (!soulMessage) return;
     const report=()=>{
-      if (document.visibilityState === "visible") ackShown(soulMessage.id);
+      if (active && document.visibilityState === "visible") ackShown(soulMessage.id);
       else ackHidden(soulMessage.id);
     };
     report();
     document.addEventListener("visibilitychange",report);
     return () => {document.removeEventListener("visibilitychange",report);ackHidden(soulMessage.id);};
-  }, [soulMessage]);
+  }, [soulMessage, active]);
 
 
   useEffect(() => {
@@ -386,15 +541,16 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
       void runCommand<ScreenshotPreview | null>("get_screen_capture_preview", undefined, null)
         .then((preview) => setScreenshot(preview ?? undefined));
     };
-    refreshScreenshot();
+    if (!tabId) refreshScreenshot();
     const unlisten = listen<ScreenshotPreview>("screenshot-ready", (event) => {
+      if (!captureBelongsTo(tabId, activeTabRef.current)) return;
       setScreenshot(event.payload);
     });
     let focusTimer: number | undefined;
     const unlistenFocus = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       window.clearTimeout(focusTimer);
-      if (!focused) return;
-      refreshScreenshot();
+      if (!focused || !activeTabRef.current) return;
+      if (!tabId) refreshScreenshot();
       // Cancel delayed composer focus when a detached preview takes focus.
       focusTimer = window.setTimeout(() => {
         promptInputRef.current?.focus();
@@ -405,7 +561,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
       void unlisten.then((dispose) => dispose());
       void unlistenFocus.then((dispose) => dispose());
     };
-  }, []);
+  }, [tabId]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -471,10 +627,10 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     const restoreSnapshot = (snapshot: AgentTaskSnapshot) => {
       const terminal = snapshot.events.find((event) => ["completed", "failed", "cancelled"].includes(event.type));
       const current = conversationRef.current;
-      if (terminal && snapshot.conversationId !== current.id) return;
+      if ((tabId || terminal) && snapshot.conversationId !== current.id) return;
       const sameConversation = current.id === snapshot.conversationId;
       const turnIds = sameConversation ? current.turnIds : [];
-      const next = { id: snapshot.conversationId, cwd: snapshot.cwd || "", importHistory: sameConversation && current.importHistory,
+      const next = { id: snapshot.conversationId, cwd: snapshot.cwd || "", knowledgeScope: snapshot.knowledgeScope || undefined, importHistory: sameConversation && current.importHistory,
         turnIds: turnIds.includes(snapshot.requestId) ? turnIds : [...turnIds, snapshot.requestId] };
       conversationRef.current = next;
       setConversation(next);
@@ -503,10 +659,10 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     };
     const connection = connectAgentTask({
       subscribe: (onEvent) => listen<AgentEvent>("agent-event", ({ payload }) => onEvent(payload)),
-      getSnapshot: () => runCommand<AgentTaskSnapshot | null>("agent_get_task_snapshot", undefined, null),
+      getSnapshot: () => runCommand<AgentTaskSnapshot | null>("agent_get_task_snapshot", tabId ? { conversationId: tabId } : undefined, null),
       restore: restoreSnapshot,
       onEvent: (event) => {
-        if (event.requestId !== activeRequestId.current && event.conversationId && event.prompt !== undefined
+        if (event.requestId !== activeRequestId.current && event.conversationId && (!tabId || event.conversationId === conversationRef.current.id) && event.prompt !== undefined
           && ["started", "completed", "failed", "cancelled"].includes(event.type)) {
           restoreSnapshot({ requestId: event.requestId, conversationId: event.conversationId, knowledgeScope: event.knowledgeScope, cwd: event.cwd || null,
             prompt: event.prompt, response: event.response || "", eventSequence: event.eventSequence || 0,
@@ -555,6 +711,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
       },
     });
     agentReady.current = connection.ready;
+    void connection.ready.then(() => setTaskStateLoaded(true), () => {});
     let disposed = false;
     void connection.ready.catch((error) => {
       if (!disposed) setContextNotice(toUserMessage(error, "任务状态恢复失败，请重新打开聊天窗口。"));
@@ -565,7 +722,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
       connection.dispose();
       void unlisten.then((dispose) => dispose());
     };
-  }, [hideSkeletonSoon, applyAgentEvent, restoreAgentTask, setAgentBusy]);
+  }, [hideSkeletonSoon, applyAgentEvent, restoreAgentTask, setAgentBusy, tabId, refreshChatHistory]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -590,6 +747,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     if (!isTauriRuntime) return;
 
     const unlisten = getCurrentWindow().onDragDropEvent((event) => {
+      if (!activeTabRef.current) return;
       if (event.payload.type === "enter" || event.payload.type === "over") {
         setIsDraggingFile(true);
         return;
@@ -603,6 +761,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
 
       void runCommand<AttachmentPreview>("prepare_text_attachment", {
         path: event.payload.paths[0],
+        ...attachmentContext,
       })
         .then(setAttachment)
         .catch((error) => toast.error(toUserMessage(error, "附件读取失败，请重试。")));
@@ -613,7 +772,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
         if (mountedRef.current) dispose();
       });
     };
-  }, [toast]);
+  }, [toast, attachmentContext]);
 
   // Auto-scroll thread to bottom when new messages arrive
   useEffect(() => {
@@ -625,6 +784,13 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
   }, [message, showReplySkeleton, currentPrompt, chatHistory.length, agentApprovals.length, workspaceRequired, pendingAction]);
 
   async function sendPrompt(currentPromptValue: string, inspectionTarget: string | null = verificationOf ?? null, resumeTarget: string | null = resumeOf ?? null) {
+    try {
+      await contextReset.current;
+      await viewReady.current;
+    } catch (error) {
+      toast.error(toUserMessage(error, "新对话上下文清理失败，请重新开启新对话。"));
+      return;
+    }
     try { await agentReady.current; }
     catch (error) { toast.error(toUserMessage(error, "任务状态恢复失败，请重新打开聊天窗口。")); return; }
     if (agentBusyRef.current || (!currentPromptValue.trim() && !attachment && !screenshot)) return;
@@ -692,6 +858,8 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
         conversationId: nextConversation.id, knowledgeScope: nextConversation.knowledgeScope, cwd: nextConversation.cwd || undefined, unified: true, importHistory: nextConversation.importHistory,
         prompt: requestPrompt,
         attachmentAction: attachment ? attachmentAction : undefined,
+        ...attachmentContext,
+        screenshot: tabId ? screenshot : undefined,
         includeScreenshot: Boolean(screenshot),
         verificationOf: inspectionTarget || undefined,
         resumeOf: resumeTarget || undefined,
@@ -709,6 +877,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
   }
 
   function submitPrompt() {
+    if (!viewLoaded || handoffPending) return;
     if (agentBusyRef.current) {
       const text = prompt.trim();
       if (!text || steeringPending.current || !activeRequestId.current) return;
@@ -755,15 +924,48 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     void sendPrompt(`请只读核对任务 ${requestId} 的实际执行结果。先确认目标和验收标准，按证据说明哪些已完成、哪些未完成、哪些无法确认，不要重新执行修改。`, requestId, null);
   }
 
-  function resumeTask(record: { requestId: string; conversationId: string }) {
+  const resumeTask = useStableEvent((record: { requestId: string; conversationId: string }) => {
     if (agentBusyRef.current) return;
+    if (tabId && record.conversationId !== tabId) {
+      if (onResumeConversation) void saveViewNow().then(() => onResumeConversation(record)).catch(error => toast.error(toUserMessage(error, "打开原会话失败")));
+      return;
+    }
     setVerificationOf(undefined); setResumeOf(record.requestId);
     const next = { ...conversationRef.current, id: record.conversationId, knowledgeScope: undefined, importHistory: false, turnIds: [] };
     conversationRef.current = next; setConversation(next); setChatHistory([]);
     void sendPrompt(`请根据原会话和操作检查点先核对任务 ${record.requestId} 的实际结果，再安全继续未完成的步骤。已完成步骤不能重复执行；无法证明幂等的操作请先说明并等待新的明确指令。`, null, record.requestId);
-  }
+  });
+  useEffect(() => {
+    if (!resumeRequest || !tabId) return;
+    let disposed = false;
+    void Promise.all([agentReady.current, viewReady.current]).then(() => {
+      if (disposed) return;
+      if (agentBusyRef.current) toast.info("原会话仍有任务正在执行，请等待结束后再续跑。");
+      else resumeTask({ requestId: resumeRequest, conversationId: tabId });
+      onResumeConsumed?.();
+    }).catch(error => toast.error(toUserMessage(error, "恢复原会话失败")));
+    return () => { disposed = true; };
+  }, [resumeRequest, tabId, resumeTask, onResumeConsumed, toast]);
 
   function newConversation() {
+    if (onNewConversation) { onNewConversation(); return; }
+    if (agentBusyRef.current || isThinking) return;
+    contextReset.current = isTauriRuntime
+      ? Promise.all([runCommand("clear_text_attachment"), runCommand("clear_screen_capture")])
+      : Promise.resolve();
+    void contextReset.current.catch(error => toast.error(toUserMessage(error, "新对话上下文清理失败，请重新开启新对话。")));
+    setPrompt("");
+    setAttachment(undefined);
+    setAttachmentAction("summarize");
+    setScreenshot(undefined);
+    setSelectedFavoriteId(null);
+    setContextOpen(false);
+    setFavoritesOpen(false);
+    setContextNotice("");
+    activeRequestId.current = undefined;
+    setRequestId(undefined);
+    businessAction.current = false;
+    setSelectedChoiceIndexes([]);
     setSoulReplyId(null);
     followThreadRef.current = true;
     setAwayFromBottom(false);
@@ -994,7 +1196,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
   }
 
   async function clearAttachment() {
-    await runCommand("clear_text_attachment");
+    await runCommand("clear_text_attachment", attachmentContext);
     setAttachment(undefined);
   }
 
@@ -1006,18 +1208,19 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     });
     if (!path) return;
     try {
-      setAttachment(await runCommand<AttachmentPreview>("prepare_text_attachment", { path }));
+      setAttachment(await runCommand<AttachmentPreview>("prepare_text_attachment", { path, ...attachmentContext }));
     } catch (error) {
       toast.error(toUserMessage(error, "附件读取失败，请重试。"));
     }
   }
 
   async function clearScreenshot() {
-    await runCommand("clear_screen_capture");
+    if (!tabId) await runCommand("clear_screen_capture");
     setScreenshot(undefined);
   }
 
   async function clearContext() {
+    if (onNewConversation) { onNewConversation(); return; }
     try {
       await runCommand("clear_chat_context");
       setChatHistory([]);
@@ -1087,31 +1290,41 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
     setExpandedHistoryIds(new Set());
   }
 
+  const beginCapture = useStableEvent(async () => {
+    claimCapture(tabId);
+    try { await runCommand("begin_screen_capture"); }
+    catch (error) { releaseCapture(tabId); toast.error(toUserMessage(error, "截图失败，请重试。")); }
+  });
   useEffect(() => {
     if (!isTauriRuntime) return;
     const pending = listen("bubble-capture-requested", () => {
-      void runCommand("begin_screen_capture").catch((error) => toast.error(toUserMessage(error, "截图失败，请重试。")));
+      if (!activeTabRef.current) return;
+      void beginCapture();
     });
     return () => { void pending.then((unlisten) => unlisten()); };
-  }, [toast]);
+  }, [beginCapture]);
 
   const htmlPreviewSource = htmlPreviewEnabled ? extractHtmlPreviewSource(message) : null;
   const currentFavoriteId = htmlPreviewSource ? findFavoriteId(favorites, htmlPreviewSource) : undefined;
   const selectedFavorite = selectedFavoriteId ? favorites.find((item) => item.id === selectedFavoriteId) : undefined;
 
   return (
-    <div className={`conversation-workspace${workspaceOpen ? " conversation-workspace--open" : ""}`}>
+    <div className={`conversation-workspace${workspaceOpen ? " conversation-workspace--open" : ""}`}
+      style={{ "--workspace-panel-width": `${visiblePanelWidth}px` } as CSSProperties}>
     <main
-      className={`bubble-shell bubble-shell--${theme}${surface.expanded ? " bubble-shell--expanded" : ""}`}
+      className={`bubble-shell bubble-shell--${theme}`}
       onKeyDown={handleWindowKeyDown}
       tabIndex={-1}
     >
       {/* Layer 1: Top Bar */}
       <header className="bubble-topbar" onPointerDown={startBubbleDrag}>
+        <div className="bubble-topbar__navigation">
+          <button type="button" className={`bubble-topbar__btn${workspaceOpen ? " bubble-topbar__btn--active" : ""}`} disabled={surface.pending} onClick={() => void (workspaceOpen ? closeWorkspace() : openWorkspace())} aria-label={workspaceOpen ? "收起主面板" : "打开主面板"} aria-expanded={workspaceOpen} title={workspaceOpen ? "收起工作区" : "展开工作区"}><PanelRight size={17} /></button>
         <WorkspaceMenu onSelect={(tab) => void openWorkspace(tab)}><span className="bubble-topbar__left">
           <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
           <span className="bubble-topbar__identity"><span className="bubble-topbar__name">{companionName}</span><span className="bubble-topbar__subtitle">随时聊聊，一起做事</span></span>
         </span></WorkspaceMenu>
+        </div>
         <div className="bubble-topbar__center">
           <span role="status" aria-live="polite" className={`bubble-topbar__status${topbarStatus.pulse ? " bubble-topbar__status--pulse" : ""}`}>
             <span className="bubble-topbar__dot" />
@@ -1121,14 +1334,6 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
         <div className="bubble-topbar__right">
           <button
             type="button"
-            className="bubble-topbar__btn"
-            disabled={surface.pending || workspaceOpen}
-            onClick={() => void surface.toggle()}
-            aria-label={surface.expanded ? "返回快捷浮层" : "在完整窗口继续"}
-            title={surface.expanded ? "返回快捷浮层（会话与任务保留）" : "在完整窗口继续（会话与任务保留）"}
-          >{surface.expanded ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button>
-          <button
-            type="button"
             className={`bubble-topbar__btn${isPinned ? " bubble-topbar__btn--active" : ""}`}
             onClick={() => void togglePinned()}
             disabled={pinPending}
@@ -1136,17 +1341,9 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
             aria-pressed={isPinned}
             title={isPinned ? "取消置顶" : "固定在其他窗口上方"}
           ><Pin size={17} /></button>
-          <button type="button" className="bubble-topbar__btn" disabled={isThinking || agentBusy} onClick={newConversation} aria-label="新对话" title="新对话"><Plus size={17} /></button>
-          <button type="button" className={`bubble-topbar__btn${workspaceOpen ? " bubble-topbar__btn--active" : ""}`} disabled={surface.pending} onClick={() => void (workspaceOpen ? closeWorkspace() : openWorkspace())} aria-label={workspaceOpen ? "收起主面板" : "打开主面板"} aria-expanded={workspaceOpen} title={workspaceOpen ? "收起工作区" : "展开工作区"}><PanelRight size={17} /></button>
-          <button
-            className="bubble-topbar__btn"
-            type="button"
-            onClick={() => runCommand("hide_bubble")}
-            aria-label="关闭"
-            title="收起对话 · Esc（任务继续运行）"
-          >
-            <X size={17} />
-          </button>
+          {onDetach && <button type="button" className="bubble-topbar__btn" disabled={!viewLoaded || handoffPending || isListening} onClick={() => void handoffView()} aria-label="在独立窗口打开" title="在独立窗口打开"><ExternalLink size={16} /></button>}
+          {onReturn && <button type="button" className="bubble-topbar__btn" disabled={!viewLoaded || handoffPending} onClick={() => void handoffView(true)} aria-label="返回主窗口" title="返回主窗口"><CornerDownLeft size={16} /></button>}
+          <button type="button" className="bubble-topbar__btn" disabled={!onNewConversation && (isThinking || agentBusy)} onClick={newConversation} aria-label="新对话" title="新对话"><Plus size={17} /></button>
         </div>
       </header>
 
@@ -1392,16 +1589,16 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
         )}
         <form className={`prompt-form${isDraggingFile ? " prompt-form--dragging" : ""}`} onSubmit={submit}>
           <div className="prompt-tools" aria-label="输入工具">
-            <button type="button" onClick={() => void chooseAttachment()} aria-label="选择文件" title="选择文件">
+            <button type="button" onClick={() => void chooseAttachment()} disabled={!viewLoaded || handoffPending} aria-label="选择文件" title="选择文件">
               <Paperclip size={16} /><span>文件</span>
             </button>
-            <button type="button" onClick={() => void runCommand("begin_screen_capture").catch((error) => toast.error(toUserMessage(error, "截图失败，请重试。")))} aria-label="截图提问" title="截图提问">
+            <button type="button" onClick={() => void beginCapture()} disabled={!viewLoaded || handoffPending} aria-label="截图提问" title="截图提问">
               <ScanLine size={16} /><span>截图</span>
             </button>
             <button
               type="button"
               className={isListening ? "is-active" : ""}
-              disabled={isTranscribingVoice || !voiceAvailable}
+              disabled={isTranscribingVoice || !voiceAvailable || !viewLoaded || handoffPending}
               onClick={() => void toggleVoiceInput()}
               aria-label={isListening ? "停止语音输入" : isTranscribingVoice ? "正在转写语音" : "开始语音输入"}
               title={isListening ? "停止语音输入" : isTranscribingVoice ? "正在转写语音" : "语音输入"}
@@ -1412,6 +1609,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
           </div>
           <textarea
             rows={2}
+            disabled={!viewLoaded || handoffPending}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
@@ -1448,6 +1646,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspac
         event.preventDefault(); void closeWorkspace();
       }
     }}>
+      <WorkspaceDivider width={visiblePanelWidth} onChange={setPanelWidth} />
       <Suspense fallback={<p role="status">正在打开工作区…</p>}><PanelWindow activeTab={workspaceTab} onTabChange={setWorkspaceTab} onClose={() => void closeWorkspace()} /></Suspense>
     </aside>}
     </div>

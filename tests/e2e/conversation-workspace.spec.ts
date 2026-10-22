@@ -61,3 +61,78 @@ test("Escape and outside clicks dismiss only the navigation menu", async ({ page
   await page.getByLabel("发送给 Piko 的问题").click();
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
 });
+
+test("settings opens beside chat and closing returns input focus", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await page.goto("/?view=bubble");
+  const prompt = page.getByLabel("发送给 Piko 的问题");
+  await prompt.fill("设置时保留的草稿");
+  await page.getByRole("button", { name: "主面板菜单" }).click();
+  await page.getByRole("menuitem", { name: "设置", exact: true }).click();
+  await expect(prompt).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "设置", exact: true })).toHaveClass(/is-active/);
+  const chat = await page.locator(".bubble-shell").boundingBox();
+  const panel = await page.locator(".conversation-workspace__panel").boundingBox();
+  expect(chat!.width).toBe(700);
+  expect(panel!.width).toBe(400);
+  expect(panel!.x).toBeGreaterThanOrEqual(chat!.x + chat!.width);
+  await page.getByRole("button", { name: "收起工作区", exact: true }).click();
+  await expect(prompt).toHaveValue("设置时保留的草稿");
+  await expect(prompt).toBeFocused();
+});
+
+test("panel switch stays anchored and panel width can be resized and remembered", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 760 });
+  await page.goto("/?view=bubble");
+  const toggle = page.getByRole("button", { name: "打开主面板", exact: true });
+  const before = await toggle.boundingBox();
+  await toggle.click();
+  const close = page.getByRole("button", { name: "收起主面板", exact: true });
+  const after = await close.boundingBox();
+  expect(after!.x).toBe(before!.x);
+  expect(after!.y).toBe(before!.y);
+  const divider = page.getByRole("separator", { name: "调整面板宽度" });
+  const panel = page.locator(".conversation-workspace__panel");
+  await expect(divider).toHaveAttribute("aria-valuenow", "400");
+  await divider.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(divider).toHaveAttribute("aria-valuenow", "420");
+  const handle = await divider.boundingBox();
+  await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(handle!.x + handle!.width / 2 - 40, handle!.y + 100);
+  await page.mouse.up();
+  await expect(divider).toHaveAttribute("aria-valuenow", "460");
+  expect((await panel.boundingBox())!.width).toBe(460);
+  await close.click();
+  await page.reload();
+  await page.getByRole("button", { name: "打开主面板", exact: true }).click();
+  await expect(divider).toHaveAttribute("aria-valuenow", "460");
+  await divider.focus();
+  await page.keyboard.press("End");
+  await expect(divider).toHaveAttribute("aria-valuenow", "480");
+  await page.keyboard.press("Home");
+  await expect(divider).toHaveAttribute("aria-valuenow", "360");
+});
+
+test("minimum two-column width preserves chat space and respects resize limits", async ({ page }) => {
+  await page.setViewportSize({ width: 880, height: 700 });
+  await page.goto("/?view=bubble");
+  await page.getByRole("button", { name: "打开主面板", exact: true }).click();
+  const divider = page.getByRole("separator", { name: "调整面板宽度" });
+  await expect(divider).toHaveAttribute("aria-valuemax", "400");
+  await divider.focus();
+  await page.keyboard.press("End");
+  expect((await page.locator(".bubble-shell").boundingBox())!.width).toBe(480);
+  expect((await page.locator(".conversation-workspace__panel").boundingBox())!.width).toBe(400);
+  await page.setViewportSize({ width: 879, height: 700 });
+  await expect(page.getByLabel("发送给 Piko 的问题")).not.toBeVisible();
+  await expect(divider).not.toBeVisible();
+  await page.getByRole("button", { name: "收起工作区", exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 700 });
+  const toggle = page.getByRole("button", { name: "打开主面板", exact: true });
+  await expect(toggle).toBeVisible();
+  await expect(page.getByRole("button", { name: "关闭", exact: true })).toHaveCount(0);
+  const box = await page.getByRole("button", { name: "新对话", exact: true }).boundingBox();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(320);
+});

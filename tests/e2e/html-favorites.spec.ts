@@ -36,6 +36,9 @@ async function installBackend(page: Page) {
           }
           return structuredClone(pet);
         }
+        if (command === "conversation_list_windows") return { revision: 0, windows: [] };
+        if (command === "agent_get_task_snapshots") return [];
+        if (["conversation_get_view", "conversation_save_view", "conversation_forget_view"].includes(command)) return null;
         if (command === "background_status") return [];
         if (command === "get_data_health") return { memoryPersistent: true, sqlite: { acquisitions: 0, waitMicros: 0, holdMicros: 0 }, jsonLockAcquisitions: 0, jsonLockWaitMicros: 0, speechRecognition: true, wasmPlugins: true };
 
@@ -48,7 +51,7 @@ async function installBackend(page: Page) {
           companionName: "Piko", theme: "sage", language: "zh-CN", hasApiKey: true, htmlPreviewEnabled: true,
           ai: { provider: "openai-compatible", baseUrl: "http://127.0.0.1:1234/v1", model: "ui-test" },
         };
-        if (command === "get_bubble_chat_history") return [{ id: "history-1", prompt: "历史页面", response: "```html\n<h1>Historical HTML</h1>\n```", createdAt: 1 }];
+        if (["get_bubble_chat_history", "conversation_chat_history"].includes(command)) return [{ id: "history-1", prompt: "历史页面", response: "```html\n<h1>Historical HTML</h1>\n```", createdAt: 1 }];
         if (command === "list_html_favorites") return [{ id: "saved-1", title: "Saved calculator", html: "<h1>Saved calculator</h1><button onclick=\"this.textContent='Favorite script OK'\">Run saved script</button>", createdAt: 1, updatedAt: 1 }];
         if (command === "create_html_preview_frame") {
           const token = `frame-${++sequence}`;
@@ -69,7 +72,7 @@ async function installBackend(page: Page) {
 }
 
 async function selectFavorite(page: Page) {
-  const context = page.getByTestId("chat-context-toggle");
+  const context = page.getByRole("tabpanel").getByTestId("chat-context-toggle");
   if (await context.getAttribute("aria-expanded") !== "true") await context.click();
   await page.getByRole("button", { name: /收藏卡片/ }).click();
   await page.getByRole("button", { name: "Saved calculator", exact: true }).click();
@@ -79,7 +82,7 @@ async function selectFavorite(page: Page) {
 }
 
 async function reply(page: Page, text: string) {
-  await page.getByLabel("发送给 Piko 的问题").fill("测试当前回复");
+  await page.getByRole("tabpanel").getByLabel("发送给 Piko 的问题").fill("测试当前回复");
   await page.getByRole("button", { name: "发送消息", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __favoriteTest: { calls: Array<{ command: string }> } }).__favoriteTest.calls.filter((call) => call.command === "agent_start").length)).toBeGreaterThan(0);
   await page.evaluate((text) => {

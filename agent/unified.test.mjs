@@ -237,3 +237,36 @@ test("restored conversations use the current role for chat, verification, and to
     assert.ok(request.tools.every((tool) => !["write", "edit", "bash", "powershell"].includes(tool.function.name)));
   }
 });
+
+test("system tools acquire and release the shared lease even when a tool fails", async (t) => {
+  const f = await fixture(t, (_req, res, requests) => requests.length === 1
+    ? toolResponse(res, "read", { path: "missing.txt" }) : say(res, "文件不存在"));
+  const leases = [];
+  const events = await f.run({
+    unified: true, serializeSystemTools: true,
+    onEvent(event, send) {
+      if (event.type === "approval") send({ type: "approval", approvalId: event.approvalId, allowed: true });
+      if (event.type === "app-tool") {
+        leases.push(event.name);
+        send({ type: "app-result", callId: event.callId, result: {} });
+      }
+    },
+  });
+  assert.equal(events.at(-1).type, "completed", JSON.stringify(events));
+  assert.deepEqual(leases, ["piko_acquire_system_tools", "piko_release_system_tools"]);
+  assert.ok(events.some(event => event.type === "tool-end" && event.isError));
+});
+
+test("simultaneous conversations keep their model messages isolated", async (t) => {
+  const f = await fixture(t, (_req, res) => say(res));
+  const results = await Promise.all([
+    f.run({ conversationId: "parallel-one", requestId: "parallel-request-one", prompt: "ONLY_CONVERSATION_ONE" }),
+    f.run({ conversationId: "parallel-two", requestId: "parallel-request-two", prompt: "ONLY_CONVERSATION_TWO" }),
+  ]);
+  assert.ok(results.every(events => events.at(-1).type === "completed"));
+  assert.equal(f.requests.length, 2);
+  const messages = f.requests.map(request => JSON.stringify(request.messages));
+  assert.equal(messages.filter(message => message.includes("ONLY_CONVERSATION_ONE")).length, 1);
+  assert.equal(messages.filter(message => message.includes("ONLY_CONVERSATION_TWO")).length, 1);
+  assert.ok(messages.every(message => !(message.includes("ONLY_CONVERSATION_ONE") && message.includes("ONLY_CONVERSATION_TWO"))));
+});

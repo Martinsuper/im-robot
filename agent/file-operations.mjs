@@ -42,9 +42,13 @@ export class FileOperations {
     await durableJson(path.join(this.directory, "generation.json"), { epoch: randomUUID() });
   }
   async execute(tool, args, cwd, run, approve) {
+    // Keep SDK loading inside the sidecar's startup watchdog boundary.
+    const editAdapter = tool === "edit" ? await import("./sdk-adapter.mjs") : null;
+    if (editAdapter) args = editAdapter.normalizeEditArguments(args);
     const target = path.resolve(cwd, args.path);
     const canonical = await canonicalPath(target);
-    const operationKey = digest(JSON.stringify([tool, canonical, tool === "write" ? args.content : [args.oldText, args.newText]]));
+    // Version edit checkpoints so legacy records cannot authorize edits[] calls.
+    const operationKey = digest(JSON.stringify([tool === "edit" ? "edit-v2" : tool, canonical, tool === "write" ? args.content : args.edits]));
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const recordPath = path.join(this.directory, `${operationKey}.json`);
     let record;
@@ -56,9 +60,8 @@ export class FileOperations {
     const before = await snapshot(canonical);
     let expected;
     if (tool === "write") expected = digest(args.content);
-    else if (before.content !== null && typeof args.oldText === "string" && args.oldText.length && before.content.split(args.oldText).length === 2) {
-      expected = digest(before.content.replace(args.oldText, args.newText));
-    } else expected = record?.expected;
+    else if (record && before.hash !== record.before) expected = record.expected;
+    else expected = digest(await editAdapter.previewEdit(before.content, args));
     const decorate = (result, verification) => ({ ...result, details: { ...result.details, verification },
       content: [...(result.content || []), { type: "text", text: verification.state === "verified" ? `已读回文件并核验内容${verification.reused ? "，未重复执行修改" : ""}。` : "文件操作未获得完整的读回验收，请先核对结果。" }] });
     if (expected && before.hash === expected) {

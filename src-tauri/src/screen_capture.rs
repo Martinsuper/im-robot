@@ -32,7 +32,7 @@ pub(crate) struct CaptureSelection {
     pub(crate) height: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ScreenshotPreview {
     pub(crate) data_url: String,
@@ -41,7 +41,10 @@ pub(crate) struct ScreenshotPreview {
 }
 
 #[derive(Default)]
-pub(crate) struct ScreenCaptureStore(pub(crate) Mutex<Option<ScreenCapture>>);
+pub(crate) struct ScreenCaptureStore(
+    pub(crate) Mutex<Option<ScreenCapture>>,
+    pub(crate) Mutex<Option<String>>,
+);
 
 #[cfg(target_os = "macos")]
 pub(crate) fn ensure_screen_capture_permission() -> Result<(), String> {
@@ -90,11 +93,20 @@ pub(crate) fn capture_area_coordinates(
 }
 
 #[tauri::command]
-pub(crate) fn begin_screen_capture(app: AppHandle) -> Result<(), String> {
+pub(crate) fn begin_screen_capture(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    captures: State<'_, ScreenCaptureStore>,
+) -> Result<(), String> {
     ensure_screen_capture_permission()?;
     let capture = app
         .get_webview_window("capture")
         .ok_or_else(|| "无法打开截图选择窗口".to_string())?;
+    if captures.1.lock().map_err(|_| "无法读取截图来源")?.is_some()
+        && capture.is_visible().unwrap_or(false)
+    {
+        return Err("已有截图选择正在进行，请先完成或取消。".into());
+    }
     let reference = app
         .get_webview_window("pet")
         .and_then(|window| window.current_monitor().ok().flatten())
@@ -107,12 +119,16 @@ pub(crate) fn begin_screen_capture(app: AppHandle) -> Result<(), String> {
     capture
         .set_size(*reference.size())
         .map_err(|error| error.to_string())?;
+    *captures.1.lock().map_err(|_| "无法记录截图来源")? = Some(window.label().to_string());
     capture.show().map_err(|error| error.to_string())?;
     capture.set_focus().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub(crate) fn cancel_screen_capture(app: AppHandle) {
+pub(crate) fn cancel_screen_capture(app: AppHandle, captures: State<'_, ScreenCaptureStore>) {
+    if let Ok(mut owner) = captures.1.lock() {
+        *owner = None;
+    }
     if let Some(window) = app.get_webview_window("capture") {
         let _ = window.hide();
     }
@@ -178,8 +194,17 @@ pub(crate) fn confirm_screen_capture(
         width,
         height,
     });
-    show_and_focus(&app, "bubble");
-    let _ = app.emit_to("bubble", "screenshot-ready", preview.clone());
+    let target = captures
+        .1
+        .lock()
+        .map_err(|_| "无法读取截图来源")?
+        .take()
+        .unwrap_or_else(|| "bubble".into());
+    if app.get_webview_window(&target).is_none() {
+        return Err("截图来源窗口已关闭，请在当前会话重新截图".into());
+    }
+    show_and_focus(&app, &target);
+    let _ = app.emit_to(target, "screenshot-ready", preview.clone());
     Ok(preview)
 }
 

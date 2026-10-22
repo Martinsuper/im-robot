@@ -63,3 +63,42 @@ test("revocation remains effective after restarting the runner", async (t) => {
   await new FileOperations(cwd, "task", { resuming: true }).execute("write", args, cwd, async () => { await writeFile(file, args.content); return { content: [] }; }, async () => { approvals++; });
   assert.equal(approvals, 1);
 });
+
+async function sdkEdit(cwd, args) {
+  const { fileTools, normalizeEditArguments } = await import('./sdk-adapter.mjs');
+  return fileTools(cwd).find(tool => tool.name === 'edit').execute('regression', normalizeEditArguments(args));
+}
+
+test('SDK batch edits verify BOM, CRLF and literal replacement text, then resume without replay', async (t) => {
+  const { cwd, file } = await setup(t);
+  await writeFile(file, '\uFEFFalpha\r\nbeta\r\n');
+  const args = { path: 'result.txt', edits: [{ oldText: 'alpha', newText: '$& first' }, { oldText: 'beta', newText: 'second' }] };
+  const result = await new FileOperations(cwd, 'task').execute('edit', args, cwd, () => sdkEdit(cwd, args), async () => {});
+  assert.equal(await readFile(file, 'utf8'), '\uFEFF$& first\r\nsecond\r\n');
+  assert.equal(result.details.verification.state, 'verified');
+  const resumed = await new FileOperations(cwd, 'task', { resuming: true }).execute('edit', args, cwd, () => assert.fail('must not replay'), () => assert.fail('already applied'));
+  assert.equal(resumed.details.verification.reused, true);
+});
+
+test('changed batch edits cannot reuse authorization after a crash', async (t) => {
+  const { cwd, file } = await setup(t);
+  await writeFile(file, 'before');
+  const original = { path: 'result.txt', edits: [{ oldText: 'before', newText: 'approved' }] };
+  await assert.rejects(new FileOperations(cwd, 'task').execute('edit', original, cwd, async () => { throw Error('crash'); }, async () => {}));
+  const changed = { path: 'result.txt', edits: [{ oldText: 'before', newText: 'not approved' }] };
+  let approvals = 0;
+  await assert.rejects(new FileOperations(cwd, 'task', { resuming: true }).execute('edit', changed, cwd, () => assert.fail('must not run'), async () => { approvals++; throw Error('denied'); }), /denied/);
+  assert.equal(approvals, 1);
+  assert.equal(await readFile(file, 'utf8'), 'before');
+  const resumed = await new FileOperations(cwd, 'task', { resuming: true }).execute('edit', original, cwd, () => sdkEdit(cwd, original), () => assert.fail('same edit already approved'));
+  assert.equal(resumed.details.verification.state, 'verified');
+});
+
+test('batch edit crash after writing reconciles the completed effect', async (t) => {
+  const { cwd, file } = await setup(t);
+  await writeFile(file, 'before');
+  const args = { path: 'result.txt', edits: [{ oldText: 'before', newText: 'after' }] };
+  await assert.rejects(new FileOperations(cwd, 'task').execute('edit', args, cwd, async () => { await sdkEdit(cwd, args); throw Error('crash'); }, async () => {}));
+  const result = await new FileOperations(cwd, 'task', { resuming: true }).execute('edit', args, cwd, () => assert.fail('must not replay'), () => assert.fail('already applied'));
+  assert.equal(result.details.verification.state, 'verified');
+});

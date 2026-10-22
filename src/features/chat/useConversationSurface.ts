@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { currentMonitor, getCurrentWindow, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
 import { isTauriRuntime } from "../app/appRuntime";
-import { fitWorkspace } from "./workspaceLayout";
+import { fitWorkspace, type WorkspaceBounds } from "./workspaceLayout";
 import { emit } from "@tauri-apps/api/event";
 
 /** Change only native window presentation, keeping the mounted conversation intact. */
 export function useConversationSurface(onError: (error: unknown) => void) {
-  const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState(false);
-  const quickSize = useRef({ width: 480, height: 420 });
   const busy = useRef(false);
-  const workspaceSize = useRef<{ width: number; height: number } | null>(null);
+  const workspaceSize = useRef<WorkspaceBounds | null>(null);
+  const workspaceResized = useRef(false);
   const errorHandler = useRef(onError);
   useEffect(() => { errorHandler.current = onError; }, [onError]);
 
@@ -35,20 +34,26 @@ export function useConversationSurface(onError: (error: unknown) => void) {
               x: area.position.x / monitor.scaleFactor, y: area.position.y / monitor.scaleFactor,
               width: area.size.width / monitor.scaleFactor, height: area.size.height / monitor.scaleFactor,
             });
-            await nativeWindow.setSize(new LogicalSize(bounds.width, bounds.height));
-            await nativeWindow.setPosition(new LogicalPosition(bounds.x, bounds.y));
+            workspaceResized.current = bounds.width !== size.width || bounds.height !== size.height || bounds.x !== position.x || bounds.y !== position.y;
+            if (workspaceResized.current) {
+              await nativeWindow.setSize(new LogicalSize(bounds.width, bounds.height));
+              await nativeWindow.setPosition(new LogicalPosition(bounds.x, bounds.y));
+            }
           }
-          workspaceSize.current = size;
+          workspaceSize.current = { ...size, ...position };
         } else {
-          if (await nativeWindow.isFullscreen()) await nativeWindow.setFullscreen(false);
-          if (await nativeWindow.isMaximized()) await nativeWindow.unmaximize();
-          const size = workspaceSize.current!;
-          await nativeWindow.setSize(new LogicalSize(size.width, size.height));
+          if (workspaceResized.current) {
+            if (await nativeWindow.isFullscreen()) await nativeWindow.setFullscreen(false);
+            if (await nativeWindow.isMaximized()) await nativeWindow.unmaximize();
+            const size = workspaceSize.current!;
+            await nativeWindow.setSize(new LogicalSize(size.width, size.height));
+            await nativeWindow.setPosition(new LogicalPosition(size.x, size.y));
+          }
           await emit("workspace-visibility", false);
           workspaceSize.current = null;
         }
       } else {
-        workspaceSize.current = open ? { width: 480, height: 420 } : null;
+        workspaceSize.current = open ? { x: 0, y: 0, width: 480, height: 420 } : null;
       }
       return true;
     } catch (error) {
@@ -63,36 +68,5 @@ export function useConversationSurface(onError: (error: unknown) => void) {
     }
   }, []);
 
-  async function toggle() {
-    if (busy.current) return;
-    busy.current = true;
-    setPending(true);
-    const next = !expanded;
-    try {
-      if (isTauriRuntime) {
-        const window = getCurrentWindow();
-        if (next) {
-          const size = await window.innerSize();
-          quickSize.current = size.toLogical(await window.scaleFactor());
-        } else {
-          if (await window.isFullscreen()) await window.setFullscreen(false);
-          if (await window.isMaximized()) await window.unmaximize();
-        }
-        await window.setDecorations(next);
-        await window.setSkipTaskbar(!next);
-        await window.setSize(new LogicalSize(
-          next ? Math.max(860, quickSize.current.width) : quickSize.current.width,
-          next ? Math.max(700, quickSize.current.height) : quickSize.current.height,
-        ));
-      }
-      setExpanded(next);
-    } catch (error) {
-      onError(error);
-    } finally {
-      busy.current = false;
-      setPending(false);
-    }
-  }
-
-  return { expanded, pending, toggle, setWorkspaceOpen };
+  return { pending, setWorkspaceOpen };
 }

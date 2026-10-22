@@ -82,6 +82,8 @@ pub(crate) fn run() {
         .manage(ChatRequests::default())
         .manage(ChatContext::default())
         .manage(agent::AgentRuntime::default())
+        .manage(crate::conversation_windows::ConversationWindows::default())
+        .manage(crate::conversation_views::ConversationViews::default())
         .manage(PluginRegistry::with_builtin_plugins())
         .manage(ActionDrafts::default())
         .manage(LocalTts::default())
@@ -235,6 +237,7 @@ pub(crate) fn run() {
             typing_activity::start_keyboard_monitor(app.handle());
             typing_activity::watch_typing_rollover(app.handle());
             watch_work_rhythm(app.handle());
+            crate::conversation_windows::restore(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -332,6 +335,14 @@ pub(crate) fn run() {
             agent::agent_start,
             agent::agent_list_tasks,
             agent::agent_get_task_snapshot,
+            agent::agent_get_task_snapshots,
+            crate::conversation_windows::conversation_list_windows,
+            crate::conversation_windows::conversation_open_window,
+            crate::conversation_windows::conversation_close_window,
+            crate::conversation_views::conversation_get_view,
+            crate::conversation_views::conversation_save_view,
+            crate::conversation_views::conversation_chat_history,
+            crate::conversation_views::conversation_forget_view,
             agent::agent_get_diagnostics,
             memory::vault::memory_vault_status,
             memory::vault::memory_vault_open_directory,
@@ -444,7 +455,11 @@ pub(crate) fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Piko desktop application")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                crate::conversation_windows::prepare_exit(app);
+            }
             if matches!(event, tauri::RunEvent::Exit) {
+                crate::conversation_windows::prepare_exit(app);
                 if let Some(tts) = app.try_state::<LocalTts>() {
                     if let Ok(mut active) = tts.0.try_lock() {
                         if let Some(mut child) = active.take() {

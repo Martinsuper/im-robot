@@ -248,7 +248,10 @@ pub fn on_boot(app: &AppHandle) {
         };
         let now = crate::common::unix_timestamp();
         let journal = TaskJournal::new(&base.join("agent"));
-        if let Ok(records) = journal.recover(None, now) {
+        if let Ok(records) = handle
+            .state::<crate::agent::AgentRuntime>()
+            .recover_tasks(&journal, now)
+        {
             let db = handle.state::<std::sync::Arc<crate::memory::MemoryDb>>();
             for record in &records {
                 let mut conn = match db.0.lock() {

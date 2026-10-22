@@ -76,9 +76,17 @@ impl TaskJournal {
                 steps: Vec::new(),
                 resume_of,
             });
-            // The runtime allows one active task. Keep the newest 100 records.
+            // Keep recent records without discarding active tasks.
             if records.len() > 100 {
-                records.drain(..records.len() - 100);
+                let mut remove = records.len() - 100;
+                records.retain(|record| {
+                    if remove > 0 && terminal(&record.status) {
+                        remove -= 1;
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
             Ok(())
         })
@@ -157,12 +165,17 @@ impl TaskJournal {
         })
     }
 
+    #[cfg(test)]
     pub fn recover(&self, active_id: Option<&str>, now: u64) -> Result<Vec<TaskRecord>, String> {
+        self.recover_active(&active_id.into_iter().collect::<Vec<_>>(), now)
+    }
+
+    pub fn recover_active(&self, active_ids: &[&str], now: u64) -> Result<Vec<TaskRecord>, String> {
         let _transaction = crate::storage::transaction();
         let mut records: Vec<TaskRecord> = crate::storage::read(&self.0)?;
         let mut changed = false;
         for record in &mut records {
-            if !terminal(&record.status) && active_id != Some(record.request_id.as_str()) {
+            if !terminal(&record.status) && !active_ids.contains(&record.request_id.as_str()) {
                 record.status = "interrupted".into();
                 record.updated_at = now;
                 for step in &mut record.steps {
@@ -185,6 +198,46 @@ impl TaskJournal {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn recovery_preserves_every_live_task_and_only_interrupts_orphans() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = TaskJournal::new(dir.path());
+        journal.start("r1", "c1", 1).unwrap();
+        journal.start("r2", "c2", 2).unwrap();
+        journal.start("orphan", "c3", 3).unwrap();
+        let records = journal.recover_active(&["r1", "r2"], 4).unwrap();
+        for id in ["r1", "r2"] {
+            assert_eq!(
+                records
+                    .iter()
+                    .find(|record| record.request_id == id)
+                    .unwrap()
+                    .status,
+                "running"
+            );
+        }
+        assert_eq!(
+            records
+                .iter()
+                .find(|record| record.request_id == "orphan")
+                .unwrap()
+                .status,
+            "interrupted"
+        );
+        journal
+            .event("r1", &json!({"type":"completed"}), 5)
+            .unwrap();
+        let records = journal.recover_active(&["r2"], 6).unwrap();
+        assert_eq!(
+            records
+                .iter()
+                .find(|record| record.request_id == "r2")
+                .unwrap()
+                .status,
+            "running"
+        );
+    }
 
     #[test]
     fn restart_preserves_finished_steps_and_marks_pending_work_unknown() {

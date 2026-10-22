@@ -82,7 +82,10 @@ async function installSettingsBackend(
             }
             return structuredClone(pet);
           }
-          if (command === "background_status") return [];
+          if (command === "conversation_list_windows") return { revision: 0, windows: [] };
+        if (["agent_get_task_snapshots", "conversation_chat_history"].includes(command)) return [];
+        if (["conversation_get_view", "conversation_save_view", "conversation_forget_view"].includes(command)) return null;
+        if (command === "background_status") return [];
           if (command === "get_data_health")
             return {
               memoryPersistent: true,

@@ -1,4 +1,6 @@
 //! Owns the local Pi SDK process. Secrets only cross its private stdin pipe.
+#[path = "agent_concurrency.rs"]
+mod concurrency;
 #[path = "agent_diagnostics.rs"]
 mod diagnostics;
 #[path = "agent_journal.rs"]
@@ -44,26 +46,43 @@ async fn next_agent_line<R: AsyncBufRead + Unpin>(
 
 #[derive(Default)]
 pub struct AgentRuntime(
-    Mutex<Option<RunningTask>>,
-    std::sync::Mutex<Option<TaskSnapshot>>,
+    Mutex<HashMap<String, RunningTask>>,
+    std::sync::Mutex<HashMap<String, TaskSnapshot>>,
+    Arc<Mutex<()>>,
 );
 
 impl AgentRuntime {
+    pub(crate) fn conversation_busy(&self, id: &str) -> bool {
+        self.0
+            .try_lock()
+            .map(|tasks| tasks.values().any(|task| task.conversation_id == id))
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn recover_tasks(
+        &self,
+        journal: &TaskJournal,
+        now: u64,
+    ) -> Result<Vec<journal::TaskRecord>, String> {
+        let tasks = self.0.try_lock().map_err(|_| "任务状态正在更新")?;
+        journal.recover_active(&tasks.keys().map(String::as_str).collect::<Vec<_>>(), now)
+    }
+
     pub(crate) fn activity(&self) -> Option<(bool, bool)> {
         let active = self.0.try_lock().ok()?;
-        match active.as_ref() {
-            None => Some((false, false)),
-            Some(task) => {
-                let pending = task.pending_actions.try_lock().ok()?;
-                Some((true, !pending.is_empty() || task.workspace_call.is_some()))
-            }
+        let mut waiting = false;
+        for task in active.values() {
+            let pending = task.pending_actions.try_lock().ok()?;
+            waiting |= !pending.is_empty() || task.workspace_call.is_some();
         }
+        Some((!active.is_empty(), waiting))
     }
 }
 
 struct RunningTask {
     _data_lease: crate::data_gate::ReadLease,
-    request_id: String,
+    conversation_id: String,
+    workspace: Option<PathBuf>,
     stdin: Arc<Mutex<ChildStdin>>,
     child: Arc<Mutex<Child>>,
     pending_actions: Arc<Mutex<HashMap<String, String>>>,
@@ -72,6 +91,34 @@ struct RunningTask {
     resuming: bool,
     operation_root: String,
     reuse_authorization: bool,
+    system_tool_lease: Option<tokio::sync::OwnedMutexGuard<()>>,
+    cancelled: tokio_util::sync::CancellationToken,
+}
+
+fn task_scopes(tasks: &HashMap<String, RunningTask>) -> Vec<concurrency::TaskScope<'_>> {
+    tasks
+        .iter()
+        .map(|(id, task)| concurrency::TaskScope {
+            request_id: id,
+            conversation_id: &task.conversation_id,
+            workspace: task.workspace.as_deref(),
+        })
+        .collect()
+}
+fn ensure_workspace_available(
+    tasks: &HashMap<String, RunningTask>,
+    request_id: &str,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    concurrency::workspace_available(&task_scopes(tasks), request_id, path)
+}
+fn validate_task_start(
+    tasks: &HashMap<String, RunningTask>,
+    request_id: &str,
+    conversation_id: &str,
+    workspace: Option<&std::path::Path>,
+) -> Result<(), String> {
+    concurrency::admit(&task_scopes(tasks), request_id, conversation_id, workspace)
 }
 
 #[derive(Deserialize)]
@@ -87,6 +134,8 @@ pub struct AgentStartInput {
     #[serde(default)]
     import_history: bool,
     attachment_action: Option<String>,
+    context_id: Option<String>,
+    screenshot: Option<crate::screen_capture::ScreenshotPreview>,
     include_screenshot: Option<bool>,
     verification_of: Option<String>,
     proactive_message_id: Option<String>,
@@ -156,10 +205,7 @@ fn emit(app: &AppHandle, request_id: &str, mut event: Value) {
     event["requestId"] = json!(request_id);
     let runtime = app.state::<AgentRuntime>();
     let mut current = runtime.1.lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(snapshot) = current
-        .as_mut()
-        .filter(|snapshot| snapshot.request_id == request_id)
-    {
+    if let Some(snapshot) = current.get_mut(request_id) {
         if matches!(
             event["type"].as_str(),
             Some("started" | "completed" | "failed" | "cancelled")
@@ -181,12 +227,31 @@ fn emit(app: &AppHandle, request_id: &str, mut event: Value) {
 }
 
 #[tauri::command]
-pub fn agent_get_task_snapshot(runtime: State<'_, AgentRuntime>) -> Option<TaskSnapshot> {
+pub fn agent_get_task_snapshot(
+    runtime: State<'_, AgentRuntime>,
+    conversation_id: Option<String>,
+) -> Option<TaskSnapshot> {
+    let snapshots = runtime.1.lock().unwrap_or_else(|error| error.into_inner());
+    snapshots
+        .values()
+        .filter(|snapshot| {
+            conversation_id
+                .as_ref()
+                .is_none_or(|id| &snapshot.conversation_id == id)
+        })
+        .max_by_key(|snapshot| snapshot.event_sequence)
+        .cloned()
+}
+
+#[tauri::command]
+pub fn agent_get_task_snapshots(runtime: State<'_, AgentRuntime>) -> Vec<TaskSnapshot> {
     runtime
         .1
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .clone()
+        .values()
+        .cloned()
+        .collect()
 }
 
 async fn write_command(stdin: &Arc<Mutex<ChildStdin>>, command: Value) -> Result<(), String> {
@@ -225,8 +290,8 @@ pub async fn agent_list_tasks(
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("agent");
-    TaskJournal::new(&directory).recover(
-        slot.as_ref().map(|task| task.request_id.as_str()),
+    TaskJournal::new(&directory).recover_active(
+        &slot.keys().map(String::as_str).collect::<Vec<_>>(),
         crate::common::unix_timestamp(),
     )
 }
@@ -239,6 +304,13 @@ pub async fn agent_start(
 ) -> Result<(), String> {
     if !valid_id(&input.request_id) || !valid_id(&input.conversation_id) {
         return Err("无效的任务标识".into());
+    }
+    if input
+        .context_id
+        .as_ref()
+        .is_some_and(|id| id != &input.conversation_id)
+    {
+        return Err("附件与当前会话不匹配".into());
     }
     if input.prompt.len() > 100_000 {
         return Err("任务描述最多 100 KB".into());
@@ -271,7 +343,16 @@ pub async fn agent_start(
     };
     crate::memory::soul::settings::apply_pause_intent(&app, &input.prompt);
     let attachments = app.state::<crate::attachments::TextAttachmentStore>();
-    let attachment = attachments.0.lock().map_err(|_| "无法读取附件")?.clone();
+    let attachment = if let Some(id) = &input.context_id {
+        attachments
+            .1
+            .lock()
+            .map_err(|_| "无法读取附件")?
+            .get(id)
+            .cloned()
+    } else {
+        attachments.0.lock().map_err(|_| "无法读取附件")?.clone()
+    };
     let text = if input.prompt.trim().is_empty() && input.include_screenshot.unwrap_or(false) {
         "请描述截图中的内容"
     } else {
@@ -317,12 +398,25 @@ pub async fn agent_start(
     }
     let images = if input.include_screenshot.unwrap_or(false) {
         let captures = app.state::<crate::screen_capture::ScreenCaptureStore>();
-        let capture = captures
-            .0
-            .lock()
-            .map_err(|_| "无法读取截图")?
-            .clone()
-            .ok_or("请先框选截图区域")?;
+        let capture = if let Some(capture) = input.screenshot.take() {
+            crate::screen_capture::ScreenCapture {
+                data_url: capture.data_url,
+                width: capture.width,
+                height: capture.height,
+            }
+        } else if input.context_id.is_some() {
+            return Err("请先框选截图区域".into());
+        } else {
+            captures
+                .0
+                .lock()
+                .map_err(|_| "无法读取截图")?
+                .clone()
+                .ok_or("请先框选截图区域")?
+        };
+        if capture.data_url.len() > 32 * 1024 * 1024 {
+            return Err("截图过大，请缩小截图范围".into());
+        }
         let (prefix, data) = capture.data_url.split_once(',').ok_or("截图格式无效")?;
         let mime = prefix
             .strip_prefix("data:")
@@ -332,12 +426,18 @@ pub async fn agent_start(
     } else {
         Vec::new()
     };
-    let mut slot = runtime.0.lock().await;
-    if slot.is_some() {
-        return Err("已有 Agent 任务正在执行，请先停止".into());
-    }
+    let slot = runtime.0.lock().await;
+    validate_task_start(
+        &slot,
+        &input.request_id,
+        &input.conversation_id,
+        selected_workspace.as_deref(),
+    )?;
     let journal = TaskJournal::new(&data_dir);
-    let records = journal.recover(None, crate::common::unix_timestamp())?;
+    let records = journal.recover_active(
+        &slot.keys().map(String::as_str).collect::<Vec<_>>(),
+        crate::common::unix_timestamp(),
+    )?;
     let verification = input
         .verification_of
         .as_deref()
@@ -472,6 +572,9 @@ pub async fn agent_start(
     } else {
         Vec::new()
     };
+    // Knowledge retrieval may call an embedding service; keep cancellation and
+    // other conversations responsive while it is in flight.
+    drop(slot);
     let memory_db = app.state::<Arc<crate::memory::MemoryDb>>();
     let memory_context = crate::memory::knowledge::scoped_context(
         &memory_db,
@@ -481,6 +584,13 @@ pub async fn agent_start(
     .await
     .ok()
     .filter(|text| !text.is_empty());
+    let mut slot = runtime.0.lock().await;
+    validate_task_start(
+        &slot,
+        &input.request_id,
+        &conversation_id,
+        selected_workspace.as_deref(),
+    )?;
     if let Some(kind) = crate::memory::soul::mood::direct_user_event(&input.prompt) {
         if let Ok(mut conn) = memory_db.0.lock() {
             let source = crate::memory::soul::model::SourceRef {
@@ -534,7 +644,7 @@ pub async fn agent_start(
         "autoApproveCommands":settings.agent_auto_approve_commands,
         "readOnly":read_only,
         "contextWindow":settings.ai.context_window,"maxOutputTokens":settings.ai.max_output_tokens,"timeoutSeconds":settings.ai.timeout_seconds,
-        "unified":input.unified, "workspace":selected_workspace, "businessTools":business_tools,
+        "unified":input.unified, "workspace":selected_workspace, "businessTools":business_tools, "serializeSystemTools":true,
         "systemPrompt":system_prompt, "history":history, "images":images });
     journal.start_linked(
         &input.request_id,
@@ -559,23 +669,42 @@ pub async fn agent_start(
         history_prompt.clone(),
     );
     task_snapshot.knowledge_scope = knowledge_scope.clone();
-    *runtime.1.lock().unwrap_or_else(|error| error.into_inner()) = Some(task_snapshot);
+    {
+        let mut snapshots = runtime.1.lock().unwrap_or_else(|error| error.into_inner());
+        snapshots.retain(|_, snapshot| snapshot.conversation_id != conversation_id);
+        if snapshots.len() >= 100 {
+            if let Some(id) = snapshots
+                .iter()
+                .find(|(_, snapshot)| snapshot.terminal())
+                .map(|(id, _)| id.clone())
+            {
+                snapshots.remove(&id);
+            }
+        }
+        snapshots.insert(input.request_id.clone(), task_snapshot);
+    }
     let request_id = input.request_id;
     let history_prompt = Arc::new(Mutex::new(history_prompt));
     let pending_actions = Arc::new(Mutex::new(HashMap::new()));
     let shutdown_stdin = stdin.clone();
-    *slot = Some(RunningTask {
-        _data_lease: data_lease,
-        request_id: request_id.clone(),
-        stdin: stdin.clone(),
-        child: child.clone(),
-        pending_actions: pending_actions.clone(),
-        workspace_call: None,
-        read_only,
-        resuming,
-        operation_root,
-        reuse_authorization: true,
-    });
+    slot.insert(
+        request_id.clone(),
+        RunningTask {
+            _data_lease: data_lease,
+            conversation_id: conversation_id.clone(),
+            workspace: selected_workspace.clone(),
+            stdin: stdin.clone(),
+            child: child.clone(),
+            pending_actions: pending_actions.clone(),
+            workspace_call: None,
+            read_only,
+            resuming,
+            operation_root,
+            reuse_authorization: true,
+            system_tool_lease: None,
+            cancelled: crate::background::SUPERVISOR.token().child_token(),
+        },
+    );
     drop(slot);
     crate::background::SUPERVISOR.spawn_async_effect("agent-stream", move |_worker| async move {
         let mut lines = BufReader::new(stdout).lines();
@@ -662,9 +791,7 @@ pub async fn agent_start(
         crate::memory::soul::tasks::on_task_terminal(&app, &request_id);
         let state = app.state::<AgentRuntime>();
         let mut slot = state.0.lock().await;
-        let owned = slot
-            .as_ref()
-            .is_some_and(|task| task.request_id == request_id);
+        let owned = slot.contains_key(&request_id);
         if owned {
             if journal
                 .event(
@@ -676,7 +803,7 @@ pub async fn agent_start(
             {
                 terminal_event = json!({"type":"failed", "message":"任务已结束，但执行状态保存失败。请核对实际结果，不要直接重复执行。"});
             }
-            *slot = None;
+            slot.remove(&request_id);
         }
         drop(slot);
         // Every terminal path releases the runtime and invalidates drafts before the UI can retry.
@@ -699,8 +826,7 @@ pub async fn agent_steer(
     }
     let mut slot = runtime.0.lock().await;
     let task = slot
-        .as_mut()
-        .filter(|task| task.request_id == request_id)
+        .get_mut(&request_id)
         .ok_or("任务已结束，请发送新消息")?;
     remove_drafts(&app, &task.pending_actions).await;
     task.workspace_call = None;
@@ -718,10 +844,7 @@ pub async fn agent_approve(
     allowed: bool,
 ) -> Result<(), String> {
     let slot = runtime.0.lock().await;
-    let task = slot
-        .as_ref()
-        .filter(|task| task.request_id == request_id)
-        .ok_or("任务已结束")?;
+    let task = slot.get(&request_id).ok_or("任务已结束")?;
     write_command(
         &task.stdin,
         json!({"type": "approval", "approvalId": approval_id, "allowed": allowed}),
@@ -742,10 +865,8 @@ pub async fn agent_cancel(
     request_id: String,
 ) -> Result<(), String> {
     let slot = runtime.0.lock().await;
-    let task = slot
-        .as_ref()
-        .filter(|task| task.request_id == request_id)
-        .ok_or("任务已结束")?;
+    let task = slot.get(&request_id).ok_or("任务已结束")?;
+    task.cancelled.cancel();
     let _ = write_command(&task.stdin, json!({"type": "cancel"})).await;
     let child = task.child.clone();
     let pending_actions = task.pending_actions.clone();
@@ -755,9 +876,7 @@ pub async fn agent_cancel(
         if !worker.sleep(std::time::Duration::from_secs(5)).await { return; }
         let state = app.state::<AgentRuntime>();
         let mut slot = state.0.lock().await;
-        if slot
-            .as_ref()
-            .is_some_and(|task| task.request_id == request_id)
+        if slot.contains_key(&request_id)
         {
             let _ = child.lock().await.kill().await;
             remove_drafts(&app, &pending_actions).await;
@@ -772,7 +891,7 @@ pub async fn agent_cancel(
                         crate::common::unix_timestamp(),
                     )
                 });
-            *slot = None;
+            slot.remove(&request_id);
             drop(slot);
             emit(
                 &app,
@@ -803,10 +922,49 @@ async fn handle_app_tool(
 ) {
     let call_id = event["callId"].as_str().unwrap_or("").to_string();
     let name = event["name"].as_str().unwrap_or("");
+    // Serialize filesystem and shell tools across processes, including paths outside
+    // the selected directory. The owned guard is also released on cancellation/crash.
+    if matches!(
+        name,
+        "piko_acquire_system_tools" | "piko_release_system_tools"
+    ) {
+        let runtime = app.state::<AgentRuntime>();
+        if name == "piko_acquire_system_tools" {
+            let cancelled = {
+                let tasks = runtime.0.lock().await;
+                let Some(task) = tasks.get(request_id) else {
+                    return;
+                };
+                task.cancelled.clone()
+            };
+            let lease = tokio::select! {
+                biased;
+                _ = cancelled.cancelled() => { return; }
+                result = tokio::time::timeout(AGENT_IDLE_TIMEOUT, runtime.2.clone().lock_owned()) => {
+                    match result {
+                        Ok(lease) => lease,
+                        Err(_) => {
+                            let _ = write_command(stdin, json!({"type":"app-result", "callId":call_id, "error":"其他任务占用文件工具过久，请稍后重试。"})).await;
+                            return;
+                        }
+                    }
+                }
+            };
+            let mut tasks = runtime.0.lock().await;
+            let Some(task) = tasks.get_mut(request_id) else {
+                return;
+            };
+            task.system_tool_lease = Some(lease);
+        } else if let Some(task) = runtime.0.lock().await.get_mut(request_id) {
+            task.system_tool_lease = None;
+        }
+        let _ = write_command(stdin, json!({"type":"app-result", "callId":call_id, "result":{"acquired":name == "piko_acquire_system_tools"}})).await;
+        return;
+    }
     if name == "piko_select_workspace" {
         let runtime = app.state::<AgentRuntime>();
         let mut slot = runtime.0.lock().await;
-        if let Some(task) = slot.as_mut().filter(|task| task.request_id == request_id) {
+        if let Some(task) = slot.get_mut(request_id) {
             task.workspace_call = Some(call_id);
             emit(app, request_id, json!({"type":"workspace-required"}));
         }
@@ -815,7 +973,7 @@ async fn handle_app_tool(
     let (read_only, resuming, operation_root, reuse_authorization) = {
         let runtime = app.state::<AgentRuntime>();
         let slot = runtime.0.lock().await;
-        match slot.as_ref().filter(|task| task.request_id == request_id) {
+        match slot.get(request_id) {
             Some(task) => (
                 task.read_only,
                 task.resuming,
@@ -917,20 +1075,21 @@ pub async fn agent_select_workspace(
     request_id: String,
     path: Option<String>,
 ) -> Result<(), String> {
-    let mut slot = runtime.0.lock().await;
-    let task = slot
-        .as_mut()
-        .filter(|task| task.request_id == request_id)
-        .ok_or("对话已结束")?;
-    if task.workspace_call.is_none() {
-        return Err("当前无需选择目录".into());
-    }
     let result = path
         .map(|path| std::fs::canonicalize(path).map_err(|_| "目录不存在".to_string()))
         .transpose()?;
     if result.as_ref().is_some_and(|path| !path.is_dir()) {
         return Err("请选择文件夹".into());
     }
+    let mut slot = runtime.0.lock().await;
+    if let Some(path) = result.as_deref() {
+        ensure_workspace_available(&slot, &request_id, path)?;
+    }
+    let task = slot.get_mut(&request_id).ok_or("对话已结束")?;
+    if task.workspace_call.is_none() {
+        return Err("当前无需选择目录".into());
+    }
+    task.workspace = result.clone();
     let call_id = task.workspace_call.take().ok_or("当前无需选择目录")?;
     write_command(&task.stdin, json!({"type":"app-result", "callId":call_id,
         "result":result.as_ref().map(|path| json!({"path":path})),
@@ -953,10 +1112,7 @@ pub async fn agent_confirm_action(
 ) -> Result<(), String> {
     let (stdin, call_id, operation_root) = {
         let slot = runtime.0.lock().await;
-        let task = slot
-            .as_ref()
-            .filter(|task| task.request_id == request_id)
-            .ok_or("对话已结束")?;
+        let task = slot.get(&request_id).ok_or("对话已结束")?;
         let call_id = task
             .pending_actions
             .lock()
@@ -1077,10 +1233,7 @@ pub async fn agent_reject_action(
     id: String,
 ) -> Result<(), String> {
     let slot = runtime.0.lock().await;
-    let task = slot
-        .as_ref()
-        .filter(|task| task.request_id == request_id)
-        .ok_or("对话已结束")?;
+    let task = slot.get(&request_id).ok_or("对话已结束")?;
     let call_id = task
         .pending_actions
         .lock()

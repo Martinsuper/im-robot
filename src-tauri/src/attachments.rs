@@ -1,6 +1,6 @@
 //! Text attachments and generated-text file operations.
 use crate::runtime_types::PetVisualEvent;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -19,7 +19,7 @@ pub(crate) struct TextAttachment {
     pub(crate) content: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AttachmentPreview {
     pub(crate) display_name: String,
@@ -29,7 +29,10 @@ pub(crate) struct AttachmentPreview {
 }
 
 #[derive(Default)]
-pub(crate) struct TextAttachmentStore(pub(crate) Mutex<Option<TextAttachment>>);
+pub(crate) struct TextAttachmentStore(
+    pub(crate) Mutex<Option<TextAttachment>>,
+    pub(crate) Mutex<std::collections::HashMap<String, TextAttachment>>,
+);
 
 pub(crate) fn validate_save_path(path: &Path) -> Result<(), String> {
     const ALLOWED_EXTENSIONS: [&str; 12] = [
@@ -136,12 +139,18 @@ pub(crate) fn prepare_text_attachment(
     app: AppHandle,
     attachments: State<'_, TextAttachmentStore>,
     path: String,
+    context_id: Option<String>,
 ) -> Result<AttachmentPreview, String> {
     let (attachment, preview) = read_text_attachment(Path::new(&path))?;
-    *attachments
-        .0
-        .lock()
-        .map_err(|_| "无法保存附件状态".to_string())? = Some(attachment);
+    if let Some(id) = context_id {
+        let mut contexts = attachments.1.lock().map_err(|_| "无法保存附件状态")?;
+        if !contexts.contains_key(&id) && contexts.len() >= 32 {
+            return Err("附件会话数量已达上限，请关闭不用的会话".into());
+        }
+        contexts.insert(id, attachment);
+    } else {
+        *attachments.0.lock().map_err(|_| "无法保存附件状态")? = Some(attachment);
+    }
     let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::AttachmentReady);
     Ok(preview)
 }
@@ -149,7 +158,16 @@ pub(crate) fn prepare_text_attachment(
 #[tauri::command]
 pub(crate) fn clear_text_attachment(
     attachments: State<'_, TextAttachmentStore>,
+    context_id: Option<String>,
 ) -> Result<(), String> {
+    if let Some(id) = context_id {
+        attachments
+            .1
+            .lock()
+            .map_err(|_| "无法清除附件状态")?
+            .remove(&id);
+        return Ok(());
+    }
     *attachments
         .0
         .lock()

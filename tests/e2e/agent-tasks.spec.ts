@@ -54,6 +54,9 @@ async function installAgentBackend(page: Page, taskRecords: unknown[] = []) {
           }
           return structuredClone(pet);
         }
+        if (command === "conversation_list_windows") return { revision: 0, windows: [] };
+        if (command === "agent_get_task_snapshots") return [];
+        if (["conversation_get_view", "conversation_save_view", "conversation_forget_view"].includes(command)) return null;
         if (command === "background_status") return [];
         if (command === "get_data_health") return { memoryPersistent: true, sqlite: { acquisitions: 0, waitMicros: 0, holdMicros: 0 }, jsonLockAcquisitions: 0, jsonLockWaitMicros: 0, speechRecognition: true, wasmPlugins: true };
 
@@ -72,7 +75,7 @@ async function installAgentBackend(page: Page, taskRecords: unknown[] = []) {
           ai: { provider: "openai-compatible", baseUrl: "http://127.0.0.1:1234/v1", model: "ui-test", temperature: 0.7, timeoutSeconds: 30 },
         };
         if (command === "agent_list_tasks") return savedTasks;
-        if (command === "get_bubble_chat_history") return structuredClone(state.history);
+        if (["get_bubble_chat_history", "conversation_chat_history"].includes(command)) return structuredClone(state.history);
         return null;
       },
     };
@@ -91,9 +94,9 @@ async function calls(page: Page, command: string) {
   return page.evaluate((command) => (window as unknown as { __agentTest: Bridge }).__agentTest.calls.filter((call) => call.command === command), command);
 }
 async function start(page: Page, prompt = "检查项目并整理说明") {
-  await page.getByLabel("发送给 Piko 的问题").fill(prompt);
-  await page.getByRole("button", { name: "发送消息", exact: true }).click();
-  await expect(page.getByRole("button", { name: "停止生成" })).toBeVisible();
+  await page.getByRole("tabpanel").getByLabel("发送给 Piko 的问题").fill(prompt);
+  await page.getByRole("tabpanel").getByRole("button", { name: "发送消息", exact: true }).click();
+  await expect(page.getByRole("tabpanel").getByRole("button", { name: "停止生成" })).toBeVisible();
   await expect.poll(() => calls(page, "agent_start")).not.toHaveLength(0);
   return (await calls(page, "agent_start")).at(-1)!.args.input as { requestId: string; conversationId: string; cwd?: string; unified: boolean; importHistory: boolean; prompt: string; verificationOf?: string };
 }
@@ -301,7 +304,7 @@ for (const allowed of [true, false]) test(`inline command confirmation ${allowed
   expect(await calls(page, "agent_approve")).toHaveLength(0);
   await card.getByRole("button", { name: allowed ? "允许此次操作" : "拒绝", exact: true }).click();
   expect((await calls(page, "agent_approve"))[0].args).toEqual({ requestId: input.requestId, approvalId: "a", allowed });
-  await expect(page.getByRole("button", { name: "停止生成" })).toBeVisible();
+  await expect(page.getByRole("tabpanel").getByRole("button", { name: "停止生成" })).toBeVisible();
   await emit(page, input.requestId, { type: "completed" });
 });
 
@@ -357,12 +360,12 @@ test("completed turns remain in the thread once each after a follow-up", async (
   const first = await start(page, "第一轮问题");
   await emit(page, first.requestId, { type: "delta", text: "第一轮回答" });
   await emit(page, first.requestId, { type: "completed" });
-  await expect(page.getByText("第一轮问题", { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("tabpanel").getByText("第一轮问题", { exact: true })).toHaveCount(1);
   const second = await start(page, "第二轮追问");
   await emit(page, second.requestId, { type: "delta", text: "第二轮回答" });
   await emit(page, second.requestId, { type: "completed" });
-  await expect(page.getByText("第一轮问题", { exact: true })).toHaveCount(1);
-  await expect(page.getByText("第二轮追问", { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("tabpanel").getByText("第一轮问题", { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("tabpanel").getByText("第二轮追问", { exact: true })).toHaveCount(1);
 });
 
 test("failed startup restores the single input draft", async ({ page }) => {
@@ -453,7 +456,7 @@ test("attachment picker, remove and screenshot entry use native command boundari
   await installAgentBackend(page);
   await page.getByRole("button", { name: "选择文件", exact: true }).click();
   await expect(page.getByText(/ui-test.md/)).toBeVisible();
-  expect((await calls(page, "prepare_text_attachment"))[0].args).toEqual({ path: "/tmp/piko-agent-ui-test" });
+  expect((await calls(page, "prepare_text_attachment"))[0].args).toEqual({ path: "/tmp/piko-agent-ui-test", contextId: expect.any(String) });
   await page.getByRole("button", { name: "移除附件", exact: true }).click();
   await expect(page.getByRole("button", { name: "移除附件", exact: true })).toHaveCount(0);
   expect(await calls(page, "clear_text_attachment")).toHaveLength(1);

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { BubbleWindow } from "./BubbleWindow";
@@ -231,6 +231,42 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     expect(call?.[1].input.proactiveMessageId).toBeUndefined();
   });
 
+  it("新对话清除草稿和截图，并等待后端清理后使用独立会话发送", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => key === "piko-unified-conversation-v1"
+        ? JSON.stringify({ id: "old-conversation", cwd: "", importHistory: true, turnIds: ["old-request"] }) : null,
+      setItem: vi.fn(),
+    });
+    const commands = runCommandMock.getMockImplementation()!;
+    let finishClear!: () => void;
+    const clearing = new Promise<void>(resolve => { finishClear = resolve; });
+    runCommandMock.mockImplementation((command: string, ...args: unknown[]) => {
+      if (command === "clear_text_attachment") return clearing;
+      return commands(command, ...args);
+    });
+    render(<BubbleWindow />);
+    await waitFor(() => expect(handlersByEvent.get("screenshot-ready")?.size).toBeGreaterThan(0));
+    act(() => {
+      for (const handler of handlersByEvent.get("screenshot-ready") ?? []) {
+        handler({ payload: { dataUrl: "data:image/png;base64,test", width: 100, height: 100 } });
+      }
+    });
+    fireEvent.change(screen.getByLabelText("发送给 Piko 的问题"), { target: { value: "旧草稿" } });
+    fireEvent.click(screen.getByRole("button", { name: "新对话" }));
+    expect((screen.getByLabelText("发送给 Piko 的问题") as HTMLTextAreaElement).value).toBe("");
+    expect(screen.queryByRole("button", { name: "移除截图" })).toBeNull();
+    expect(runCommandMock).toHaveBeenCalledWith("clear_text_attachment");
+    expect(runCommandMock).toHaveBeenCalledWith("clear_screen_capture");
+    await submitPrompt("全新话题");
+    expect(chatStartInputCalls()).toHaveLength(0);
+    await act(async () => { finishClear(); await clearing; });
+    await waitFor(() => expect(chatStartInputCalls()).toHaveLength(1));
+    const input = runCommandMock.mock.calls.find(([command]) => command === "agent_start")?.[1].input;
+    expect(input.conversationId).not.toBe("old-conversation");
+    expect(input.importHistory).toBe(false);
+    expect(input.includeScreenshot).toBe(false);
+  });
+
   it("默认不置顶，点击图标切换原生窗口置顶并同步选中状态", async () => {
     render(<BubbleWindow />);
     const pin = screen.getByRole("button", { name: "窗口置顶" });
@@ -274,6 +310,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     cleanup(); // vitest 未开启 globals，RTL 的 auto-cleanup 不会注册，需显式清理
     delete cryptoTarget.randomUUID;
     vi.restoreAllMocks();
@@ -315,18 +352,14 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     expect(screen.queryByRole("button", { name: "回到最新消息" })).toBeNull();
   });
 
-  it("浮层与完整窗口切换保留草稿，不创建会话或停止任务", async () => {
+  it("窗口工具栏只保留业务操作，不重复原生窗口控制", async () => {
     render(<BubbleWindow />);
-    const input = await screen.findByLabelText("发送给 Piko 的问题");
-    fireEvent.change(input, { target: { value: "切换时保留的草稿" } });
-    const before = runCommandMock.mock.calls.length;
-    fireEvent.click(screen.getByRole("button", { name: "在完整窗口继续" }));
-    await screen.findByRole("button", { name: "返回快捷浮层" });
-    expect((input as HTMLTextAreaElement).value).toBe("切换时保留的草稿");
-    fireEvent.click(screen.getByRole("button", { name: "返回快捷浮层" }));
-    await screen.findByRole("button", { name: "在完整窗口继续" });
-    expect((input as HTMLTextAreaElement).value).toBe("切换时保留的草稿");
-    expect(runCommandMock.mock.calls.slice(before)).toEqual([]);
+    await screen.findByLabelText("发送给 Piko 的问题");
+    expect(screen.queryByRole("button", { name: "在完整窗口继续" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "返回快捷浮层" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^关闭$/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "新对话" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "窗口置顶" })).toBeTruthy();
   });
 
   it("Esc 先收起工作空间，再收起对话；展开时保留原有输入", async () => {
@@ -353,7 +386,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
       : defaultCommand(command, ...args));
     render(<BubbleWindow />);
     expect(await screen.findByText("恢复的任务提醒")).toBeTruthy();
-    expect(runCommandMock).toHaveBeenCalledWith("soul_ack_message", { receipt: { message_id: "reserved-message", kind: "shown", visible_seconds: 0 } });
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("soul_ack_message", { receipt: { message_id: "reserved-message", kind: "shown", visible_seconds: 0 } }));
     expect(runCommandMock.mock.calls.some(([command]) => command === "agent_start")).toBe(false);
   });
 
@@ -657,6 +690,47 @@ describe("BubbleWindow 聊天事件流竞态", () => {
   });
 
 
+  it("routes concurrent replies, approvals and cancellation to their own conversation", async () => {
+    queueUuids(["request-one", "request-two"]);
+    const view = render(<>
+      <div data-testid="session-one"><BubbleWindow tabId="conversation-one" /></div>
+      <div data-testid="session-two"><BubbleWindow tabId="conversation-two" active={false} /></div>
+    </>);
+    await waitFor(() => expect(handlersByEvent.get("agent-event")?.size).toBe(2));
+    const first = within(view.getByTestId("session-one"));
+    const second = within(view.getByTestId("session-two"));
+    for (const [surface, text] of [[first, "独立任务一"], [second, "独立任务二"]] as const) {
+      const input = surface.getByLabelText("发送给 Piko 的问题");
+      await act(async () => {
+        fireEvent.change(input, { target: { value: text } });
+        fireEvent.submit(input.closest("form")!);
+      });
+    }
+    await waitFor(() => expect(chatStartInputCalls()).toHaveLength(2));
+    const inputs = runCommandMock.mock.calls.filter(([command]) => command === "agent_start").map(call => call[1].input);
+    expect(inputs.map(input => input.conversationId)).toEqual(["conversation-one", "conversation-two"]);
+    expect(inputs.map(input => input.contextId)).toEqual(["conversation-one", "conversation-two"]);
+    expect(inputs.every(input => input.importHistory === false)).toBe(true);
+    await act(async () => {
+      for (const handler of handlersByEvent.get("agent-event") ?? []) {
+        handler({ payload: { type: "delta", requestId: "request-one", eventSequence: 1, text: "仅第一项回复" } });
+        handler({ payload: { type: "delta", requestId: "request-two", eventSequence: 1, text: "仅第二项回复" } });
+        handler({ payload: { type: "approval", requestId: "request-one", eventSequence: 2, approvalId: "approval-one", tool: "write", arguments: { path: "/one/result.txt" } } });
+      }
+    });
+    expect(first.getByText("仅第一项回复")).toBeTruthy();
+    expect(first.queryByText("仅第二项回复")).toBeNull();
+    expect(await second.findByText("仅第二项回复")).toBeTruthy();
+    expect(second.queryByRole("button", { name: "允许此次操作" })).toBeNull();
+    fireEvent.click(first.getByRole("button", { name: "允许此次操作" }));
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_approve", { requestId: "request-one", approvalId: "approval-one", allowed: true }));
+    await act(async () => {
+      for (const handler of handlersByEvent.get("agent-event") ?? []) handler({ payload: { type: "completed", requestId: "request-one", eventSequence: 3 } });
+    });
+    fireEvent.click(second.getByRole("button", { name: "停止生成" }));
+    expect(runCommandMock).toHaveBeenCalledWith("agent_cancel", { requestId: "request-two" });
+  });
+
   it("reopens a running task with partial text and approval without starting or cancelling execution", async () => {
     taskSnapshot = {
       requestId: "restored-task", conversationId: "restored-conversation", cwd: "/workspace",
@@ -677,7 +751,7 @@ describe("BubbleWindow 聊天事件流竞态", () => {
       } });
     });
     expect(screen.queryByRole("button", { name: "允许此次操作" })).toBeNull();
-    fireEvent.keyDown(screen.getByRole("button", { name: "关闭" }), { key: "Escape" });
+    fireEvent.keyDown(screen.getByLabelText("发送给 Piko 的问题"), { key: "Escape" });
     expect(runCommandMock).toHaveBeenCalledWith("hide_bubble");
     view.unmount();
     await act(async () => {});

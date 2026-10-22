@@ -1,6 +1,6 @@
 use crate::app_settings::AppSettings;
 use crate::calendar_service::CalendarEvent;
-use crate::chat_session::ChatHistoryEntry;
+use crate::chat_session::{self, ChatHistoryEntry, ChatSession};
 use crate::reminder_service::Reminder;
 /// Data import/export module.
 ///
@@ -160,7 +160,7 @@ pub fn preview_import(path: &Path) -> Result<ImportPreview, String> {
 /// Strategy:
 /// - Items with existing IDs are kept (no overwrite)
 /// - New items are appended
-/// - Settings are merged (only non-sensitive fields)
+/// - Only appearance/behavior preferences are merged; local model configuration is preserved
 pub fn import_from_file(app: &AppHandle, path: &Path) -> Result<ImportResult, String> {
     let _transaction = storage::transaction();
     let json = fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -174,7 +174,7 @@ pub fn import_from_file(app: &AppHandle, path: &Path) -> Result<ImportResult, St
 
     // Merge chats
     if !data.chats.is_empty() {
-        imported.chats_imported = merge_chat_history(app, &data.chats)?;
+        (imported.chats_imported, imported.chats_skipped) = merge_chat_history(app, &data.chats)?;
     }
 
     // Merge reminders
@@ -205,6 +205,8 @@ pub fn import_from_file(app: &AppHandle, path: &Path) -> Result<ImportResult, St
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
     pub chats_imported: usize,
+    /// Incoming records omitted because of duplicate IDs or session retention.
+    pub chats_skipped: usize,
     pub reminders_imported: usize,
     pub calendar_imported: usize,
     pub focus_imported: usize,
@@ -224,29 +226,46 @@ fn read_settings_for_export(app: &AppHandle) -> Option<SanitizedSettings> {
 
 // --- Merge functions ---
 
-fn merge_chat_history(app: &AppHandle, incoming: &[ChatHistoryEntry]) -> Result<usize, String> {
-    let _transaction = storage::transaction();
-    // 保留策略已改为「最多 200 个会话」（见 chat_session 模块），这里只限制本次导入条数。
-    const MAX_CHAT_HISTORY: usize = 50;
-    let existing_ids = crate::chat_session::repository::read_chat_history(app)
+fn merge_chat_entries(
+    existing: &[ChatHistoryEntry],
+    incoming: &[ChatHistoryEntry],
+) -> (Vec<ChatSession>, usize, usize) {
+    let mut ids = existing
         .iter()
-        .map(|e| e.id.clone())
+        .map(|entry| entry.id.clone())
         .collect::<std::collections::HashSet<_>>();
-
-    let mut existing = crate::chat_session::repository::read_chat_history(app);
-    let mut count = 0;
-
-    for entry in incoming.iter().rev() {
-        if !existing_ids.contains(&entry.id) && existing.len() < MAX_CHAT_HISTORY {
-            existing.insert(0, entry.clone());
-            count += 1;
+    let mut merged = existing.to_vec();
+    let mut added = std::collections::HashSet::new();
+    for entry in incoming {
+        if ids.insert(entry.id.clone()) {
+            added.insert(entry.id.clone());
+            merged.push(entry.clone());
         }
     }
+    let mut sessions = chat_session::sessions_from_entries(&merged);
+    chat_session::trim_sessions(&mut sessions);
+    let retained = sessions
+        .iter()
+        .flat_map(|session| &session.messages)
+        .filter_map(|message| message.source_entry_id.as_ref())
+        .filter(|id| added.contains(*id))
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    (sessions, retained, incoming.len() - retained)
+}
 
-    if count > 0 {
-        crate::chat_session::repository::persist_chat_history(app, &existing)?;
+fn merge_chat_history(
+    app: &AppHandle,
+    incoming: &[ChatHistoryEntry],
+) -> Result<(usize, usize), String> {
+    let _transaction = storage::transaction();
+    let existing_sessions = crate::chat_session::repository::load_chat_sessions(app, false)?;
+    let existing = chat_session::entries_view(&existing_sessions);
+    let (sessions, imported, skipped) = merge_chat_entries(&existing, incoming);
+    if imported > 0 {
+        crate::chat_session::repository::persist_chat_sessions(app, &sessions)?;
     }
-    Ok(count)
+    Ok((imported, skipped))
 }
 
 fn merge_reminders(app: &AppHandle, incoming: &[Reminder]) -> Result<usize, String> {
@@ -321,15 +340,87 @@ fn merge_focus(app: &AppHandle, incoming: &[FocusRecord]) -> Result<usize, Strin
 fn merge_settings(app: &AppHandle, incoming: &SanitizedSettings) -> Result<(), String> {
     let _transaction = storage::transaction();
     let mut settings = read_persisted_settings(app)?;
+    merge_preferences(&mut settings, incoming);
+    persist_settings(app, &settings)
+}
+
+fn merge_preferences(settings: &mut AppSettings, incoming: &SanitizedSettings) {
+    // Connection settings are local trust decisions. An imported backup must not
+    // redirect requests carrying the existing key to another provider or host.
     settings.quiet_mode = incoming.quiet_mode.clone();
     settings.companion_name = incoming.companion_name.clone();
     settings.theme = incoming.theme.clone();
     settings.sensing_paused = incoming.sensing_paused;
-    settings.ai.provider = incoming.ai_provider.clone();
-    settings.ai.base_url = incoming.ai_base_url.clone();
-    settings.ai.model = incoming.ai_model.clone();
-    settings.ai.speech_model = incoming.ai_speech_model.clone();
-    settings.ai.temperature = incoming.ai_temperature;
-    settings.ai.timeout_seconds = incoming.ai_timeout_seconds;
-    persist_settings(app, &settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(index: u64, created_at: u64) -> ChatHistoryEntry {
+        ChatHistoryEntry {
+            id: format!("entry-{index}"),
+            prompt: format!("question {index}"),
+            response: format!("answer {index}"),
+            created_at,
+        }
+    }
+
+    #[test]
+    fn imported_preferences_cannot_replace_local_model_configuration() {
+        let mut local = AppSettings::default();
+        let original_ai = serde_json::to_value(&local.ai).unwrap();
+        let mut imported = SanitizedSettings::from(&local);
+        imported.companion_name = "Restored pet".into();
+        imported.ai_provider = "anthropic".into();
+        imported.ai_base_url = "https://untrusted.example/v1".into();
+        imported.ai_model = "untrusted-model".into();
+        imported.ai_speech_model = "untrusted-speech".into();
+        imported.ai_temperature = 100.0;
+        imported.ai_timeout_seconds = 0;
+        merge_preferences(&mut local, &imported);
+        assert_eq!(local.companion_name, "Restored pet");
+        assert_eq!(serde_json::to_value(&local.ai).unwrap(), original_ai);
+    }
+
+    #[test]
+    fn imports_more_than_fifty_turns_into_empty_or_populated_history() {
+        let all: Vec<_> = (0..120).map(|i| entry(i, i)).collect();
+        for split in [0, 60] {
+            let (sessions, imported, skipped) = merge_chat_entries(&all[..split], &all[split..]);
+            assert_eq!(imported, 120 - split);
+            assert_eq!(skipped, 0);
+            assert_eq!(chat_session::entries_view(&sessions).len(), 120);
+        }
+    }
+
+    #[test]
+    fn imports_deduplicate_and_keep_existing_content() {
+        let original = entry(1, 1);
+        let mut duplicate = original.clone();
+        duplicate.response = "must not replace local content".into();
+        let added = entry(2, 2);
+        let (sessions, imported, skipped) =
+            merge_chat_entries(&[original], &[duplicate, added.clone(), added]);
+        assert_eq!((imported, skipped), (1, 2));
+        let entries = chat_session::entries_view(&sessions);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries.iter().find(|e| e.id == "entry-1").unwrap().response,
+            "answer 1"
+        );
+    }
+
+    #[test]
+    fn session_retention_counts_only_records_actually_retained() {
+        let incoming: Vec<_> = (0..205)
+            .map(|i| entry(i, i * (chat_session::SESSION_GAP_SECONDS + 1)))
+            .collect();
+        let (sessions, imported, skipped) = merge_chat_entries(&[], &incoming);
+        assert_eq!(sessions.len(), chat_session::MAX_SESSIONS);
+        assert_eq!((imported, skipped), (200, 5));
+        assert!(chat_session::entries_view(&sessions)
+            .iter()
+            .all(|e| e.created_at >= 5 * (chat_session::SESSION_GAP_SECONDS + 1)));
+    }
 }

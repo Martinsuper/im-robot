@@ -5,6 +5,8 @@ mod awareness_commands;
 mod calendar_service;
 mod common;
 mod companion;
+mod conversation_views;
+mod conversation_windows;
 mod data_commands;
 mod data_gate;
 mod data_snapshot;

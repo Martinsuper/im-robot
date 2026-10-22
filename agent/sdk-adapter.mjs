@@ -13,6 +13,24 @@ export function fileTools(cwd, {readOnly=false,resuming=false}={}) {
   const factories=readOnly?[createReadToolDefinition]:[createReadToolDefinition,createWriteToolDefinition,createEditToolDefinition,...(resuming?[]:[process.platform==="win32"?createPowerShellToolDefinition:createBashToolDefinition])];
   return factories.map(factory=>factory(cwd));
 }
+
+// Use the SDK's argument normalization and edit semantics for checkpointing too.
+// In-memory operations preserve BOM/line endings and never touch the workspace.
+export function normalizeEditArguments(args) {
+  return createEditToolDefinition(process.cwd()).prepareArguments({ ...args });
+}
+
+export async function previewEdit(content, args) {
+  if (content === null) throw new Error("待编辑文件不存在");
+  let output;
+  const tool = createEditToolDefinition(process.cwd(), { operations: {
+    access: async () => {},
+    readFile: async () => Buffer.from(content, "utf8"),
+    writeFile: async (_path, value) => { output = value; },
+  } });
+  await tool.execute("checkpoint-preview", args);
+  return output;
+}
 class AgentSession {
   constructor(session) { this.sdk=session; }
   get sessionId() { return this.sdk.sessionId; }

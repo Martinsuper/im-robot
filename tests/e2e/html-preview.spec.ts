@@ -52,7 +52,7 @@ test("preview resizes from its corner and opens an independent sandboxed window"
   expect(after.height).toBeGreaterThan(before.height + 50);
   expect(after.width).toBeLessThan(before.width - 50);
   const popupPromise = page.waitForEvent("popup");
-  await page.getByRole("button", { name: "独立窗口打开" }).click();
+  await page.getByRole("button", { name: "独立窗口打开", exact: true }).click();
   const popup = await popupPromise;
   await expect(popup.frameLocator("iframe").getByRole("heading", { name: "Resizable preview" })).toBeVisible();
   await expect(popup.locator("iframe")).toHaveAttribute("sandbox", "allow-scripts");
@@ -90,7 +90,7 @@ test("HTML remains previewable after becoming history and respects the preview p
   await history.locator(".bubble-thread__history-toggle").click();
   await expect(history.frameLocator("iframe").getByRole("heading", { name: "Resizable preview" })).toBeVisible();
   const popupPromise = page.waitForEvent("popup");
-  await history.getByRole("button", { name: "独立窗口打开" }).click();
+  await history.getByRole("button", { name: "独立窗口打开", exact: true }).click();
   const popup = await popupPromise;
   await expect(popup.frameLocator("iframe").getByRole("heading", { name: "Resizable preview" })).toBeVisible();
   await popup.close();

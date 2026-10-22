@@ -14,7 +14,7 @@ import "./features/chat/bubble.css";
 type WindowLabel = "pet" | "bubble" | "panel" | "capture" | "html-preview";
 
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
-const BubbleWindow = lazy(() => import("./features/chat/BubbleWindow").then((module) => ({ default: module.BubbleWindow })));
+const BubbleWindow = lazy(() => import("./features/chat/ConversationTabs").then((module) => ({ default: module.ConversationTabs })));
 const CaptureWindow = lazy(() => import("./features/capture/CaptureWindow").then((module) => ({ default: module.CaptureWindow })));
 const PetWindow = lazy(() => import("./features/pet/PetWindow").then((module) => ({ default: module.PetWindow })));
 
