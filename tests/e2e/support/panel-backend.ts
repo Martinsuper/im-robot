@@ -121,6 +121,10 @@ export async function installPanelBackend(page: Page, options: BackendOptions = 
           }
           case 'delete_memo': state.memos = state.memos.filter((memo: any) => memo.id !== args.id); break;
           case 'list_chat_history': result = state.history; break;
+          // The panel now shares its mounted window with the chat runtime.
+          case 'get_bubble_chat_history': case 'list_html_favorites': case 'agent_list_tasks': result = []; break;
+          case 'get_screen_capture_preview': case 'soul_current_message': case 'agent_get_task_snapshot': result = null; break;
+          case 'soul_report_activity': case 'stop_local_speech': break;
           case 'clear_chat_history': state.history = []; break;
           case 'list_memories': case 'get_recent_memories': result = state.memories; break;
           case 'search_memories': result = state.memories.filter((item: any) => (item.title + item.content).includes(args.input.query)); break;

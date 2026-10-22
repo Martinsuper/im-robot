@@ -14,7 +14,7 @@ test("panel keeps three main tabs and chat available from each", async ({
       /is-active/,
     );
     await expect(
-      page.getByRole("button", { name: "开始对话", exact: true }),
+      page.getByRole("button", { name: "收起工作区", exact: true }),
     ).toBeVisible();
   }
 });
@@ -146,10 +146,10 @@ test("captures compact default screens for visual review", async ({ page }) => {
   }
 });
 
-test("chat entry opens the usable browser chat preview", async ({ page }) => {
+test("workspace returns to the usable chat without navigating away", async ({ page }) => {
   await page.goto("/?view=panel");
-  await page.getByRole("button", { name: "开始对话", exact: true }).click();
-  await expect(page).toHaveURL(/view=bubble/);
+  await page.getByRole("button", { name: "收起工作区", exact: true }).click();
+  await expect(page).toHaveURL(/view=panel/);
   await expect(
     page.getByLabel("发送给 Piko 的问题", { exact: true }),
   ).toBeVisible();

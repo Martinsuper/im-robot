@@ -16,6 +16,7 @@ export function PanelHistory({ chatHistory, onClear }: PanelHistoryProps) {
   const [selectedHistoryId, setSelectedHistoryId] = useState("");
   const [historyRange, setHistoryRange] = useState<ChatTimeRange | "all">("all");
   const [historySearch, setHistorySearch] = useState("");
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const filteredChatHistory = useMemo(() => {
     // 时间基准取一次（和「今天」Tab 一样用 time.ts 的 nowSeconds）。
@@ -79,11 +80,11 @@ export function PanelHistory({ chatHistory, onClear }: PanelHistoryProps) {
           </div>
 
           {filteredChatHistory.length ? (
-            <div className="records-history__layout">
+            <div className={`records-history__layout${detailOpen ? " records-history__layout--detail" : ""}`}>
               <ul className="records-history__list" aria-label="最近对话列表">
                 {filteredChatHistory.map((entry) => (
                   <li className={entry.id === selectedHistoryEntry?.id ? "is-active" : ""} key={entry.id}>
-                    <button type="button" onClick={() => setSelectedHistoryId(entry.id)}>
+                    <button type="button" onClick={() => { setSelectedHistoryId(entry.id); setDetailOpen(true); }}>
                       <span className="records-history__time">{formatChatHistoryTime(entry.createdAt)}</span>
                       <strong>{summarizeText(entry.prompt, 60) || "未命名对话"}</strong>
                       <span>{summarizeText(entry.response, 80) || "没有返回文本"}</span>
@@ -93,6 +94,7 @@ export function PanelHistory({ chatHistory, onClear }: PanelHistoryProps) {
               </ul>
               {selectedHistoryEntry && (
                 <article className="records-history__detail">
+                  <button type="button" className="records-history__back" onClick={() => setDetailOpen(false)}>← 返回记录列表</button>
                   <div className="records-history__meta">
                     <span>{formatChatHistoryTime(selectedHistoryEntry.createdAt)}</span>
                     <span>{selectedHistoryEntry.response.length.toLocaleString("zh-CN")} 字</span>

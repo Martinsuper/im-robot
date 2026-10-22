@@ -953,7 +953,7 @@ pub async fn knowledge_import(
     })
     .await
     .map_err(|_| "知识库导入任务失败")??;
-    let _ = app.emit_to("panel", "knowledge-updated", ());
+    let _ = app.emit("knowledge-updated", ());
     Ok(report)
 }
 #[tauri::command]
@@ -968,7 +968,7 @@ pub fn knowledge_delete_document(
     tx.execute("DELETE FROM knowledge_documents WHERE id=?1", [id])
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
-    let _ = app.emit_to("panel", "knowledge-updated", ());
+    let _ = app.emit("knowledge-updated", ());
     Ok(())
 }
 #[derive(Serialize)]
@@ -1121,7 +1121,7 @@ pub fn supersede_memory(
         );
     }
     super::soul::commands::reconcile_visible(&app);
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(())
 }
 

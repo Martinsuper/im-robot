@@ -642,7 +642,7 @@ pub async fn agent_start(
                 if saved.is_err() {
                     event = json!({"type":"failed", "message":"任务已执行，但保存聊天记录失败。请检查结果，不要重复执行。"});
                 }
-                let _ = app.emit_to("panel", "chat-history-updated", ());
+                let _ = app.emit("chat-history-updated", ());
             }
             if kind == "protocol-error" {
                 break json!({"type":"failed", "message":"Agent 通信协议错误，任务已停止。此前可能已有部分操作完成，请检查结果。"});

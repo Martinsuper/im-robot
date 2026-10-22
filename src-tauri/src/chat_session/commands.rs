@@ -44,7 +44,7 @@ pub(crate) fn delete_chat_session(app: AppHandle, id: String) -> Result<(), Stri
     }
     persist_chat_sessions(&app, &sessions)?;
     memory::soul::commands::reconcile_visible(&app);
-    let _ = app.emit_to("panel", "chat-history-updated", ());
+    let _ = app.emit("chat-history-updated", ());
     Ok(())
 }
 
@@ -81,7 +81,7 @@ pub(crate) fn clear_chat_history(
     }
     persist_chat_history(&app, &[])?;
     memory::soul::commands::reconcile_visible(&app);
-    let _ = app.emit_to("panel", "chat-history-updated", ());
+    let _ = app.emit("chat-history-updated", ());
     Ok(())
 }
 

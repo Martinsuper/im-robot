@@ -708,7 +708,7 @@ pub fn soul_clear_category(
 pub async fn soul_request_notification_permission(
     window: tauri::WebviewWindow,
 ) -> Result<bool, String> {
-    if window.label() != "panel" {
+    if !matches!(window.label(), "panel" | "bubble") {
         return Err("permission_source_invalid".into());
     }
     super::notifications::request_permission().await

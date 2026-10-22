@@ -28,7 +28,6 @@ use crate::desktop::enable_pet_background_drag;
 use crate::desktop::open_panel;
 use crate::desktop::restore_bubble_size;
 use crate::desktop::restore_pet_position;
-use crate::desktop::show_and_focus;
 use crate::desktop::show_bubble;
 use crate::desktop::show_pet_on_startup;
 use crate::desktop::watch_bubble_resize;
@@ -68,7 +67,7 @@ use crate::typing_activity;
 use crate::{awareness_commands, data_commands, sync};
 use std::sync::Arc;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Listener, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 
 pub(crate) fn run() {
@@ -103,9 +102,20 @@ pub(crate) fn run() {
             None,
         ))
         .setup(|app| {
+            let workspace_app = app.handle().clone();
+            app.listen("workspace-ready", move |_| {
+                desktop::replay_workspace_request(&workspace_app)
+            });
+            app.listen("workspace-visibility", move |event| {
+                desktop::set_workspace_visible(event.payload() == "true")
+            });
             crate::data_snapshot::recover_before_start(app.handle())?;
             credentials::initialize(app.path().app_data_dir()?, &app.config().identifier)?;
             for config in &app.config().app.windows {
+                // The panel is now embedded in bubble; keep its URL only for browser previews.
+                if config.label == "panel" {
+                    continue;
+                }
                 tauri::WebviewWindowBuilder::from_config(app.handle(), config)?
                     .on_navigation(html_preview::local_preview_navigation)
                     .build()?;
@@ -198,7 +208,7 @@ pub(crate) fn run() {
                 *paused = settings.sensing_paused;
             }
             if !settings.onboarding_completed {
-                show_and_focus(app.handle(), "panel");
+                open_panel(app.handle().clone(), Some("today".into()));
             }
             restore_pet_position(app.handle());
             show_pet_on_startup(app.handle());

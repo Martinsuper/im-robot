@@ -141,7 +141,7 @@ fn focus_snapshot(app: &AppHandle, focus: &FocusTimer) -> Result<FocusSnapshot, 
 
 pub(crate) fn emit_focus_updated(app: &AppHandle, focus: &FocusTimer) {
     if let Ok(snapshot) = focus_snapshot(app, focus) {
-        let _ = app.emit_to("panel", "focus-updated", snapshot);
+        let _ = app.emit("focus-updated", snapshot);
     }
 }
 
@@ -197,9 +197,9 @@ pub(crate) fn emit_work_rhythm_updated(app: &AppHandle) {
         if let Ok(mut last) = app.state::<WorkRhythmCache>().0.lock() {
             if last.as_ref() != Some(&snapshot) {
                 *last = Some(snapshot.clone());
-                let _ = app.emit_to("panel", "work-rhythm-updated", snapshot.clone());
+                let _ = app.emit("work-rhythm-updated", snapshot.clone());
                 if let Ok(typing_snapshot) = typing.snapshot(unix_timestamp()) {
-                    let _ = app.emit_to("panel", "typing-stats-updated", typing_snapshot);
+                    let _ = app.emit("typing-stats-updated", typing_snapshot);
                 }
             }
         }

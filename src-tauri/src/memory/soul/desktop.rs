@@ -39,7 +39,7 @@ pub fn soul_test_desktop_speech(
     window: tauri::WebviewWindow,
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<(), String> {
-    if window.label() != "panel" {
+    if !matches!(window.label(), "panel" | "bubble") {
         return Err("settings_source_invalid".into());
     }
     let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
@@ -111,7 +111,7 @@ pub fn soul_update_desktop_settings(
     db: State<'_, Arc<MemoryDb>>,
     input: DesktopSettings,
 ) -> Result<DesktopSettings, String> {
-    if window.label() != "panel" {
+    if !matches!(window.label(), "panel" | "bubble") {
         return Err("settings_source_invalid".into());
     }
     if !["quiet", "natural", "active"].contains(&input.frequency.as_str())
@@ -922,7 +922,7 @@ pub async fn soul_test_desktop_model(
     app: AppHandle,
     model: String,
 ) -> Result<(), String> {
-    if window.label() != "panel" {
+    if !matches!(window.label(), "panel" | "bubble") {
         return Err("settings_source_invalid".into());
     }
     if model.chars().count() > 128 {

@@ -1078,9 +1078,9 @@ fn status(db: &MemoryDb, default_root: &Path, persistent: bool) -> Result<VaultS
     })
 }
 fn emit_updates(app: &tauri::AppHandle, report: &SyncReport) {
-    let _ = app.emit_to("panel", "memory-vault-updated", ());
+    let _ = app.emit("memory-vault-updated", ());
     if report.imported > 0 {
-        let _ = app.emit_to("panel", "memories-updated", ());
+        let _ = app.emit("memories-updated", ());
     }
 }
 /// The frontend cannot choose an arbitrary path or application. Resolve only the saved vault.
@@ -1148,7 +1148,7 @@ pub async fn memory_vault_configure(
     })
     .await
     .map_err(|_| "Markdown 配置任务失败")??;
-    let _ = app.emit_to("panel", "memory-vault-updated", ());
+    let _ = app.emit("memory-vault-updated", ());
     Ok(result)
 }
 #[tauri::command]
@@ -1216,7 +1216,7 @@ pub async fn memory_vault_resolve(
             }
         }
     }
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     emit_updates(&app, &report);
     Ok(report)
 }
@@ -1258,7 +1258,7 @@ pub fn start(app: tauri::AppHandle) {
                         match synchronize(&db, &settings) {
                             Ok(report) => emit_updates(&app_for_worker, &report),
                             Err(_) => {
-                                let _ = app_for_worker.emit_to("panel", "memory-vault-updated", ());
+                                let _ = app_for_worker.emit("memory-vault-updated", ());
                             }
                         }
                     }

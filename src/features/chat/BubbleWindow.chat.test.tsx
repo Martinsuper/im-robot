@@ -11,6 +11,7 @@ const listenMock = vi.fn();
 const runCommandMock = vi.fn();
 
 vi.mock("@tauri-apps/api/event", () => ({
+  emit: vi.fn(async () => {}),
   listen: (...args: unknown[]) => listenMock(...args),
 }));
 
@@ -26,6 +27,8 @@ const getCurrentWindowMock = vi.fn(() => ({
   setAlwaysOnTop: setAlwaysOnTopMock,
   startDragging: vi.fn(() => Promise.resolve()),
   innerSize: vi.fn(async () => ({ toLogical: () => ({ width: 480, height: 420 }) })),
+  outerPosition: vi.fn(async () => ({ toLogical: () => ({ x: 0, y: 0 }) })),
+  setPosition: vi.fn(async () => {}),
   scaleFactor: vi.fn(async () => 1),
   setDecorations: vi.fn(async () => {}),
   setSkipTaskbar: vi.fn(async () => {}),
@@ -41,7 +44,13 @@ const getCurrentWindowMock = vi.fn(() => ({
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => getCurrentWindowMock(),
+  currentMonitor: async () => ({ scaleFactor: 1, workArea: { position: { x: 0, y: 0 }, size: { width: 1440, height: 900 } } }),
   LogicalSize: class { constructor(public width: number, public height: number) {} },
+  LogicalPosition: class { constructor(public x: number, public y: number) {} },
+}));
+
+vi.mock("../panel/PanelWindow", () => ({
+  PanelWindow: ({ onClose }: { onClose: () => void }) => <section aria-label="主面板工作区"><button onClick={onClose}>返回聊天</button></section>,
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -171,6 +180,22 @@ async function submitPrompt(text: string) {
 }
 
 describe("BubbleWindow 聊天事件流竞态", () => {
+  it("opening and closing the workspace preserves the running stream and unsent input", async () => {
+    render(<BubbleWindow />);
+    await submitPrompt("继续生成");
+    const requestId = chatStartInputCalls()[0].requestId;
+    await act(async () => { emitChat({ type: "started", requestId, working: false }); });
+    const input = screen.getByLabelText("发送给 Piko 的问题") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "补充草稿" } });
+    fireEvent.click(screen.getByRole("button", { name: "打开主面板" }));
+    await screen.findByRole("button", { name: "返回聊天" });
+    await act(async () => { emitChat({ type: "delta", requestId, sequence: 1, text: "回复继续到达" }); });
+    fireEvent.click(screen.getByRole("button", { name: "返回聊天" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "打开主面板" })).toBeTruthy());
+    expect(input.value).toBe("补充草稿");
+    expect(await screen.findByText("回复继续到达")).toBeTruthy();
+    expect(runCommandMock.mock.calls.filter(([command]) => command === "chat_cancel" || command === "agent_cancel")).toHaveLength(0);
+  });
   async function showDesktopOpener() {
     await waitFor(() => expect(handlersByEvent.get("soul:message")?.size).toBe(1));
     await act(async () => {

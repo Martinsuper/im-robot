@@ -16,7 +16,6 @@ type WindowLabel = "pet" | "bubble" | "panel" | "capture" | "html-preview";
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 const BubbleWindow = lazy(() => import("./features/chat/BubbleWindow").then((module) => ({ default: module.BubbleWindow })));
 const CaptureWindow = lazy(() => import("./features/capture/CaptureWindow").then((module) => ({ default: module.CaptureWindow })));
-const PanelWindow = lazy(() => import("./features/panel/PanelWindow").then((module) => ({ default: module.PanelWindow })));
 const PetWindow = lazy(() => import("./features/pet/PetWindow").then((module) => ({ default: module.PetWindow })));
 
 const HtmlPreviewWindow = lazy(() => import("./features/chat/HtmlPreviewFrame").then((module) => ({ default: module.HtmlPreviewWindow })));
@@ -48,7 +47,7 @@ function App() {
         <Suspense fallback={<main className="app-loading">加载中…</main>}>
           {windowLabel === "html-preview" ? <HtmlPreviewWindow /> : null}
           {windowLabel === "bubble" ? <BubbleWindow /> : null}
-          {windowLabel === "panel" ? <PanelWindow /> : null}
+          {windowLabel === "panel" ? <BubbleWindow initialWorkspaceOpen /> : null}
           {windowLabel === "capture" ? <CaptureWindow /> : null}
           {windowLabel === "pet" ? <PetWindow /> : null}
         </Suspense>

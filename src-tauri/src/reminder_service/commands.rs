@@ -24,6 +24,6 @@ pub(crate) fn delete_reminder(app: AppHandle, id: String) -> Result<(), String> 
         return Err("未找到该提醒".to_string());
     }
     persist_reminders(&app, &reminders)?;
-    let _ = app.emit_to("panel", "reminders-updated", ());
+    let _ = app.emit("reminders-updated", ());
     Ok(())
 }

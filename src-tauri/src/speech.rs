@@ -406,7 +406,7 @@ pub(crate) async fn download_speech_model(
             percent: total_bytes.map(|total| downloaded_bytes as f32 / total as f32),
             completed: false,
         };
-        let _ = app.emit_to("panel", "speech-model-download-progress", progress);
+        let _ = app.emit("speech-model-download-progress", progress);
     }
     file.flush()
         .map_err(|error| format!("保存模型文件失败：{error}"))?;
@@ -429,7 +429,7 @@ pub(crate) async fn download_speech_model(
         percent: Some(1.0),
         completed: true,
     };
-    let _ = app.emit_to("panel", "speech-model-download-progress", progress);
+    let _ = app.emit("speech-model-download-progress", progress);
     Ok(speech_model_status(&app, definition))
 }
 

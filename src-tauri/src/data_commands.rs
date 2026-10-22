@@ -163,10 +163,10 @@ pub(crate) async fn import_data(
         })
         .await?;
     if result.chats_imported > 0 {
-        let _ = app.emit_to("panel", "chat-history-updated", ());
+        let _ = app.emit("chat-history-updated", ());
     }
     if result.reminders_imported > 0 {
-        let _ = app.emit_to("panel", "reminders-updated", ());
+        let _ = app.emit("reminders-updated", ());
     }
     if result.calendar_imported > 0 {
         let _ = app.emit("calendar-events-updated", ());

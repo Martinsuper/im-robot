@@ -785,7 +785,7 @@ async fn stream_chat(
         .lock()
         .map_err(|_| "无法更新当前对话上下文".to_string())?;
     append_session_chat_history(&mut session_history, history_entry.clone());
-    let _ = app.emit_to("panel", "chat-history-updated", ());
+    let _ = app.emit("chat-history-updated", ());
 
     if cancelled.is_cancelled() {
         return Ok(StreamChatOutcome::Cancelled);

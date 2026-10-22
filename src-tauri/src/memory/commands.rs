@@ -78,7 +78,7 @@ pub fn create_memory(
     };
 
     db.create(&item)?;
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
 
     Ok(item)
 }
@@ -91,7 +91,7 @@ pub fn update_memory(
     input: UpdateMemoryInput,
 ) -> Result<MemoryItem, String> {
     let item = db.update(&id, input)?;
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(item)
 }
 
@@ -111,7 +111,7 @@ pub fn delete_memory(
         );
     }
     super::soul::commands::reconcile_visible(&app);
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(())
 }
 
@@ -150,7 +150,7 @@ pub fn clear_memories(
         None => db.clear_all()?,
     };
     super::soul::commands::reconcile_visible(&app);
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(count)
 }
 
@@ -191,7 +191,7 @@ pub fn build_memory_context(
 #[tauri::command]
 pub fn pin_memory(app: AppHandle, db: State<'_, Arc<MemoryDb>>, id: String) -> Result<(), String> {
     db.pin(&id)?;
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(())
 }
 
@@ -202,7 +202,7 @@ pub fn unpin_memory(
     id: String,
 ) -> Result<(), String> {
     db.unpin(&id)?;
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(())
 }
 
@@ -213,7 +213,7 @@ pub fn feedback_memory(
     input: FeedbackInput,
 ) -> Result<(), String> {
     db.add_feedback(&input)?;
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(())
 }
 
@@ -293,7 +293,7 @@ pub fn apply_memory_candidates(
     } else {
         apply_candidate(&db, &input, &mut *cache.lock()?)?
     };
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(item)
 }
 
@@ -306,7 +306,7 @@ pub fn reject_memory_candidate(
 ) -> Result<(), String> {
     super::extraction::remove_candidate(&db, &candidate_id)?;
     cache.lock()?.retain(|c| c.id != candidate_id);
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(())
 }
 
@@ -342,7 +342,7 @@ pub fn merge_memories_cmd(
     input: MergeMemoriesInput,
 ) -> Result<MemoryItem, String> {
     let item = merge_memories(&db, &input.keep_id, &input.remove_id)?;
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(item)
 }
 
@@ -435,7 +435,7 @@ pub fn abstract_semantic_from_events(
     for (_tag, group) in tag_groups {
         if group.len() >= min {
             if let Some(item) = abstract_to_semantic(&db, &group)? {
-                let _ = app.emit_to("panel", "memories-updated", ());
+                let _ = app.emit("memories-updated", ());
                 return Ok(Some(item));
             }
         }
@@ -450,7 +450,7 @@ pub fn abstract_semantic_from_events(
 pub fn expire_old_memories(app: AppHandle, db: State<'_, Arc<MemoryDb>>) -> Result<usize, String> {
     let count = db.expire_old_memories()?;
     if count > 0 {
-        let _ = app.emit_to("panel", "memories-updated", ());
+        let _ = app.emit("memories-updated", ());
     }
     Ok(count)
 }
@@ -516,6 +516,6 @@ pub fn import_memories(
     input: MemoryImportInput,
 ) -> Result<usize, String> {
     let count = db.import_memories(&input.data.memories, &input.data.relations, &input.mode)?;
-    let _ = app.emit_to("panel", "memories-updated", ());
+    let _ = app.emit("memories-updated", ());
     Ok(count)
 }

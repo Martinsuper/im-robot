@@ -220,6 +220,6 @@ pub(crate) fn create_memo_record(app: &AppHandle, input: MemoInput) -> Result<Me
     }
     memos.push(memo.clone());
     persist_memos(app, &memos)?;
-    let _ = app.emit_to("panel", "memos-updated", ());
+    let _ = app.emit("memos-updated", ());
     Ok(memo)
 }

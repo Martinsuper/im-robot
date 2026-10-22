@@ -134,7 +134,7 @@ pub(crate) fn create_reminder_record(
     let mut reminders = read_reminders(app);
     reminders.push(reminder.clone());
     persist_reminders(app, &reminders)?;
-    let _ = app.emit_to("panel", "reminders-updated", ());
+    let _ = app.emit("reminders-updated", ());
     Ok(reminder)
 }
 
@@ -150,6 +150,6 @@ pub(crate) fn delete_reminder_record(
         .ok_or_else(|| "未找到该提醒".to_string())?;
     let deleted = reminders.remove(index);
     persist_reminders(app, &reminders)?;
-    let _ = app.emit_to("panel", "reminders-updated", ());
+    let _ = app.emit("reminders-updated", ());
     Ok(deleted)
 }

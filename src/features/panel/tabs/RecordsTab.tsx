@@ -171,10 +171,14 @@ export function RecordsTab() {
     const pending = isTauriRuntime
       ? listen("memos-updated", () => void loadMemos())
       : undefined;
+    const historyPending = isTauriRuntime ? listen("chat-history-updated", () => void loadChatHistory()) : undefined;
+    const memoryPending = isTauriRuntime ? listen("memories-updated", () => void loadMemories()) : undefined;
     return () => {
       disposed = true;
       if (pending)
         void pending.then((dispose) => dispose()).catch(() => undefined);
+      if (historyPending) void historyPending.then((dispose) => dispose()).catch(() => undefined);
+      if (memoryPending) void memoryPending.then((dispose) => dispose()).catch(() => undefined);
     };
   }, [loadChatHistory, loadMemories, loadMemos]);
 

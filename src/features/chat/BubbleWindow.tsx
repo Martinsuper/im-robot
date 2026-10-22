@@ -1,5 +1,7 @@
 import { ChatContextMenu } from "./ChatContextMenu";
 import { useConversationSurface } from "./useConversationSurface";
+import { WorkspaceMenu } from "./WorkspaceMenu";
+import { useAppSettings } from "../panel/settingsStore";
 import { useWorkspaceSelection } from "./useWorkspaceSelection";
 import { useStableEvent } from "../../hooks/useStableEvent";
 import { HtmlFavoriteDialog } from "./HtmlFavoriteDialog";
@@ -17,19 +19,18 @@ import {
   ModelSetupCard,
   ReplyStatusCard,
   WelcomeState,
-  openModelSettings,
   textForSpeech,
 } from "./ChatPresentation";
 import { ArrowDown, ArrowUp, Maximize2, Minimize2, Mic, PanelRight, Paperclip, Pin, Plus, ScanLine, Square, X } from "lucide-react";
-import { FormEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { FormEvent, lazy, Suspense, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { ActionConfirmationCard, getConfirmationChoices } from "./ActionConfirmationCard";
 import { getBubbleCompanionMessage } from "./bubbleMessage";
 import type { ActionDraft, ActionExecution, ChatEvent } from "./chatTypes";
-import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry, ScreenshotPreview, Theme } from "../../types/appTypes";
+import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry, PanelTab, ScreenshotPreview } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
 import {
   ACTIVITY_HEARTBEAT_SECONDS,
@@ -53,12 +54,50 @@ type VoiceTranscriptionOutput = {
 };
 
 const WHISPER_SAMPLE_RATE = 16000;
+const PanelWindow = lazy(() => import("../panel/PanelWindow").then((module) => ({ default: module.PanelWindow })));
 
 // --- Main Component ---
 
-export function BubbleWindow() {
+export function BubbleWindow({ initialWorkspaceOpen = false }: { initialWorkspaceOpen?: boolean } = {}) {
   const toast = useToast();
   const surface = useConversationSurface((error) => toast.error(toUserMessage(error, "窗口切换失败，请重试。")));
+  const { settings: sharedSettings, applyServer } = useAppSettings();
+  const [workspaceOpen, setWorkspaceOpen] = useState(initialWorkspaceOpen);
+  const [workspaceVisited, setWorkspaceVisited] = useState(initialWorkspaceOpen);
+  const [workspaceTab, setWorkspaceTab] = useState<PanelTab>(() => {
+    try {
+      const saved = localStorage.getItem("piko.workspace.tab");
+      return saved === "records" || saved === "settings" ? saved : "today";
+    } catch { return "today"; }
+  });
+  const resizeWorkspace = surface.setWorkspaceOpen;
+  /** Keep navigation local so no conversation or input state is remounted. */
+  const openWorkspace = useCallback(async (tab?: PanelTab) => {
+    if (await resizeWorkspace(true)) {
+      if (tab) setWorkspaceTab(tab);
+      setWorkspaceVisited(true);
+      setWorkspaceOpen(true);
+    }
+  }, [resizeWorkspace]);
+  const closeWorkspace = useCallback(async () => {
+    if (await resizeWorkspace(false)) {
+      setWorkspaceOpen(false);
+      window.requestAnimationFrame(() => promptInputRef.current?.focus());
+    }
+  }, [resizeWorkspace]);
+  const openModelSettings = () => { void openWorkspace("settings"); };
+  useEffect(() => {
+    try { localStorage.setItem("piko.workspace.tab", workspaceTab); } catch { /* Optional preference. */ }
+  }, [workspaceTab]);
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    let disposed = false;
+    const pending = listen<PanelTab | null>("workspace-open", ({ payload }) => {
+      void openWorkspace(payload && ["today", "records", "settings"].includes(payload) ? payload : undefined);
+    });
+    void pending.then(() => { if (!disposed) void emit("workspace-ready"); });
+    return () => { disposed = true; void pending.then((dispose) => dispose()); };
+  }, [openWorkspace]);
   const [prompt, setPrompt] = useState("");
   const [isPinned, setIsPinned] = useState(false);
   const [voiceAvailable, setVoiceAvailable] = useState(true);
@@ -95,9 +134,7 @@ export function BubbleWindow() {
   useEffect(() => { try { localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(conversation)); } catch { /* Optional. */ } }, [conversation]);
 
   const [message, setMessage] = useState("");
-  const [companionName, setCompanionName] = useState("Piko");
-  const [theme, setTheme] = useState<Theme>("sage");
-  const [htmlPreviewEnabled, setHtmlPreviewEnabled] = useState(false);
+  const { companionName, theme, htmlPreviewEnabled } = sharedSettings;
   const [isThinking, setIsThinking] = useState(false);
   /**
    * 回复状态机（02 §4）：thinking / streaming 时是 null，结束后落到 done / failed / cancelled。
@@ -125,7 +162,7 @@ export function BubbleWindow() {
   const [showReplySkeleton, setShowReplySkeleton] = useState(false);
   const [memoryActivity, setMemoryActivity] = useState<string>("");
   const [isReplyEntering, setIsReplyEntering] = useState(false);
-  const [aiConfigured, setAiConfigured] = useState(true);
+  const aiConfigured = sharedSettings.hasApiKey || /localhost|127\.0\.0\.1/.test(sharedSettings.ai.baseUrl);
   // New state for redesign
   const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
@@ -205,6 +242,11 @@ export function BubbleWindow() {
       setFavoritesOpen(false);
       return;
     }
+    if (event.key === "Escape" && workspaceOpen) {
+      event.preventDefault();
+      void closeWorkspace();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       void runCommand("hide_bubble");
@@ -274,13 +316,6 @@ export function BubbleWindow() {
 
   useEffect(() => {
     void void runCommand("get_data_health").then(health => setVoiceAvailable(health?.speechRecognition !== false)).catch(error => console.error("[capabilities]", error));
-    runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
-      setCompanionName(settings.companionName);
-      setTheme(settings.theme);
-      setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
-      // 02 §10.4：未配置模型也要能打开对话，但要给引导卡
-      setAiConfigured(settings.hasApiKey || settings.ai.baseUrl.includes("localhost") || settings.ai.baseUrl.includes("127.0.0.1"));
-    });
     refreshChatHistory();
   }, []);
 
@@ -294,19 +329,6 @@ export function BubbleWindow() {
     };
   }, [stopVoiceRecording]);
 
-  useEffect(() => {
-    if (!isTauriRuntime) return;
-    const unlisten = listen<AppSettings>("settings-updated", (event) => {
-      setCompanionName(event.payload.companionName);
-      setTheme(event.payload.theme);
-      setHtmlPreviewEnabled(event.payload.htmlPreviewEnabled);
-    });
-    return () => {
-      void unlisten.then((dispose) => {
-        if (mountedRef.current) dispose();
-      });
-    };
-  }, []);
 
   // S07：输入活动以最近按键为准，保留草稿不会永久阻止提醒。
   useEffect(() => {
@@ -1016,7 +1038,7 @@ export function BubbleWindow() {
       { enabled },
       { ...defaultAppSettings, htmlPreviewEnabled: enabled },
     );
-    setHtmlPreviewEnabled(settings.htmlPreviewEnabled);
+    applyServer(settings);
   }
 
   async function saveResult() {
@@ -1078,6 +1100,7 @@ export function BubbleWindow() {
   const selectedFavorite = selectedFavoriteId ? favorites.find((item) => item.id === selectedFavoriteId) : undefined;
 
   return (
+    <div className={`conversation-workspace${workspaceOpen ? " conversation-workspace--open" : ""}`}>
     <main
       className={`bubble-shell bubble-shell--${theme}${surface.expanded ? " bubble-shell--expanded" : ""}`}
       onKeyDown={handleWindowKeyDown}
@@ -1085,10 +1108,10 @@ export function BubbleWindow() {
     >
       {/* Layer 1: Top Bar */}
       <header className="bubble-topbar" onPointerDown={startBubbleDrag}>
-        <div className="bubble-topbar__left">
+        <WorkspaceMenu onSelect={(tab) => void openWorkspace(tab)}><span className="bubble-topbar__left">
           <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
-          <div className="bubble-topbar__identity"><span className="bubble-topbar__name">{companionName}</span><span className="bubble-topbar__subtitle">随时聊聊，一起做事</span></div>
-        </div>
+          <span className="bubble-topbar__identity"><span className="bubble-topbar__name">{companionName}</span><span className="bubble-topbar__subtitle">随时聊聊，一起做事</span></span>
+        </span></WorkspaceMenu>
         <div className="bubble-topbar__center">
           <span role="status" aria-live="polite" className={`bubble-topbar__status${topbarStatus.pulse ? " bubble-topbar__status--pulse" : ""}`}>
             <span className="bubble-topbar__dot" />
@@ -1099,7 +1122,7 @@ export function BubbleWindow() {
           <button
             type="button"
             className="bubble-topbar__btn"
-            disabled={surface.pending}
+            disabled={surface.pending || workspaceOpen}
             onClick={() => void surface.toggle()}
             aria-label={surface.expanded ? "返回快捷浮层" : "在完整窗口继续"}
             title={surface.expanded ? "返回快捷浮层（会话与任务保留）" : "在完整窗口继续（会话与任务保留）"}
@@ -1114,7 +1137,7 @@ export function BubbleWindow() {
             title={isPinned ? "取消置顶" : "固定在其他窗口上方"}
           ><Pin size={17} /></button>
           <button type="button" className="bubble-topbar__btn" disabled={isThinking || agentBusy} onClick={newConversation} aria-label="新对话" title="新对话"><Plus size={17} /></button>
-          <button type="button" className="bubble-topbar__btn" onClick={() => void runCommand("open_panel")} aria-label="打开主面板" title="打开主面板"><PanelRight size={17} /></button>
+          <button type="button" className={`bubble-topbar__btn${workspaceOpen ? " bubble-topbar__btn--active" : ""}`} disabled={surface.pending} onClick={() => void (workspaceOpen ? closeWorkspace() : openWorkspace())} aria-label={workspaceOpen ? "收起主面板" : "打开主面板"} aria-expanded={workspaceOpen} title={workspaceOpen ? "收起工作区" : "展开工作区"}><PanelRight size={17} /></button>
           <button
             className="bubble-topbar__btn"
             type="button"
@@ -1251,7 +1274,7 @@ export function BubbleWindow() {
                 onSave={() => void saveResult()}
                 onUpdateHtmlPreview={(enabled) => void updateHtmlPreviewEnabled(enabled)}
                 onClearContext={() => void clearContext()}
-                onOpenPanel={() => runCommand("open_panel")}
+                onOpenPanel={() => openWorkspace()}
               />
             )}
             <TaskOutcome key={taskTerminal?.requestId || "pending"} terminal={taskTerminal} tools={agentTools} busy={agentBusy} onInspect={inspectTask} />
@@ -1420,5 +1443,13 @@ export function BubbleWindow() {
 
       {contextNotice && <p className="bubble-context-note" role="status">{contextNotice}</p>}
     </main>
+    {workspaceVisited && <aside className="conversation-workspace__panel" hidden={!workspaceOpen} onKeyDown={(event) => {
+      if (event.key === "Escape" && !event.defaultPrevented && !event.nativeEvent.isComposing && !(event.target as HTMLElement).closest("dialog, [role=dialog]")) {
+        event.preventDefault(); void closeWorkspace();
+      }
+    }}>
+      <Suspense fallback={<p role="status">正在打开工作区…</p>}><PanelWindow activeTab={workspaceTab} onTabChange={setWorkspaceTab} onClose={() => void closeWorkspace()} /></Suspense>
+    </aside>}
+    </div>
   );
 }

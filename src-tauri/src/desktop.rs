@@ -209,6 +209,9 @@ pub(crate) fn restore_bubble_size(app: &AppHandle) {
 }
 
 pub(crate) fn save_current_bubble_size(app: &AppHandle) {
+    if WORKSPACE_VISIBLE.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     let Some(window) = app.get_webview_window("bubble") else {
         return;
     };
@@ -464,23 +467,36 @@ pub(crate) fn toggle_bubble(app: AppHandle) {
     }
 }
 
-#[tauri::command]
-pub(crate) fn open_panel(app: AppHandle, tab: Option<String>) {
-    show_and_focus(&app, "panel");
-    if let Some(tab) = tab.filter(|tab| matches!(tab.as_str(), "today" | "records" | "settings")) {
-        let _ = app.emit_to("panel", "panel-navigate", tab);
+static PENDING_WORKSPACE: Mutex<Option<Option<String>>> = Mutex::new(None);
+static WORKSPACE_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Do not persist the temporary two-column size as the next quick-chat size.
+pub(crate) fn set_workspace_visible(visible: bool) {
+    WORKSPACE_VISIBLE.store(visible, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Replay an entry requested before the conversation WebView finished subscribing.
+pub(crate) fn replay_workspace_request(app: &AppHandle) {
+    if let Ok(mut pending) = PENDING_WORKSPACE.lock() {
+        if let Some(tab) = pending.take() {
+            let _ = app.emit_to("bubble", "workspace-open", tab);
+        }
     }
 }
 
 #[tauri::command]
-pub(crate) fn toggle_panel(app: AppHandle) {
-    if let Some(window) = app.get_webview_window("panel") {
-        if window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false) {
-            let _ = window.hide();
-        } else {
-            show_and_focus(&app, "panel");
-        }
+pub(crate) fn open_panel(app: AppHandle, tab: Option<String>) {
+    show_and_focus(&app, "bubble");
+    let tab = tab.filter(|tab| matches!(tab.as_str(), "today" | "records" | "settings"));
+    if let Ok(mut pending) = PENDING_WORKSPACE.lock() {
+        *pending = Some(tab.clone());
     }
+    let _ = app.emit_to("bubble", "workspace-open", tab);
+}
+
+#[tauri::command]
+pub(crate) fn toggle_panel(app: AppHandle) {
+    open_panel(app, None);
 }
 
 #[tauri::command]

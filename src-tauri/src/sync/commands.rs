@@ -25,7 +25,7 @@ pub(crate) async fn sync_calendar_to_system(app: AppHandle) -> Result<serde_json
             let _lease = crate::data_gate::read();
             let events = read_calendar_events(&app);
             let result = crate::sync::calendar_sync::push_to_system_calendar(&app, &events)?;
-            let _ = app.emit_to("panel", "calendar-sync-updated", ());
+            let _ = app.emit("calendar-sync-updated", ());
             Ok(json!({
                 "pushed": result.pushed,
                 "mappingCount": result.mappings.len(),
@@ -46,7 +46,7 @@ pub(crate) async fn sync_calendar_from_system(app: AppHandle) -> Result<serde_js
                 .unwrap_or(0);
             let result = crate::sync::calendar_sync::pull_from_system_calendar(&app, since)?;
             let _ = app.emit("calendar-events-updated", ());
-            let _ = app.emit_to("panel", "calendar-sync-updated", ());
+            let _ = app.emit("calendar-sync-updated", ());
             Ok(json!({
                 "imported": result.imported,
                 "events": result.events,

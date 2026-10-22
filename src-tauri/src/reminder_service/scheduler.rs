@@ -41,7 +41,7 @@ pub(crate) fn process_due_reminders(app: &AppHandle) -> Result<Vec<Reminder>, St
             },
         );
     }
-    let _ = app.emit_to("panel", "reminders-updated", ());
+    let _ = app.emit("reminders-updated", ());
     Ok(due)
 }
 

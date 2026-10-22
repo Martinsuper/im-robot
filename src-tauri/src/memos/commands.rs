@@ -27,7 +27,7 @@ pub(crate) fn update_memo(app: AppHandle, id: String, input: MemoInput) -> Resul
     let memo = memo_from_input(id, input, created_at)?;
     memos[index] = memo.clone();
     persist_memos(&app, &memos)?;
-    let _ = app.emit_to("panel", "memos-updated", ());
+    let _ = app.emit("memos-updated", ());
     Ok(memo)
 }
 
@@ -41,7 +41,7 @@ pub(crate) fn delete_memo(app: AppHandle, id: String) -> Result<(), String> {
         return Err("未找到该备忘录".to_string());
     }
     persist_memos(&app, &memos)?;
-    let _ = app.emit_to("panel", "memos-updated", ());
+    let _ = app.emit("memos-updated", ());
     Ok(())
 }
 
