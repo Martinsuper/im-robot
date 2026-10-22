@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   frontend:
-    runs-on: ubuntu-latest
+    # Playwright's OS support must be reviewed before changing this image.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,6 +22,7 @@ jobs:
       - run: npm ci
       - run: node --test scripts/prepare-release.test.mjs
       - run: node --test scripts/window-config.test.mjs
+      - run: node --test scripts/ci-workflow.test.mjs
       - run: npm audit
       - run: cargo test --manifest-path tools/contracts/Cargo.toml
       - run: npm run check
