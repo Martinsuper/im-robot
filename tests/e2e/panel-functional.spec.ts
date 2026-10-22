@@ -226,13 +226,12 @@ test("cancel export does not write or open a file", async ({
   expect(await callsFor(page, "open_calendar_import")).toHaveLength(0);
 });
 
-test("native chat entry opens the conversation window", async ({
+test("workspace returns to the existing native conversation without opening another window", async ({
   healthyPage: page,
 }) => {
   await installPanelBackend(page);
   await page.goto("/?view=panel");
-  await page.getByRole("button", { name: "开始对话", exact: true }).click();
-  await expect
-    .poll(async () => (await callsFor(page, "show_bubble")).length)
-    .toBe(1);
+  await page.getByRole("button", { name: "收起工作区", exact: true }).click();
+  await expect(page.getByLabel("发送给 Piko 的问题")).toBeVisible();
+  expect(await callsFor(page, "show_bubble")).toHaveLength(0);
 });

@@ -600,6 +600,8 @@ export function RecordsTab() {
                           }}
                           onKeyDown={(event) => {
                             if (event.key === "Escape") {
+                              event.preventDefault();
+                              event.stopPropagation();
                               event.currentTarget.open = false;
                               event.currentTarget
                                 .querySelector("summary")

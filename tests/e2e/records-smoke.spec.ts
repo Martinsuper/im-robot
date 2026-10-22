@@ -80,7 +80,7 @@ test.describe("records tab", () => {
     await expect(range.getByRole("button", { name: "更早" })).toBeVisible();
     // 旧的 6 个过滤标签必须不存在
     await expect(page.getByRole("button", { name: "长回复" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "截图" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "主面板工作区" }).getByRole("button", { name: "截图" })).toHaveCount(0);
 
     expect(errors, "切分区不该有未捕获异常").toEqual([]);
   });
@@ -125,7 +125,7 @@ test.describe("records tab", () => {
     await page
       .getByLabel("记录内容")
       .fill("这条是预览里写的，用来确认保存后列表会刷新。");
-    await page.getByRole("button", { name: "记一笔" }).click();
+    await page.getByRole("region", { name: "主面板工作区" }).getByRole("button", { name: "记一笔" }).click();
 
     await expect(
       page.getByTestId("record-card").filter({ hasText: "冒烟测试的记录" }),

@@ -14,7 +14,7 @@ test("chat target and collapsed summaries remain readable at panel width", async
 }) => {
   await installPanelBackend(page);
   await page.goto("/?view=panel");
-  const chat = page.getByRole("button", { name: "开始对话", exact: true });
+  const chat = page.getByRole("button", { name: "收起工作区", exact: true });
   const metrics = await chat.evaluate((el) => ({
     height: el.getBoundingClientRect().height,
     fontSize: parseFloat(getComputedStyle(el).fontSize),
