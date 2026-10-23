@@ -132,6 +132,7 @@ export type T_plugins_InstalledPlugin_Output = { "manifest": T_plugins_PluginMan
 export type T_plugins_PluginManifest_Output = { "id": string; "name": string; "version": string; "description": string; "tools": Array<T_plugins_PluginToolManifest_Output> };
 export type T_plugins_PluginToolManifest_Output = { "name": string; "description": string; "inputSchema": JsonValue; "risk": string; "confirmation": string };
 export type T_providers_ModelInfo_Output = { "id": string };
+export type T_providers_commands_ModelDiscoveryInput_Input = { "provider": string; "baseUrl": string; "apiKey"?: string | null; "useSavedKey": boolean };
 export type T_reminder_service_ReminderInput_Input = { "title": string; "dueAt": number; "repeat"?: string };
 export type T_reminder_service_Reminder_Output = { "id": string; "title": string; "dueAt": number; "status": string; "repeat": string };
 export type T_rhythm_FocusSnapshot_Output = { "status": string; "kind": string; "remainingSeconds": number; "todayMinutes": number };
@@ -260,7 +261,7 @@ export interface CommandMap {
   "list_html_favorites": { args: {  }; result: Array<T_favorites_HtmlFavorite_Output> };
   "list_memories": { args: { "input"?: T_memory_model_ListMemoriesInput_Input | null }; result: Array<T_memory_model_MemoryItem_Output> };
   "list_memos": { args: {  }; result: Array<T_memos_Memo_Output> };
-  "list_models": { args: {  }; result: Array<T_providers_ModelInfo_Output> };
+  "list_models": { args: { "input"?: T_providers_commands_ModelDiscoveryInput_Input | null }; result: Array<T_providers_ModelInfo_Output> };
   "list_provider_tools": { args: { "provider": string }; result: JsonValue };
   "list_reminders": { args: {  }; result: Array<T_reminder_service_Reminder_Output> };
   "list_schedule_items": { args: {  }; result: Array<T_schedule_ScheduleItem_Output> };
@@ -477,7 +478,7 @@ export interface CommandInvoker {
   <T = Array<T_favorites_HtmlFavorite_Output>>(command: "list_html_favorites", args?: {  }, fallback?: T): Promise<T>;
   <T = Array<T_memory_model_MemoryItem_Output>>(command: "list_memories", args?: { "input"?: T_memory_model_ListMemoriesInput_Input | null }, fallback?: T): Promise<T>;
   <T = Array<T_memos_Memo_Output>>(command: "list_memos", args?: {  }, fallback?: T): Promise<T>;
-  <T = Array<T_providers_ModelInfo_Output>>(command: "list_models", args?: {  }, fallback?: T): Promise<T>;
+  <T = Array<T_providers_ModelInfo_Output>>(command: "list_models", args?: { "input"?: T_providers_commands_ModelDiscoveryInput_Input | null }, fallback?: T): Promise<T>;
   <T = JsonValue>(command: "list_provider_tools", args: { "provider": string }, fallback?: T): Promise<T>;
   <T = Array<T_reminder_service_Reminder_Output>>(command: "list_reminders", args?: {  }, fallback?: T): Promise<T>;
   <T = Array<T_schedule_ScheduleItem_Output>>(command: "list_schedule_items", args?: {  }, fallback?: T): Promise<T>;

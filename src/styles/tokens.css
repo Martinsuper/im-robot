@@ -76,6 +76,7 @@
 }
 
 /* Theme accents live alongside the shared tokens, not in component styles. */
+.conversation-tabs--blue,
 .panel-shell--blue,
 .bubble-shell--blue {
   --piko-paper: #f5f7fa;
@@ -83,6 +84,7 @@
   --piko-accent: #346c9b;
   --piko-focus-ring: 0 0 0 3px rgb(52 108 155 / 14%);
 }
+.conversation-tabs--peach,
 .panel-shell--peach,
 .bubble-shell--peach {
   --piko-paper: #f9f7f5;

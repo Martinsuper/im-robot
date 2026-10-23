@@ -171,7 +171,7 @@ async function installSettingsBackend(
             return structuredClone(state);
           }
           if (command === "list_models") {
-            if (!storedKey) throw "HTTP 401: Invalid API key";
+            if (!storedKey && !args?.input?.apiKey) throw "HTTP 401: Invalid API key";
             return [{ id: "gpt-6-luna" }];
           }
           if (command.startsWith("plugin:"))
@@ -190,102 +190,57 @@ async function installSettingsBackend(
     .getByRole("button", { name: "设置" })
     .click();
   await page.locator("#settings-group-ai > summary").click();
-  await expect(
-    page.locator("#settings-group-ai").getByLabel("Model", { exact: true }),
-  ).toHaveValue("gpt-6-luna");
+  await expect(page.locator("#settings-group-ai .model-connection-entry strong")).toBeVisible();
 }
 
-test("save and test submits the typed key before fetching models, and preserves it on retry", async ({
-  page,
-}) => {
+async function openModelSettings(page: Page) {
+  await page.getByRole("button", { name: "模型与 API", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "模型与 API" })).toBeVisible();
+}
+
+test("fetches models using a draft key before saving, then reuses the saved credential", async ({ page }) => {
   await installSettingsBackend(page, "persistent");
-  await page
-    .locator('#settings-group-ai input[type="password"]')
-    .fill("  ui-test-key-not-a-secret  ");
-  await page.getByRole("button", { name: "保存并测试", exact: true }).click();
-  await expect(
-    page
-      .locator("#settings-group-ai")
-      .getByText("已连接：gpt-6-luna", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.locator('#settings-group-ai input[type="password"]'),
-  ).toHaveValue("");
-  await page.getByRole("button", { name: "保存并测试", exact: true }).click();
-  await expect(
-    page
-      .locator("#settings-group-ai")
-      .getByText("已连接：gpt-6-luna", { exact: true }),
-  ).toBeVisible();
-  const calls = await page.evaluate(() =>
-    (
-      window as unknown as {
-        __settingsCalls: Array<{
-          command: string;
-          args: { input?: Record<string, unknown> };
-        }>;
-      }
-    ).__settingsCalls.filter((call) =>
-      ["update_ai_settings", "list_models"].includes(call.command),
-    ),
-  );
-  expect(calls.map((call) => call.command)).toEqual([
-    "update_ai_settings",
-    "list_models",
-    "update_ai_settings",
-    "list_models",
-  ]);
-  expect(calls[0].args.input).toMatchObject({
-    apiKey: "ui-test-key-not-a-secret",
-    model: "gpt-6-luna",
-  });
-  expect(calls[2].args.input).not.toHaveProperty("apiKey");
+  await openModelSettings(page);
+  await page.getByLabel("API 密钥", { exact: true }).fill("  ui-test-key-not-a-secret  ");
+  await page.getByRole("tab", { name: "选择模型", exact: true }).click();
+  await page.getByRole("button", { name: /获取模型|刷新模型/ }).click();
+  await expect(page.getByText("连接正常", { exact: true })).toBeVisible();
+  const beforeSave = await page.evaluate(() => (window as unknown as { __settingsCalls: Array<{ command: string }> }).__settingsCalls);
+  expect(beforeSave.some(call => call.command === "update_ai_settings")).toBe(false);
+  await page.getByRole("button", { name: "保存并使用", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await openModelSettings(page);
+  await expect(page.getByLabel("API 密钥", { exact: true })).toHaveValue("");
+  await page.getByRole("tab", { name: "选择模型", exact: true }).click();
+  await page.getByRole("button", { name: "刷新模型", exact: true }).click();
+  await expect(page.getByText("连接正常", { exact: true })).toBeVisible();
+  const calls = await page.evaluate(() => (window as unknown as { __settingsCalls: Array<{ command: string; args: { input?: Record<string, unknown> } }> }).__settingsCalls);
+  expect(calls.find(call => call.command === "update_ai_settings")?.args.input).toMatchObject({ apiKey: "ui-test-key-not-a-secret", model: "gpt-6-luna" });
+  expect(calls.filter(call => call.command === "list_models").at(-1)?.args.input).toMatchObject({ apiKey: null, useSavedKey: true });
 });
 
-test("reproduces invalid-key UI when the backend loses a correctly submitted key", async ({
-  page,
-}, testInfo) => {
+test("shows discovery failure when the saved credential is unavailable", async ({ page }) => {
   await installSettingsBackend(page, "lost");
-  await page
-    .locator('#settings-group-ai input[type="password"]')
-    .fill("ui-test-key-not-a-secret");
-  await page.getByRole("button", { name: "保存并测试", exact: true }).click();
-  await expect(
-    page
-      .locator("#settings-group-ai")
-      .getByText(/连接失败：API Key 无效或已过期/),
-  ).toBeVisible();
-  await page.screenshot({
-    path: testInfo.outputPath("lost-key.png"),
-    fullPage: true,
-  });
+  await openModelSettings(page);
+  await page.getByLabel("API 密钥", { exact: true }).fill("ui-test-key-not-a-secret");
+  await page.getByRole("tab", { name: "选择模型", exact: true }).click();
+  await page.getByRole("button", { name: /获取模型|刷新模型/ }).click();
+  await expect(page.getByText("连接正常", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "保存并使用", exact: true }).click();
+  await openModelSettings(page);
+  await page.getByRole("tab", { name: "选择模型", exact: true }).click();
+  await page.getByRole("button", { name: "刷新模型", exact: true }).click();
+  await expect(page.getByRole("dialog").getByText(/获取失败：.*API Key 无效或已过期/)).toBeVisible();
 });
 
-test("does not test the connection or clear the input if saving fails", async ({
-  page,
-}) => {
+test("keeps typed credentials and the dialog open if saving fails", async ({ page }) => {
   await installSettingsBackend(page, "failure");
-  await page
-    .locator('#settings-group-ai input[type="password"]')
-    .fill("ui-test-key-not-a-secret");
-  await page.getByRole("button", { name: "保存并测试", exact: true }).click();
-  await expect(
-    page.locator("#settings-group-ai").getByText(/连接失败：操作失败/),
-  ).toBeVisible();
-  await expect(
-    page.locator('#settings-group-ai input[type="password"]'),
-  ).toHaveValue("ui-test-key-not-a-secret");
-  expect(
-    await page.evaluate(() =>
-      (
-        window as unknown as {
-          __settingsCalls: Array<{ command: string }>;
-        }
-      ).__settingsCalls.some((call) => call.command === "list_models"),
-    ),
-  ).toBe(false);
+  await openModelSettings(page);
+  await page.getByLabel("API 密钥", { exact: true }).fill("ui-test-key-not-a-secret");
+  await page.getByRole("button", { name: "保存并使用", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("alert")).toBeVisible();
+  await expect(page.getByLabel("API 密钥", { exact: true })).toHaveValue("ui-test-key-not-a-secret");
 });
-
 test("command auto approval can be enabled and disabled in settings", async ({
   page,
 }) => {

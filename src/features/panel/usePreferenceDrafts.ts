@@ -3,7 +3,8 @@ import { useAutoSave } from "../../hooks/useAutoSave";
 import { useStableEvent } from "../../hooks/useStableEvent";
 import type { AppSettings } from "../../types/appTypes";
 import { defaultAppSettings } from "../app/appShared";
-import { runCommand } from "../app/appRuntime";
+import { isTauriRuntime, runCommand } from "../app/appRuntime";
+import { useAppSettings } from "./settingsStore";
 import {
   isWorkRhythmDraftValid,
   toPreferencesDraft,
@@ -13,6 +14,7 @@ import {
 } from "./settingsDrafts";
 
 export function usePreferenceDrafts(settings: AppSettings) {
+  const { applyServer } = useAppSettings();
   const preferencesSave = useAutoSave(400, "preferences");
   const rhythmSave = useAutoSave(400, "work-rhythm");
   // 偏好与休息提醒改为「草稿 + 已保存基线」两个来源：
@@ -69,7 +71,7 @@ export function usePreferenceDrafts(settings: AppSettings) {
           "update_preferences",
           { input: next },
           {
-            ...defaultAppSettings,
+            ...settings,
             ...next,
             ai: settings.ai,
           },
@@ -82,6 +84,8 @@ export function usePreferenceDrafts(settings: AppSettings) {
         },
         onPersisted: (value) => {
           savedPreferencesRef.current = toPreferencesDraft(value);
+          // Browser previews have no native settings-updated event.
+          if (!isTauriRuntime) applyServer(value);
         },
         onSuccess: applyPreferences,
         errorFallback: "个性化设置保存失败，请重试。",

@@ -193,7 +193,7 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
   }
 
   const running = Object.values(states).filter(state => state.busy).length;
-  return <div className={`conversation-tabs${detachedId ? " conversation-tabs--detached" : " conversation-tabs--studio"}`}>
+  return <div className={`conversation-tabs conversation-tabs--${settings.theme}${detachedId ? " conversation-tabs--detached" : " conversation-tabs--studio"}`}>
     <div className="conversation-tabs__bar">
       {!detachedId && <>
         <div className="studio-brand"><img src="/pets/piko-app-icon.png" alt="" /><div><strong>{settings.companionName}</strong><span>随时聊聊，一起做事</span></div></div>

@@ -122,7 +122,7 @@ pub(crate) fn request_builder(
     ))
 }
 
-fn request_builder_with_key(
+pub(crate) fn request_builder_with_key(
     client: &reqwest::Client,
     settings: &AiSettings,
     method: reqwest::Method,

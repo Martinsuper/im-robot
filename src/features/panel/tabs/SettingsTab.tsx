@@ -1,8 +1,5 @@
 import { DataSettings } from "../DataSettings";
-import {
-  connectionMessage,
-  type ModelConnectionStatus,
-} from "../modelConnectionStatus";
+import { ModelSettingsDialog } from "../ModelSettingsDialog";
 import "./settings.css";
 import { SoulSettings } from "../../soul/SoulSettings";
 import { useEffect, useRef, useState } from "react";
@@ -24,14 +21,13 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { SettingsGroup } from "../PanelChrome";
-import { EmptyState, ErrorState } from "../../../components/feedback/States";
+import { EmptyState } from "../../../components/feedback/States";
 import { useToast } from "../../../components/feedback/toastStore";
 import { toUserMessage } from "../../../lib/errors";
 import { usePreferenceDrafts } from "../usePreferenceDrafts";
 import { useAppSettings } from "../settingsStore";
 
 import type {
-  AiSettings,
   AppSettings,
   QuietMode,
   SpeechModelDownloadProgress,
@@ -43,8 +39,6 @@ import {
   defaultAppSettings,
   formatBytes,
   getAvailablePetVisualStyleOptions,
-  providerOptions,
-  findProviderPreset,
   quietModeOptions,
   setCustomPetImagePath,
   setPetVisualStyle,
@@ -83,23 +77,13 @@ export function SettingsTab() {
     updateWorkRhythm,
   } = usePreferenceDrafts(settings);
   const [quietMode, setQuietMode] = useState<QuietMode>(settings.quietMode);
-  const [aiSettings, setAiSettings] = useState<AiSettings>(settings.ai);
+  const aiSettings = settings.ai;
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
   const [agentAutoApproveCommands, setAgentAutoApproveCommands] = useState(
     settings.agentAutoApproveCommands ?? false,
   );
   const [savingCommandPermission, setSavingCommandPermission] = useState(false);
 
-  const [apiKey, setApiKey] = useState("");
-  const [apiKeyClearRequested, setApiKeyClearRequested] = useState(false);
-  const [savedAiSettings, setSavedAiSettings] = useState<AiSettings>(
-    settings.ai,
-  );
-  const [savedHasApiKey, setSavedHasApiKey] = useState(settings.hasApiKey);
-  const [connectionStatus, setConnectionStatus] =
-    useState<ModelConnectionStatus>({ kind: "idle" });
-  const connectionText = connectionMessage(connectionStatus, t);
-  const [isSavingAi, setIsSavingAi] = useState(false);
-  const [isTesting, setIsTesting] = useState(false);
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [shortcutDraft, setShortcutDraft] = useState<string | null>(null);
   const [isSavingShortcut, setIsSavingShortcut] = useState(false);
@@ -125,30 +109,14 @@ export function SettingsTab() {
     Boolean(customPetImagePath),
   );
 
-  /**
-   * 共享缓存 → 本地草稿的单向同步。
-   *
-   * 为什么需要：`useAppSettings()` 的缓存是异步加载的（也可能被别处写入，
-   * 例如设置窗口/托盘），控件必须跟着走，否则会显示默认值。
-   * 为什么不无条件覆盖：偏好与休息提醒是即时保存，用户输入与保存回包会交错。
-   * 「草稿 !== 基线」正好等价于「还有未落盘的编辑」，此时不动草稿，避免把用户
-   * 刚敲进去的字符回退。
-   */
+  // Model drafts live in ModelSettingsDialog; synchronize the immediate preferences here.
   const appliedSettingsRef = useRef<AppSettings | null>(null);
   useEffect(() => {
     if (appliedSettingsRef.current === settings) return;
-    const isFirstLoad = appliedSettingsRef.current === null;
     appliedSettingsRef.current = settings;
 
     setQuietMode(settings.quietMode);
     setAgentAutoApproveCommands(settings.agentAutoApproveCommands ?? false);
-    // AI 参数是显式保存，服务端回包之外只在首次加载同步。
-    if (isFirstLoad) {
-      setAiSettings(settings.ai);
-      setSavedAiSettings(settings.ai);
-      setSavedHasApiKey(settings.hasApiKey);
-      setConnectionStatus({ kind: settings.hasApiKey ? "configured" : "idle" });
-    }
   }, [settings]);
 
   // 语音模型、启动与通知状态。
@@ -200,81 +168,6 @@ export function SettingsTab() {
     );
   }
 
-  function updateAiField<Key extends keyof AiSettings>(
-    key: Key,
-    value: AiSettings[Key],
-  ) {
-    setAiSettings((current) => ({ ...current, [key]: value }));
-    setConnectionStatus({ kind: "dirty" });
-  }
-
-  function updateProvider(provider: string) {
-    const preset = findProviderPreset(provider);
-    setAiSettings((current) => {
-      const currentPreset = findProviderPreset(current.provider);
-      const canApplyPreset = currentPreset
-        ? current.baseUrl === currentPreset.baseUrl &&
-          current.model === currentPreset.model
-        : !current.baseUrl && !current.model;
-      return {
-        ...current,
-        provider,
-        ...(canApplyPreset && preset
-          ? { baseUrl: preset.baseUrl, model: preset.model }
-          : {}),
-      };
-    });
-    setConnectionStatus({ kind: "dirty" });
-  }
-
-  async function saveAiSettings() {
-    setIsSavingAi(true);
-    try {
-      const next = await runCommand(
-        "update_ai_settings",
-        {
-          input: {
-            ...aiSettings,
-            apiKey: apiKeyClearRequested ? null : apiKey.trim() || undefined,
-          },
-        },
-        {
-          ...defaultAppSettings,
-          ai: aiSettings,
-          hasApiKey: apiKeyClearRequested ? false : savedHasApiKey,
-        },
-      );
-      setAiSettings(next.ai);
-      setSavedAiSettings(next.ai);
-      setSavedHasApiKey(next.hasApiKey);
-      setApiKey("");
-      setApiKeyClearRequested(false);
-      setConnectionStatus({ kind: next.hasApiKey ? "savedKey" : "savedNoKey" });
-      return next;
-    } finally {
-      setIsSavingAi(false);
-    }
-  }
-
-  function hasUnsavedAiSettings() {
-    return (
-      JSON.stringify(aiSettings) !== JSON.stringify(savedAiSettings) ||
-      apiKey.trim().length > 0 ||
-      apiKeyClearRequested
-    );
-  }
-
-  async function saveOnlyAiSettings() {
-    try {
-      await saveAiSettings();
-    } catch (error) {
-      setConnectionStatus({
-        kind: "savingFailed",
-        detail: toUserMessage(error),
-      });
-    }
-  }
-
   async function loadSpeechModels() {
     const models = await runCommand(
       "get_speech_model_status",
@@ -313,27 +206,6 @@ export function SettingsTab() {
     } finally {
       setDownloadingSpeechModelId("");
       void loadSpeechModels();
-    }
-  }
-
-  /** 动作型提交：AI 参数是唯一需要点按钮才生效的一组（05 §1「没有保存按钮」的例外）。 */
-  async function testConnection() {
-    setIsTesting(true);
-    setConnectionStatus({ kind: "connecting" });
-    try {
-      await saveAiSettings();
-      const models = await runCommand("list_models", undefined, [
-        { id: aiSettings.model },
-      ]);
-      const modelNames = models.map((model) => model.id).join("、");
-      setConnectionStatus({
-        kind: models.length ? "connected" : "empty",
-        detail: modelNames,
-      });
-    } catch (error) {
-      setConnectionStatus({ kind: "failed", detail: toUserMessage(error) });
-    } finally {
-      setIsTesting(false);
     }
   }
 
@@ -687,187 +559,13 @@ export function SettingsTab() {
         icon={<MessageCircle size={15} />}
         title="AI 与对话"
         description="模型连接与对话偏好"
-        status={`${connectionStatus.kind === "connected" ? "已连接" : connectionStatus.kind === "connecting" ? "连接中" : connectionStatus.kind === "failed" ? "连接失败" : connectionStatus.kind === "dirty" ? "有未保存的设置" : "尚未测试连接"} · ${savedAiSettings.model || "未选择模型"}`}
+        status={settings.ai.model || "未选择模型"}
       >
-        <section className="panel-card model-provider-card">
-          <div className="settings-form model-provider-form">
-            <label className="model-provider-form__provider">
-              <span>服务类型</span>
-              <select
-                value={aiSettings.provider}
-                onChange={(event) => updateProvider(event.currentTarget.value)}
-              >
-                {providerOptions.map(({ label, value }) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="model-provider-form__fields">
-              <label>
-                <span>Base URL</span>
-                <input
-                  value={aiSettings.baseUrl}
-                  onChange={(event) =>
-                    updateAiField("baseUrl", event.currentTarget.value)
-                  }
-                  placeholder="http://localhost:11434/v1"
-                />
-              </label>
-              <label>
-                <span>Model</span>
-                <input
-                  value={aiSettings.model}
-                  onChange={(event) =>
-                    updateAiField("model", event.currentTarget.value)
-                  }
-                  placeholder={
-                    aiSettings.provider === "lmstudio"
-                      ? "可留空，LM Studio 自动使用当前加载模型"
-                      : "gemma4:e4b"
-                  }
-                />
-              </label>
-              <label>
-                <span>API Key</span>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(event) => {
-                    setApiKey(event.currentTarget.value);
-                    setApiKeyClearRequested(false);
-                    setConnectionStatus({ kind: "dirty" });
-                  }}
-                  placeholder={
-                    savedHasApiKey
-                      ? "已配置密钥，输入新密钥可替换"
-                      : "本地 Ollama 可留空"
-                  }
-                />
-                <small>密钥仅用于连接你选择的服务，并保存在本机。</small>
-              </label>
-            </div>
-            {(savedHasApiKey || apiKey.trim()) && (
-              <button
-                type="button"
-                className="button-secondary model-provider-form__clear-key"
-                disabled={isSavingAi || isTesting}
-                onClick={() => {
-                  setApiKey("");
-                  setApiKeyClearRequested(true);
-                  setConnectionStatus({ kind: "dirty" });
-                }}
-              >
-                清除已保存的 API Key
-              </button>
-            )}
-            <details className="model-provider-form__advanced">
-              <summary>高级连接设置</summary>
-              <div className="settings-form__row">
-                <label>
-                  <span>Temperature</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="2"
-                    step="0.1"
-                    value={aiSettings.temperature}
-                    onChange={(event) =>
-                      updateAiField(
-                        "temperature",
-                        Number(event.currentTarget.value),
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  <span>超时秒数</span>
-                  <input
-                    type="number"
-                    min="5"
-                    max="600"
-                    value={aiSettings.timeoutSeconds}
-                    onChange={(event) =>
-                      updateAiField(
-                        "timeoutSeconds",
-                        Number(event.currentTarget.value),
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  <span>上下文窗口（0 自动）</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="2000000"
-                    value={aiSettings.contextWindow ?? 0}
-                    onChange={(event) =>
-                      updateAiField(
-                        "contextWindow",
-                        Number(event.currentTarget.value),
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  <span>最大输出 Token（0 自动）</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="200000"
-                    value={aiSettings.maxOutputTokens ?? 0}
-                    onChange={(event) =>
-                      updateAiField(
-                        "maxOutputTokens",
-                        Number(event.currentTarget.value),
-                      )
-                    }
-                  />
-                </label>
-                <p>
-                  自动模式按模型目录确定限制；未知模型使用保守默认值，本地服务可按实际配置填写。
-                </p>
-              </div>
-            </details>
-            <div
-              className="model-provider-form__actions"
-              aria-label="模型设置操作"
-            >
-              <button
-                type="button"
-                className="button-secondary"
-                disabled={!hasUnsavedAiSettings() || isSavingAi || isTesting}
-                onClick={() => void saveOnlyAiSettings()}
-              >
-                {isSavingAi ? "保存中..." : "保存设置"}
-              </button>
-              <button
-                type="button"
-                disabled={isSavingAi || isTesting}
-                onClick={() => void testConnection()}
-              >
-                {isTesting ? "测试中..." : "保存并测试"}
-              </button>
-            </div>
-            {hasUnsavedAiSettings() && (
-              <p className="settings-note">模型设置有未保存修改</p>
-            )}
-            {settings.credentialError && (
-              <p role="alert">{settings.credentialError}</p>
-            )}
-            {connectionStatus.kind === "failed" ? (
-              <ErrorState
-                message={connectionText}
-                onRetry={() => void testConnection()}
-                onDismiss={() => setConnectionStatus({ kind: "idle" })}
-              />
-            ) : (
-              <p className="feedback-status">{connectionText}</p>
-            )}
-          </div>
+        <section className="panel-card model-connection-entry">
+          <div><strong>{settings.ai.model || "选择你的 AI 模型"}</strong><p>{settings.ai.baseUrl || "配置 API 连接，获取可用模型"}</p></div>
+          <button type="button" onClick={() => setModelSettingsOpen(true)}>模型与 API</button>
         </section>
+        {modelSettingsOpen && <ModelSettingsDialog initialTab="connection" onClose={() => setModelSettingsOpen(false)} />}
         <details className="settings-subgroup">
           <summary>语音输入</summary>
           <div className="settings-subgroup__body">

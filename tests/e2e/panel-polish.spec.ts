@@ -26,12 +26,15 @@ test("chat target and collapsed summaries remain readable at panel width", async
     .getByRole("button", { name: "设置", exact: true })
     .click();
   const model = page.locator("#settings-group-ai > summary");
-  await expect(model).toContainText("尚未测试连接");
   await expect(model).toContainText("ui-test");
   await expect(model).not.toContainText("已连接");
   await expect(
     page.locator("#settings-group-companion > summary"),
   ).toContainText("感知已开启");
+  await page.locator("#settings-group-ai > summary").click();
+  await page.getByRole("button", { name: "模型与 API", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("status")).toHaveText("连接正常");
+  expect(await callsFor(page, "list_models")).toHaveLength(1);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,

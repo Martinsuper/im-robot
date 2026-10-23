@@ -5,6 +5,7 @@ import { ChatContextMenu } from "./ChatContextMenu";
 import { useConversationSurface } from "./useConversationSurface";
 import { WorkspaceMenu } from "./WorkspaceMenu";
 import { useAppSettings } from "../panel/settingsStore";
+import { ChatModelMenu } from "./ChatModelMenu";
 import { useWorkspaceSelection } from "./useWorkspaceSelection";
 import { useStableEvent } from "../../hooks/useStableEvent";
 import { HtmlFavoriteDialog } from "./HtmlFavoriteDialog";
@@ -1345,6 +1346,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
           </span>
         </div>
         <div className="bubble-topbar__right">
+          <ChatModelMenu disabled={agentBusy || isThinking} />
           <button
             type="button"
             className={`bubble-topbar__btn${isPinned ? " bubble-topbar__btn--active" : ""}`}

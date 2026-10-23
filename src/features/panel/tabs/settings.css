@@ -431,10 +431,64 @@
   font-size: var(--text-sm, 11px);
   line-height: 1.55;
 }
+
+.tab--settings .settings-form .model-picker > label {
+  grid-template-columns: minmax(0, 1fr);
+}
+.tab--settings .model-picker button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--piko-line);
+  border-radius: 7px;
+  background: var(--piko-fill);
+  color: var(--piko-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.tab--settings .model-picker button:disabled { opacity: .5; cursor: default; }
 .data-diagnostics__refresh {
   padding: 0 12px;
   min-height: 28px;
   border-radius: 7px;
   font-size: var(--text-sm, 11px);
   font-weight: 650;
+}
+.model-picker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+.model-picker__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.model-picker select, .model-picker input { width: 100%; min-width: 0; }
+.model-picker small { overflow-wrap: anywhere; color: var(--piko-muted); }
+
+.model-connection-entry { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.model-connection-entry > div { min-width: 0; }
+.model-connection-entry strong { font-size: 14px; overflow-wrap: anywhere; }
+.model-connection-entry p { margin: 6px 0 0; color: var(--piko-muted); font-size: 12px; overflow-wrap: anywhere; }
+.model-connection-entry button { flex-shrink: 0; border: 1px solid var(--piko-line); border-radius: 8px; padding: 8px 12px; background: var(--piko-fill); color: var(--piko-accent); cursor: pointer; }
+
+/* Align form controls and actions on the same baseline across settings groups. */
+.tab--settings .settings-form { --settings-label-width: 88px; }
+.tab--settings .settings-form label:not(.setting-toggle) {
+  grid-template-columns: var(--settings-label-width) minmax(0, 1fr);
+}
+.tab--settings .settings-form input:not([type="checkbox"]),
+.tab--settings .settings-form select,
+.tab--settings .settings-pet-actions button,
+.tab--settings .custom-pet-picker button {
+  min-height: 36px;
+}
+.tab--settings .settings-form :is(input, select, textarea) { width: 100%; min-width: 0; }
+.tab--settings .settings-form .setting-toggle input { width: 16px; padding: 0; margin: 0; }
+.tab--settings .custom-pet-picker > div { display: flex; align-items: center; gap: 8px; }
+.tab--settings .model-connection-entry { align-items: center; }
+@media (max-width: 400px) {
+  .tab--settings .settings-form { --settings-label-width: 72px; }
 }

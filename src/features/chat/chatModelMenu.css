@@ -1,0 +1,10 @@
+.chat-model-trigger {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  max-width: 200px; min-width: 0; height: 32px; padding: 0 10px;
+  border: 1px solid var(--piko-line); border-radius: 8px;
+  background: var(--piko-fill); color: var(--piko-ink); font: inherit; font-size: 12px; cursor: pointer;
+}
+.chat-model-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-model-trigger > svg { flex-shrink: 0; color: var(--piko-muted); }
+.chat-model-trigger:hover:not(:disabled) { border-color: var(--piko-accent); background: var(--piko-soft); }
+.chat-model-trigger:disabled { opacity: .5; cursor: default; }
