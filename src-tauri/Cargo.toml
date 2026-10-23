@@ -24,7 +24,7 @@ wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-sha2 = "0.10"
+sha2 = "0.11"
 lopdf = "0.42"
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "time", "process", "io-util", "fs"] }
