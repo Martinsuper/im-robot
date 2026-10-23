@@ -1,4 +1,17 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+
+async function clickAndExpectPopupClose(popup: Page, control: Locator) {
+  // window.close() may destroy the target before Playwright acknowledges the click.
+  // Require the close event, and keep asserting restored state in the parent page.
+  await Promise.all([
+    popup.waitForEvent("close"),
+    control.click().catch((error: unknown) => {
+      if (!popup.isClosed() || !String(error).includes("Target page, context or browser has been closed")) {
+        throw error;
+      }
+    }),
+  ]);
+}
 
 test("background conversations finish independently and retain their drafts", async ({ page }) => {
   await page.goto("/?view=bubble");
@@ -65,7 +78,7 @@ test("a detached window takes ownership and returns its draft and conversation",
   await popupInput.fill("独立窗口编辑的草稿");
   await popup.reload();
   await expect(popupInput).toHaveValue("独立窗口编辑的草稿");
-  await popup.getByRole("button", { name: "关闭会话：可转移的会话", exact: true }).click();
+  await clickAndExpectPopupClose(popup, popup.getByRole("button", { name: "关闭会话：可转移的会话", exact: true }));
   await expect(input).toHaveValue("独立窗口编辑的草稿");
   await expect(page.getByText("这是浏览器预览回复：可转移的会话", { exact: true })).toBeVisible();
   await expect(page.getByRole("tab")).toHaveCount(1);
@@ -82,7 +95,7 @@ test("a task can be handed off while its reply is pending", async ({ page }) => 
   await expect(popup.getByText("这是浏览器预览回复：运行中转移", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "新建会话标签页" }).click();
   await page.getByRole("tabpanel").getByLabel("发送给 Piko 的问题").fill("主窗口中的独立草稿");
-  await popup.getByRole("button", { name: "返回主窗口", exact: true }).click();
+  await clickAndExpectPopupClose(popup, popup.getByRole("button", { name: "返回主窗口", exact: true }));
   await page.getByRole("tab").first().click();
   await expect(page.getByText("这是浏览器预览回复：运行中转移", { exact: true })).toBeVisible();
 });
