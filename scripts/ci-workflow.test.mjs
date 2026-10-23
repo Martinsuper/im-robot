@@ -21,3 +21,16 @@ test("native packaged Agent tests install the SDK dependencies first", () => {
   const run = rust.indexOf("npm run test:agent:packaged");
   assert.ok(install >= 0 && run > install, "SDK dependencies must exist before tests import the source adapter");
 });
+
+test("parallel release builds cannot publish before verification succeeds", () => {
+  const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+  const prepare = release.split(/^  prepare:\s*$/m)[1]?.split(/^  [\w-]+:\s*$/m)[0];
+  const build = release.split(/^  build:\s*$/m)[1]?.split(/^  [\w-]+:\s*$/m)[0];
+  const publish = release.split(/^  publish:\s*$/m)[1];
+  assert.ok(prepare && build && publish);
+  assert.doesNotMatch(prepare, /^    needs:/m, "draft preparation should not serialize verification and builds");
+  assert.match(build, /^    needs: prepare\s*$/m);
+  assert.match(publish, /^    needs: \[verify, prepare, build\]\s*$/m, "verification and every platform build must gate public release");
+  assert.doesNotMatch(publish, /^    if:.*always\(/m, "failed prerequisites must not be bypassed");
+  assert.match(publish, /gh release edit .*--draft=false/);
+});

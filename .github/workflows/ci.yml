@@ -1,6 +1,8 @@
 name: Verify
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_call:
   workflow_dispatch:
@@ -18,7 +20,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            agent/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/contracts -> target
+          key: contracts
       - run: npm ci
       - run: node --test scripts/prepare-release.test.mjs
       - run: node --test scripts/window-config.test.mjs
@@ -54,9 +63,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: verify-${{ matrix.os }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
       - name: Install Agent SDK test dependencies
         run: npm --prefix agent ci
       - run: npm run agent:prepare
@@ -69,9 +84,7 @@ jobs:
           npm run test:notifications-native
       - name: Install Tauri Linux dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libxtst-dev libxi-dev libxcb-randr0-dev
+        run: bash scripts/install-linux-build-deps.sh
       - run: cargo fmt --check
         working-directory: src-tauri
       - run: cargo clippy --all-targets --all-features -- -D warnings
@@ -86,6 +99,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/contracts -> target
+          cache-targets: false
+          key: cargo-audit-0.22.2
       - run: cargo install cargo-audit --version 0.22.2 --locked
       - run: cargo audit --file src-tauri/Cargo.lock
       - run: cargo audit --file tools/contracts/Cargo.lock

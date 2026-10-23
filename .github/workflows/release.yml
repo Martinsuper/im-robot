@@ -15,9 +15,9 @@ jobs:
     permissions:
       contents: read
 
-  # Prepare a new draft or resume an unfinished release without deleting assets.
+  # Build installers while verification runs; only publish after both succeed.
+  # Preparing a draft does not expose an incomplete release to users.
   prepare:
-    needs: verify
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -68,17 +68,21 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            agent/package-lock.json
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
         with:
-          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          workspaces: src-tauri -> target
+          key: release-${{ matrix.platform }}
 
       - name: Install dependencies (Ubuntu)
         if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libxtst-dev libxi-dev libxcb-randr0-dev
+        run: bash scripts/install-linux-build-deps.sh
 
       - name: Install frontend dependencies
         run: npm ci
@@ -141,7 +145,7 @@ jobs:
           if-no-files-found: warn
 
   publish:
-    needs: [prepare, build]
+    needs: [verify, prepare, build]
     runs-on: ubuntu-latest
     steps:
       - name: Publish fully uploaded release
