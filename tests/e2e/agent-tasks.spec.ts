@@ -360,12 +360,12 @@ test("completed turns remain in the thread once each after a follow-up", async (
   const first = await start(page, "第一轮问题");
   await emit(page, first.requestId, { type: "delta", text: "第一轮回答" });
   await emit(page, first.requestId, { type: "completed" });
-  await expect(page.getByRole("tabpanel").getByText("第一轮问题", { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "对话内容" }).getByText("第一轮问题", { exact: true })).toHaveCount(1);
   const second = await start(page, "第二轮追问");
   await emit(page, second.requestId, { type: "delta", text: "第二轮回答" });
   await emit(page, second.requestId, { type: "completed" });
-  await expect(page.getByRole("tabpanel").getByText("第一轮问题", { exact: true })).toHaveCount(1);
-  await expect(page.getByRole("tabpanel").getByText("第二轮追问", { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "对话内容" }).getByText("第一轮问题", { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "对话内容" }).getByText("第二轮追问", { exact: true })).toHaveCount(1);
 });
 
 test("failed startup restores the single input draft", async ({ page }) => {

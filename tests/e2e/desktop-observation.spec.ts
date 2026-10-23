@@ -7,7 +7,7 @@ test("desktop observation is opt-in and its preferences persist", async ({
   await page.setViewportSize({ width: 1100, height: 1100 });
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "设置", exact: true })
     .click();
 
@@ -31,7 +31,7 @@ test("desktop observation is opt-in and its preferences persist", async ({
   ).toBeChecked();
   await page.reload();
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "设置", exact: true })
     .click();
 

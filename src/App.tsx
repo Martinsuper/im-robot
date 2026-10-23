@@ -11,6 +11,7 @@ import "./App.css";
 import "./features/app/design-system.css";
 import "./features/chat/bubble.css";
 import "./styles/modern.css";
+import "./styles/studio.css";
 
 type WindowLabel = "pet" | "bubble" | "panel" | "capture" | "html-preview";
 

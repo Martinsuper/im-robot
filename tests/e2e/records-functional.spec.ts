@@ -13,7 +13,7 @@ test.use({
 async function openRecords(page: import("@playwright/test").Page) {
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "记录", exact: true })
     .click();
   await page.locator(".records-composer > summary").click();
@@ -48,7 +48,7 @@ test("record create, category, edit, reload and delete form a complete lifecycle
   expect((await callsFor(page, "update_memo"))[0].args.id).toBe("ui-1");
   await page.reload();
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "记录", exact: true })
     .click();
   await expect(card.getByText("修订后的内容", { exact: true })).toBeVisible();

@@ -24,7 +24,7 @@ test("Markdown conflicts show both versions and require an explicit decision", a
       return original(command, args);
     };
   });
-  await page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "记录", exact: true }).click();
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "记录", exact: true }).click();
   await page.getByRole("button", { name: "Piko 记住的", exact: true }).click();
   await page.getByText("文件同步与备份", { exact: true }).click();
   await page.locator(".memory-vault > summary").click();
@@ -47,7 +47,7 @@ test("Markdown conflicts show both versions and require an explicit decision", a
 
 test("browser preview explains that Markdown sync requires the desktop app", async ({ page }) => {
   await page.goto("/?view=panel");
-  await page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "记录", exact: true }).click();
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "记录", exact: true }).click();
   await page.getByRole("button", { name: "Piko 记住的", exact: true }).click();
   await page.getByText("文件同步与备份", { exact: true }).click();
   await page.locator(".memory-vault > summary").click();

@@ -28,6 +28,8 @@ import { useToast } from "../../../components/feedback/toastStore";
 import { toUserMessage } from "../../../lib/errors";
 import { defaultFocusSnapshot } from "../../app/appShared";
 import { isTauriRuntime, runCommand } from "../../app/appRuntime";
+import { ScheduleCalendar } from "../ScheduleCalendar";
+import { itemsForDay } from "../scheduleCalendarData";
 import { previewScheduleItems } from "../previewData";
 import { parseQuickAdd } from "../quickAdd";
 import "./today.css";
@@ -37,11 +39,8 @@ import {
   formatClock,
   formatCountdown,
   formatRange,
-  greetingFor,
   isOverdue,
-  isToday,
   nowSeconds,
-  summarizeTodayCount,
   type UnixSeconds,
 } from "../time";
 
@@ -79,11 +78,15 @@ function fromDateTimeLocalValue(value: string): UnixSeconds | null {
   return Math.floor(parsed.getTime() / 1000);
 }
 
-function defaultQuickAddTime(): string {
+function defaultQuickAddTime(day?: Date): string {
   // 默认给下一个整点，减少一次调整。
-  const date = new Date();
-  date.setMinutes(0, 0, 0);
-  date.setHours(date.getHours() + 1);
+  const date = day ? new Date(day) : new Date();
+  if (day && dayOffset(day.getTime() / 1000) !== 0) {
+    date.setHours(9, 0, 0, 0);
+  } else {
+    date.setMinutes(0, 0, 0);
+    date.setHours(date.getHours() + 1);
+  }
   return toDateTimeLocalValue(Math.floor(date.getTime() / 1000));
 }
 
@@ -95,6 +98,8 @@ function defaultQuickAddTime(): string {
  */
 export function TodayTab() {
   const toast = useToast();
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [items, setItems] = useState<ScheduleItem[]>([]);
   const [focus, setFocus] = useState<FocusSnapshot>(defaultFocusSnapshot);
   const [loadError, setLoadError] = useState("");
@@ -267,10 +272,9 @@ export function TodayTab() {
   const reference = nowSeconds();
   const todayItems = useMemo(
     () =>
-      items
-        .filter((item) => isToday(item.startAt, reference))
+      itemsForDay(items, selectedDate)
         .sort((left, right) => left.startAt - right.startAt),
-    [items, reference],
+    [items, selectedDate],
   );
   const upcomingItems = useMemo(
     () =>
@@ -363,7 +367,7 @@ export function TodayTab() {
         });
       }
       setDraftTitle("");
-      setDraftAt(defaultQuickAddTime());
+      setDraftAt(defaultQuickAddTime(selectedDate));
       await loadItems();
       toast.success(draftKind === "reminder" ? "提醒已添加" : "日程已添加");
     } catch (error) {
@@ -374,21 +378,16 @@ export function TodayTab() {
   }
 
   const todayCount = todayItems.length;
-  const greeting = greetingFor(reference);
+  const selectedLabel = `${selectedDate.getMonth() + 1}月${selectedDate.getDate()}日`;
 
   return (
     <div className="tab tab--today">
-      <section className="today-greeting" aria-label="问候">
-        <h2>{greeting}</h2>
-        <p>
-          {summarizeTodayCount(todayCount) ?? "今天还没有安排"}
-          {focus.status === "running"
-            ? ` · ${focus.kind === "focus" ? "专注中" : "休息中"}`
-            : ""}
-        </p>
-      </section>
-
-      <section className="today-card" aria-label="快速添加">
+      <ScheduleCalendar items={items} selected={selectedDate} today={new Date(reference * 1000)} onSelect={(day) => {
+        setSelectedDate(day);
+        setDraftAt(defaultQuickAddTime(day));
+      }} />
+      <details role="region" aria-label="快速添加" className="today-card today-add-disclosure" open={quickAddOpen} onToggle={(event) => setQuickAddOpen(event.currentTarget.open)}>
+        <summary><Plus size={15} />添加提醒或日程</summary>
         <form className="today-quick-add" onSubmit={submitQuickAdd}>
           <label className="today-quick-add__title">
             <span className="sr-only">要做什么</span>
@@ -502,13 +501,12 @@ export function TodayTab() {
             </button>
           </div>
         </form>
-      </section>
+      </details>
 
-      <section className="today-card" aria-label="今天的时间线">
+      <section className="today-card today-agenda" aria-label="今天的时间线">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">TODAY</p>
-            <h2>今天</h2>
+            <h2>{selectedLabel}<span className="today-agenda__count"> · {todayCount} 件事</span></h2>
           </div>
           {overlaps.length ? (
             <span className="today-conflict" role="status">
@@ -528,8 +526,8 @@ export function TodayTab() {
         ) : todayItems.length === 0 ? (
           <EmptyState
             icon={<ListTodo size={20} />}
-            title="今天还没有安排"
-            description="要不要加一件？上面写一句就行。"
+            title={`${selectedLabel}还没有安排`}
+            description="点击添加，记下一件想做的事。"
           />
         ) : (
           <ul className="timeline">
@@ -552,7 +550,7 @@ export function TodayTab() {
                   <span className="timeline__body">
                     <strong>{item.title}</strong>
                     <span className="timeline__meta">
-                      {kindLabel(item)}
+                      {done ? "已完成" : kindLabel(item)}
                       {item.location ? ` · ${item.location}` : ""}
                       {overdue ? " · 已错过" : ""}
                     </span>
@@ -743,7 +741,7 @@ export function TodayTab() {
                 <span className="timeline__marker" aria-hidden="true" />
                 <span className="timeline__body">
                   <strong>{item.title}</strong>
-                  <span className="timeline__meta">{kindLabel(item)}</span>
+                  <span className="timeline__meta">{item.status === "done" ? "已完成" : kindLabel(item)}</span>
                 </span>
               </li>
             ))}

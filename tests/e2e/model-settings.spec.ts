@@ -186,7 +186,7 @@ async function installSettingsBackend(
   );
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "设置" })
     .click();
   await page.locator("#settings-group-ai > summary").click();

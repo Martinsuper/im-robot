@@ -12,7 +12,7 @@ test.use({
 async function openSettings(page: import("@playwright/test").Page) {
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "设置", exact: true })
     .click();
   await page.locator("#settings-group-companion > summary").click();
@@ -41,7 +41,7 @@ test("debounced companion preferences persist together after reload", async ({
   });
   await page.reload();
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "设置", exact: true })
     .click();
   await page.locator("#settings-group-companion > summary").click();

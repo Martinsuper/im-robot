@@ -22,7 +22,7 @@ test.describe("records tab", () => {
     });
 
     await page.goto("/?view=panel");
-    const nav = page.getByRole("navigation", { name: "面板导航" });
+    const nav = page.getByRole("navigation", { name: "主导航" });
     const records = nav.getByRole("button", { name: "记录" });
     await records.click();
     await expect(records).toHaveClass(/is-active/);
@@ -57,7 +57,7 @@ test.describe("records tab", () => {
 
     await page.goto("/?view=panel");
     await page
-      .getByRole("navigation", { name: "面板导航" })
+      .getByRole("navigation", { name: "主导航" })
       .getByRole("button", { name: "记录" })
       .click();
     const sectionNav = page.getByRole("navigation", { name: "记录分区" });
@@ -90,7 +90,7 @@ test.describe("records tab", () => {
   }) => {
     await page.goto("/?view=panel");
     await page
-      .getByRole("navigation", { name: "面板导航" })
+      .getByRole("navigation", { name: "主导航" })
       .getByRole("button", { name: "记录" })
       .click();
 
@@ -116,7 +116,7 @@ test.describe("records tab", () => {
   test("can write a new record from the entry form", async ({ page }) => {
     await page.goto("/?view=panel");
     await page
-      .getByRole("navigation", { name: "面板导航" })
+      .getByRole("navigation", { name: "主导航" })
       .getByRole("button", { name: "记录" })
       .click();
 

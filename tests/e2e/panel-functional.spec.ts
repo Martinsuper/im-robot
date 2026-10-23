@@ -16,6 +16,7 @@ for (const repeat of ["none", "daily", "weekly", "weekdays"]) {
   }) => {
     await installPanelBackend(page);
     await page.goto("/?view=panel");
+    await page.locator(".today-add-disclosure > summary").click();
     await page.locator(".today-quick-add__options > summary").click();
     await page.locator(".today-focus-disclosure > summary").click();
     await page.locator(".today-calendar-tools > summary").click();
@@ -58,6 +59,7 @@ test("calendar duration and deletion preserve an existing reminder", async ({
 }) => {
   await installPanelBackend(page);
   await page.goto("/?view=panel");
+  await page.locator(".today-add-disclosure > summary").click();
   await page.locator(".today-quick-add__options > summary").click();
   await page.locator(".today-focus-disclosure > summary").click();
   await page.locator(".today-calendar-tools > summary").click();
@@ -98,6 +100,7 @@ for (const minutes of [15, 25, 45, 60]) {
   }) => {
     await installPanelBackend(page);
     await page.goto("/?view=panel");
+    await page.locator(".today-add-disclosure > summary").click();
     await page.locator(".today-quick-add__options > summary").click();
     await page.locator(".today-focus-disclosure > summary").click();
     await page.locator(".today-calendar-tools > summary").click();
@@ -132,6 +135,7 @@ for (const minutes of [5, 10, 15]) {
   }) => {
     await installPanelBackend(page);
     await page.goto("/?view=panel");
+    await page.locator(".today-add-disclosure > summary").click();
     await page.locator(".today-quick-add__options > summary").click();
     await page.locator(".today-focus-disclosure > summary").click();
     await page.locator(".today-calendar-tools > summary").click();
@@ -157,6 +161,7 @@ test("failed quick-add preserves input and allows retry", async ({
     failures: { create_reminder: "测试存储不可用" },
   });
   await page.goto("/?view=panel");
+  await page.locator(".today-add-disclosure > summary").click();
   await page.locator(".today-quick-add__options > summary").click();
   await page.locator(".today-focus-disclosure > summary").click();
   await page.locator(".today-calendar-tools > summary").click();
@@ -176,6 +181,7 @@ test("sync pushes then pulls; export opens only after explicit action", async ({
 }) => {
   await installPanelBackend(page);
   await page.goto("/?view=panel");
+  await page.locator(".today-add-disclosure > summary").click();
   await page.locator(".today-quick-add__options > summary").click();
   await page.locator(".today-focus-disclosure > summary").click();
   await page.locator(".today-calendar-tools > summary").click();
@@ -213,6 +219,7 @@ test("cancel export does not write or open a file", async ({
 }) => {
   await installPanelBackend(page, { savePath: null });
   await page.goto("/?view=panel");
+  await page.locator(".today-add-disclosure > summary").click();
   await page.locator(".today-quick-add__options > summary").click();
   await page.locator(".today-focus-disclosure > summary").click();
   await page.locator(".today-calendar-tools > summary").click();

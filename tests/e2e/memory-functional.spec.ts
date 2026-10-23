@@ -13,7 +13,7 @@ async function openMemory(page: import("@playwright/test").Page) {
   await installPanelBackend(page, { memory: true });
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "记录", exact: true })
     .click();
   await page

@@ -17,8 +17,8 @@ test("bubble preview exposes text, file and screenshot entry points", async ({ p
 
 test("panel preview renders the three-tab shell", async ({ page }) => {
   await page.goto("/?view=panel");
-  const nav = page.getByRole("navigation", { name: "面板导航" });
-  await expect(nav.getByRole("button")).toHaveCount(3);
+  const nav = page.getByRole("navigation", { name: "主导航" });
+  await expect(nav.getByRole("button")).toHaveCount(4);
   await expect(nav.getByRole("button", { name: "今天" })).toHaveClass(/is-active/);
   // 各 Tab 的细节断言在 panel-tabs.spec.ts 里，这里只确认外壳可用。
   await nav.getByRole("button", { name: "设置" }).click();

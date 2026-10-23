@@ -22,7 +22,7 @@ test("chat target and collapsed summaries remain readable at panel width", async
   expect(metrics.height).toBeGreaterThanOrEqual(36);
   expect(metrics.fontSize).toBeGreaterThanOrEqual(13);
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "设置", exact: true })
     .click();
   const model = page.locator("#settings-group-ai > summary");
@@ -45,7 +45,7 @@ test("records expose actions on demand and keyboard dismissal preserves data", a
   await installPanelBackend(page);
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "记录", exact: true })
     .click();
   await page.locator(".records-composer > summary").click();

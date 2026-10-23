@@ -1,11 +1,14 @@
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { openConversationWindow, closeConversationWindow, previewWindows, PREVIEW_WINDOWS_KEY, type WindowSnapshot } from "./conversationWindows";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { CalendarDays, MessageCircle, NotebookPen, Settings2, Plus, X } from "lucide-react";
 import { BubbleWindow, type ConversationTabState } from "./BubbleWindow";
 import { CONVERSATION_STORAGE, loadConversation, type AgentTaskSnapshot, type AgentEvent } from "./agentTypes";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { useToast } from "../../components/feedback/toastStore";
+
+import type { PanelTab } from "../../types/appTypes";
+import { useAppSettings } from "../panel/settingsStore";
 
 const candidateId = new URLSearchParams(location.search).get("conversation");
 const detachedId = candidateId && /^[a-zA-Z0-9-]{1,80}$/.test(candidateId) ? candidateId : null;
@@ -36,9 +39,15 @@ function initialTabs(): Tabs {
 }
 
 export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWorkspaceOpen?: boolean }) {
+  const { settings } = useAppSettings();
+  const [navigation, setNavigation] = useState<{ tab: PanelTab; id: number; conversationId: string }>();
   const [workspace, setWorkspace] = useState(initialTabs);
   const [states, setStates] = useState<Record<string, ConversationTabState>>({});
   const current = useRef(workspace);
+  const [activePanel, setActivePanel] = useState<PanelTab | null>(initialWorkspaceOpen ? "today" : null);
+  const reportWorkspace = useCallback((id: string, tab: PanelTab | null) => {
+    if (id === current.current.selected) setActivePanel(tab);
+  }, []);
   useLayoutEffect(() => { current.current = workspace; }, [workspace]);
   const [pendingResume, setPendingResume] = useState<{ requestId: string; conversationId: string }>();
   const consumeResume = useCallback(() => setPendingResume(undefined), []);
@@ -184,12 +193,21 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
   }
 
   const running = Object.values(states).filter(state => state.busy).length;
-  return <div className="conversation-tabs">
+  return <div className={`conversation-tabs${detachedId ? " conversation-tabs--detached" : " conversation-tabs--studio"}`}>
     <div className="conversation-tabs__bar">
-      <div className="conversation-tabs__list" role="tablist" aria-label="对话标签页" onKeyDown={event => {
+      {!detachedId && <>
+        <div className="studio-brand"><img src="/pets/piko-app-icon.png" alt="" /><div><strong>{settings.companionName}</strong><span>随时聊聊，一起做事</span></div></div>
+        <nav className="studio-navigation" aria-label="主导航">
+          <button type="button" className="studio-navigation__new" onClick={newTab}><MessageCircle size={20} />新对话</button>
+          {([{ tab: "today", label: "今天", icon: CalendarDays }, { tab: "records", label: "记录", icon: NotebookPen }, { tab: "settings", label: "设置", icon: Settings2 }] as const).map(({ tab, label, icon: Icon }) => <button key={tab} type="button" className={activePanel === tab ? "is-active" : ""} aria-current={activePanel === tab ? "page" : undefined} onClick={() => setNavigation({ tab, id: Date.now(), conversationId: workspace.selected })}><Icon size={20} />{label}</button>)}
+        </nav>
+        <p className="studio-recent-label">最近对话</p>
+      </>}
+
+      <div className="conversation-tabs__list" role="tablist" aria-label="对话标签页" aria-orientation={detachedId ? "horizontal" : "vertical"} onKeyDown={event => {
         const index = workspace.tabs.findIndex(tab => tab.id === workspace.selected);
-        const next = event.key === "ArrowRight" ? (index + 1) % workspace.tabs.length
-          : event.key === "ArrowLeft" ? (index + workspace.tabs.length - 1) % workspace.tabs.length
+        const next = (event.key === "ArrowRight" || event.key === "ArrowDown") ? (index + 1) % workspace.tabs.length
+          : (event.key === "ArrowLeft" || event.key === "ArrowUp") ? (index + workspace.tabs.length - 1) % workspace.tabs.length
           : event.key === "Home" ? 0 : event.key === "End" ? workspace.tabs.length - 1 : -1;
         if (next < 0) return;
         event.preventDefault();
@@ -219,7 +237,7 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
         <p>此会话已在独立窗口打开，后台任务会继续执行。</p>
         <button type="button" onClick={() => void detach(tab.id).catch(error => toast.error(String(error)))}>显示独立窗口</button>
         <button type="button" onClick={() => void closeConversationWindow(tab.id).catch(error => toast.error(String(error)))}>收回主窗口</button>
-      </div> : <BubbleWindow tabId={tab.id} active={workspace.selected === tab.id} initialWorkspaceOpen={initialWorkspaceOpen && tab.id === workspace.tabs[0].id} onNewConversation={newTab} onTabState={updateTab} onDetach={detachedId ? undefined : () => detach(tab.id)} onReturn={detachedId ? returnToMain : undefined} onResumeConversation={requestResume} resumeRequest={pendingResume?.conversationId === tab.id ? pendingResume.requestId : undefined} onResumeConsumed={consumeResume} />}
+      </div> : <BubbleWindow onWorkspaceState={reportWorkspace} conversationTitle={tab.title} navigationRequest={navigation?.conversationId === tab.id ? navigation : undefined} tabId={tab.id} active={workspace.selected === tab.id} initialWorkspaceOpen={initialWorkspaceOpen && tab.id === workspace.tabs[0].id} onNewConversation={newTab} onTabState={updateTab} onDetach={detachedId ? undefined : () => detach(tab.id)} onReturn={detachedId ? returnToMain : undefined} onResumeConversation={requestResume} resumeRequest={pendingResume?.conversationId === tab.id ? pendingResume.requestId : undefined} onResumeConsumed={consumeResume} />}
     </div>)}
   </div>;
 }

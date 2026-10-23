@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test.use({ viewport: { width: 400, height: 760 } });
 test("knowledge library is readable at desktop panel width", async ({ page }) => {
   await page.goto("/?view=panel");
-  await page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "记录" }).click();
+  await page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "记录" }).click();
   await page.getByRole("button", { name: "Piko 记住的", exact: true }).click();
   await page.getByRole("button", { name: "知识库", exact: true }).click();
   await expect(page.getByRole("region", { name: "日常知识库" })).toBeVisible();

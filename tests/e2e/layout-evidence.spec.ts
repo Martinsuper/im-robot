@@ -4,7 +4,7 @@ for (const viewport of [{ width: 360, height: 560 }, { width: 400, height: 700 }
   test(`all panel tabs fit the supported ${viewport.width}x${viewport.height} viewport`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport);
     await page.goto('/?view=panel');
-    const nav = page.getByRole('navigation', { name: '面板导航' });
+    const nav = page.getByRole('navigation', { name: '主导航' });
     for (const tab of ['今天', '记录', '设置']) {
       await nav.getByRole('button', { name: tab, exact: true }).click();
       await expect(nav.getByRole('button', { name: tab, exact: true })).toHaveClass(/is-active/);

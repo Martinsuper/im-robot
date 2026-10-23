@@ -10,7 +10,7 @@ test("menu navigates without replacing chat or panel drafts", async ({ page }) =
   await expect(page.getByRole("region", { name: "主面板工作区" })).toHaveCount(0);
   await page.getByRole("menuitem", { name: "记录" }).click();
   await expect(prompt).toBeVisible();
-  const nav = page.getByRole("navigation", { name: "面板导航" });
+  const nav = page.getByRole("navigation", { name: "主导航" });
   await expect(prompt).toHaveValue("还没发送的草稿");
   await nav.getByRole("button", { name: "今天", exact: true }).click();
   const chatBox = await page.locator(".bubble-shell").boundingBox();
@@ -47,7 +47,7 @@ test("small windows return to the same chat and remember the last section", asyn
   await expect(prompt).toHaveValue("窄屏草稿");
   await page.reload();
   await page.getByRole("button", { name: "打开主面板", exact: true }).click();
-  await expect(page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "设置", exact: true })).toHaveClass(/is-active/);
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "设置", exact: true })).toHaveClass(/is-active/);
 });
 
 test("Escape and outside clicks dismiss only the navigation menu", async ({ page }) => {
@@ -70,10 +70,10 @@ test("settings opens beside chat and closing returns input focus", async ({ page
   await page.getByRole("button", { name: "主面板菜单" }).click();
   await page.getByRole("menuitem", { name: "设置", exact: true }).click();
   await expect(prompt).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "设置", exact: true })).toHaveClass(/is-active/);
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("button", { name: "设置", exact: true })).toHaveClass(/is-active/);
   const chat = await page.locator(".bubble-shell").boundingBox();
   const panel = await page.locator(".conversation-workspace__panel").boundingBox();
-  expect(chat!.width).toBe(700);
+  expect(chat!.width + panel!.width + (await page.locator(".conversation-tabs__bar").boundingBox())!.width).toBe(1100);
   expect(panel!.width).toBe(400);
   expect(panel!.x).toBeGreaterThanOrEqual(chat!.x + chat!.width);
   await page.getByRole("button", { name: "收起工作区", exact: true }).click();
@@ -123,7 +123,7 @@ test("minimum two-column width preserves chat space and respects resize limits",
   await expect(divider).toHaveAttribute("aria-valuemax", "400");
   await divider.focus();
   await page.keyboard.press("End");
-  expect((await page.locator(".bubble-shell").boundingBox())!.width).toBe(480);
+  expect((await page.locator(".bubble-shell").boundingBox())!.width).toBe(416);
   expect((await page.locator(".conversation-workspace__panel").boundingBox())!.width).toBe(400);
   await page.setViewportSize({ width: 879, height: 700 });
   await expect(page.getByLabel("发送给 Piko 的问题")).not.toBeVisible();

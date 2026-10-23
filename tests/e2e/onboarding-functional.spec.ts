@@ -12,11 +12,11 @@ test('onboarding names the companion, skips model setup and stays complete after
   await page.getByRole('button', { name: '跳过，先用本地的', exact: true }).click();
   await expect(page.getByRole('heading', { name: /认识一下\s*测试伙伴/ })).toBeVisible();
   await page.getByRole('button', { name: '开始使用', exact: true }).click();
-  await expect(page.getByRole('navigation', { name: '面板导航' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
   expect((await callsFor(page, 'complete_onboarding'))[0].args).toEqual({ companionName: '测试伙伴', onboardingVersion: '1.0' });
   expect(await callsFor(page, 'show_bubble')).toHaveLength(1);
   await page.reload();
-  await expect(page.getByRole('navigation', { name: '面板导航' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
   expect(await callsFor(page, 'complete_onboarding')).toHaveLength(0);
 });
 
@@ -24,7 +24,7 @@ test('skip onboarding is an explicit one-time command', async ({ healthyPage: pa
   await installPanelBackend(page, { onboarding: true });
   await page.goto('/?view=panel');
   await page.getByRole('button', { name: '跳过引导', exact: true }).click();
-  await expect(page.getByRole('navigation', { name: '面板导航' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible();
   expect(await callsFor(page, 'skip_onboarding')).toHaveLength(1);
   expect(await callsFor(page, 'update_ai_settings')).toHaveLength(0);
 });

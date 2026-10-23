@@ -11,7 +11,7 @@ test("creates a complete backup without restoring or clearing current data", asy
   await installPanelBackend(page);
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "设置", exact: true })
     .click();
 
@@ -34,7 +34,7 @@ test("restore previews first, can be cancelled, and requires explicit restore-an
   });
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "设置", exact: true })
     .click();
 

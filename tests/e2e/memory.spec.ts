@@ -6,7 +6,7 @@ test("memory center exposes extraction settings and candidate review at panel wi
 }) => {
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "记录" })
     .click();
   await page.getByRole("button", { name: "Piko 记住的", exact: true }).click();

@@ -59,6 +59,9 @@ const PanelWindow = lazy(() => import("../panel/PanelWindow").then((module) => (
 
 export type ConversationTabState = { title: string; busy: boolean; waiting: boolean; status: string };
 type BubbleWindowProps = {
+  conversationTitle?: string;
+  onWorkspaceState?: (id: string, tab: PanelTab | null) => void;
+  navigationRequest?: { tab: PanelTab; id: number };
   initialWorkspaceOpen?: boolean;
   tabId?: string;
   active?: boolean;
@@ -70,7 +73,7 @@ type BubbleWindowProps = {
   resumeRequest?: string;
   onResumeConsumed?: () => void;
 };
-export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = true, onNewConversation, onTabState, onDetach, onReturn, onResumeConversation, resumeRequest, onResumeConsumed }: BubbleWindowProps = {}) {
+export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRequest, initialWorkspaceOpen = false, tabId, active = true, onNewConversation, onTabState, onDetach, onReturn, onResumeConversation, resumeRequest, onResumeConsumed }: BubbleWindowProps = {}) {
   const activeTabRef = useRef(active);
   activeTabRef.current = active;
   const attachmentContext = useMemo(() => tabId ? { contextId: tabId } : undefined, [tabId]);
@@ -104,8 +107,9 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
   const resizeWorkspace = surface.setWorkspaceOpen;
   /** Keep navigation local so no conversation or input state is remounted. */
   const openWorkspace = useCallback(async (tab?: PanelTab) => {
+    // Navigation must not be dropped while the native window finishes resizing.
+    if (tab) setWorkspaceTab(tab);
     if (await resizeWorkspace(true)) {
-      if (tab) setWorkspaceTab(tab);
       setWorkspaceVisited(true);
       setWorkspaceOpen(true);
     }
@@ -116,6 +120,19 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
       window.requestAnimationFrame(() => promptInputRef.current?.focus());
     }
   }, [resizeWorkspace]);
+  useEffect(() => {
+    if (active) onWorkspaceState?.(tabId ?? "", workspaceOpen ? workspaceTab : null);
+  }, [active, onWorkspaceState, tabId, workspaceOpen, workspaceTab]);
+  const handledNavigation = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (navigationRequest && active && handledNavigation.current !== navigationRequest.id) {
+      let cancelled = false;
+      void Promise.resolve().then(() => {
+        if (!cancelled) { handledNavigation.current = navigationRequest.id; void openWorkspace(navigationRequest.tab); }
+      });
+      return () => { cancelled = true; };
+    }
+  }, [navigationRequest, active, openWorkspace]);
   const openModelSettings = () => { void openWorkspace("settings"); };
   useEffect(() => {
     try { localStorage.setItem("piko.workspace.tab", workspaceTab); } catch { /* Optional preference. */ }
@@ -1318,7 +1335,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
           <button type="button" className={`bubble-topbar__btn${workspaceOpen ? " bubble-topbar__btn--active" : ""}`} disabled={surface.pending} onClick={() => void (workspaceOpen ? closeWorkspace() : openWorkspace())} aria-label={workspaceOpen ? "收起主面板" : "打开主面板"} aria-expanded={workspaceOpen} title={workspaceOpen ? "收起工作区" : "展开工作区"}><PanelRight size={17} /></button>
         <WorkspaceMenu onSelect={(tab) => void openWorkspace(tab)}><span className="bubble-topbar__left">
           <PetSprite mode={isThinking ? "thinking" : "idle"} compact />
-          <span className="bubble-topbar__identity"><span className="bubble-topbar__name">{companionName}</span><span className="bubble-topbar__subtitle">随时聊聊，一起做事</span></span>
+          <span className="bubble-topbar__identity"><span className="bubble-topbar__name">{conversationTitle || companionName}</span><span className="bubble-topbar__subtitle">随时聊聊，一起做事</span></span>
         </span></WorkspaceMenu>
         </div>
         <div className="bubble-topbar__center">

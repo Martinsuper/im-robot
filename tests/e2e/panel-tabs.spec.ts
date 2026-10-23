@@ -6,13 +6,11 @@ test("panel keeps three main tabs and chat available from each", async ({
   page,
 }) => {
   await page.goto("/?view=panel");
-  const nav = page.getByRole("navigation", { name: "面板导航" });
-  await expect(nav.getByRole("button")).toHaveCount(3);
+  const nav = page.getByRole("navigation", { name: "主导航" });
+  await expect(nav.getByRole("button")).toHaveCount(4);
   for (const name of ["今天", "记录", "设置"]) {
     await nav.getByRole("button", { name, exact: true }).click();
-    await expect(nav.getByRole("button", { name, exact: true })).toHaveClass(
-      /is-active/,
-    );
+    await expect(page.locator(".workspace-header__heading strong")).toHaveText(name);
     await expect(
       page.getByRole("button", { name: "收起工作区", exact: true }),
     ).toBeVisible();
@@ -23,8 +21,12 @@ test("today puts quick add and schedule before optional timers", async ({
   page,
 }) => {
   await page.goto("/?view=panel");
-  await expect(page.getByLabel("要做什么", { exact: true })).toBeInViewport();
+  await expect(page.getByRole("region", { name: "日历", exact: true })).toBeInViewport();
+  await page.locator(".today-add-disclosure > summary").click();
+  await expect(page.getByLabel("要做什么", { exact: true })).toBeVisible();
+  await page.locator(".today-add-disclosure > summary").click();
   const timeline = page.getByRole("region", { name: "今天的时间线" });
+  await timeline.scrollIntoViewIfNeeded();
   await expect(timeline).toBeInViewport();
   await expect(timeline.getByTestId("timeline-item")).not.toHaveCount(0);
   await expect(page.locator(".today-focus-disclosure")).not.toHaveAttribute(
@@ -49,7 +51,7 @@ test("records compose on demand and do not cover memory or chat history", async 
 }) => {
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "记录" })
     .click();
   await expect(
@@ -79,7 +81,7 @@ test("settings merges to four closed groups with one complete-backup entry", asy
 }) => {
   await page.goto("/?view=panel");
   await page
-    .getByRole("navigation", { name: "面板导航" })
+    .getByRole("navigation", { name: "主导航" })
     .getByRole("button", { name: "设置" })
     .click();
   await expect(
@@ -110,7 +112,7 @@ for (const width of [320, 400, 800]) {
   }) => {
     await page.setViewportSize({ width, height: 700 });
     await page.goto("/?view=panel");
-    const nav = page.getByRole("navigation", { name: "面板导航" });
+    const nav = page.getByRole("navigation", { name: "主导航" });
     for (const name of ["今天", "记录", "设置"]) {
       await nav.getByRole("button", { name, exact: true }).click();
       await expect(page.locator(".panel-shell")).toBeVisible();
@@ -125,7 +127,7 @@ for (const width of [320, 400, 800]) {
 
 test("captures compact default screens for visual review", async ({ page }) => {
   const ready: Record<string, Locator> = {
-    today: page.getByLabel("要做什么", { exact: true }),
+    today: page.getByRole("region", { name: "日历", exact: true }),
     records: page.getByRole("textbox", { name: "搜索记录", exact: true }),
     settings: page
       .locator(
@@ -134,7 +136,7 @@ test("captures compact default screens for visual review", async ({ page }) => {
       .first(),
   };
   await page.goto("/?view=panel");
-  const nav = page.getByRole("navigation", { name: "面板导航" });
+  const nav = page.getByRole("navigation", { name: "主导航" });
   for (const [name, tab] of [
     ["today", "今天"],
     ["records", "记录"],

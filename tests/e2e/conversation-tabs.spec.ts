@@ -13,11 +13,11 @@ test("background conversations finish independently and retain their drafts", as
   await input.fill("第二项独立任务");
   await input.press("Enter");
   await page.getByRole("tab").first().click();
-  await expect(panel.getByText("这是浏览器预览回复：第一项独立任务", { exact: true })).toBeVisible();
-  await expect(panel.getByText("这是浏览器预览回复：第二项独立任务", { exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("region", { name: "对话内容" }).getByText("这是浏览器预览回复：第一项独立任务", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("region", { name: "对话内容" }).getByText("这是浏览器预览回复：第二项独立任务", { exact: true })).toHaveCount(0);
   await input.fill("第一项未发送草稿");
   await page.getByRole("tab").nth(1).click();
-  await expect(panel.getByText("这是浏览器预览回复：第二项独立任务", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("region", { name: "对话内容" }).getByText("这是浏览器预览回复：第二项独立任务", { exact: true })).toBeVisible();
   await input.fill("第二项未发送草稿");
   await page.getByRole("tab").first().click();
   await expect(input).toHaveValue("第一项未发送草稿");
