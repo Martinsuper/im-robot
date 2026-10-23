@@ -1,3 +1,10 @@
+import type {
+  T_app_updates_UpdateStatus_Output,
+  T_attachments_AttachmentPreview_Output,
+  T_chat_session_ChatHistoryEntry_Output,
+  T_providers_ModelInfo_Output,
+} from "../generated/ipc";
+
 export interface AiSettings {
   provider: string;
   baseUrl: string;
@@ -30,11 +37,11 @@ export interface AppSettings {
   agentAutoApproveCommands: boolean;
   /** 全局快捷键（打开对话窗口）。格式如 CmdOrCtrl+Shift+Space。 */
   globalShortcut: string;
+  onboardingCompleted: boolean;
+  onboardingVersion: string;
 }
 
-export interface ModelInfo {
-  id: string;
-}
+export type ModelInfo = T_providers_ModelInfo_Output;
 
 export interface SpeechModelStatus {
   id: string;
@@ -54,15 +61,7 @@ export interface SpeechModelDownloadProgress {
   completed: boolean;
 }
 
-export interface UpdateStatus {
-  currentVersion: string;
-  latestVersion: string;
-  available: boolean;
-  releaseUrl: string;
-  releaseNotes: string | null;
-  downloadUrl: string | null;
-  assetName: string | null;
-}
+export type UpdateStatus = T_app_updates_UpdateStatus_Output;
 
 export interface CalendarSyncStatus {
   platform: string;
@@ -71,19 +70,9 @@ export interface CalendarSyncStatus {
   mappingCount: number;
 }
 
-export interface ChatHistoryEntry {
-  id: string;
-  prompt: string;
-  response: string;
-  createdAt: number;
-}
+export type ChatHistoryEntry = T_chat_session_ChatHistoryEntry_Output;
 
-export interface AttachmentPreview {
-  displayName: string;
-  byteSize: number;
-  charCount: number;
-  preview: string;
-}
+export type AttachmentPreview = T_attachments_AttachmentPreview_Output;
 
 export interface ScreenshotPreview {
   dataUrl: string;

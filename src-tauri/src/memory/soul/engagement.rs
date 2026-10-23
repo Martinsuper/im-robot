@@ -16,8 +16,8 @@ pub struct TopicResponse {
 pub fn produce_topics(conn: &mut Connection, now: i64) -> Result<(), String> {
     store::transaction(conn, |tx| {
         // Business expiry is independent of whether proactive delivery is enabled.
-        tx.execute("UPDATE soul_open_loops SET state='expired',closed_at=?1,revision=revision+1,updated_at=?1 WHERE state IN ('tracking','due') AND ends_at IS NOT NULL AND ends_at+604800<?1",[now]).map_err(|_|"ledger_write_failed")?;
-        tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='open_loop' AND state IN ('pending','dispatching','shown') AND NOT EXISTS(SELECT 1 FROM soul_open_loops WHERE id=json_extract(soul_proactive_ledger.source_ref,'$.id') AND revision=json_extract(soul_proactive_ledger.source_ref,'$.revision') AND state IN ('tracking','due'))",[now]).map_err(|_|"ledger_write_failed")?;
+        tx.execute("UPDATE soul_open_loops SET state='expired',closed_at=?1,revision=revision+1,updated_at=?1 WHERE state IN ('tracking','due') AND ends_at IS NOT NULL AND ends_at+604800<?1",[now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
+        tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='open_loop' AND state IN ('pending','dispatching','shown') AND NOT EXISTS(SELECT 1 FROM soul_open_loops WHERE id=json_extract(soul_proactive_ledger.source_ref,'$.id') AND revision=json_extract(soul_proactive_ledger.source_ref,'$.revision') AND state IN ('tracking','due'))",[now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         if !proactive::event_allowed(tx, ProactiveCategory::OpenLoop, now)? {
             return Ok(());
         }
@@ -39,7 +39,7 @@ pub fn produce_topics(conn: &mut Connection, now: i64) -> Result<(), String> {
                     [],
                     |r| r.get(0),
                 )
-                .map_err(|_| "ledger_unreadable")?;
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
             let category_baseline: i64 = tx
                 .query_row(
                     "SELECT enabled_since FROM soul_category_baselines WHERE category='open_loop'",
@@ -47,7 +47,7 @@ pub fn produce_topics(conn: &mut Connection, now: i64) -> Result<(), String> {
                     |r| r.get(0),
                 )
                 .optional()
-                .map_err(|_| "ledger_unreadable")?
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
                 .unwrap_or(0);
             if end < baseline.max(category_baseline) {
                 continue;
@@ -57,25 +57,26 @@ pub fn produce_topics(conn: &mut Connection, now: i64) -> Result<(), String> {
                 id: topic.id.clone(),
                 revision: topic.revision,
             })
-            .map_err(|_| "invalid_source")?;
+            .map_err(|_| crate::error_codes::INVALID_SOURCE)?;
             let retired: bool = tx
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM soul_source_tombstones WHERE source_id=?1)",
                     [&topic.source.id],
                     |r| r.get(0),
                 )
-                .map_err(|_| "ledger_unreadable")?;
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
             if retired {
                 continue;
             }
-            let last:Option<i64>=tx.query_row("SELECT max(created_at) FROM soul_proactive_ledger WHERE category='open_loop' AND json_extract(source_ref,'$.id')=?1",[&topic.id],|r|r.get(0)).map_err(|_|"ledger_unreadable")?;
+            let last:Option<i64>=tx.query_row("SELECT max(created_at) FROM soul_proactive_ledger WHERE category='open_loop' AND json_extract(source_ref,'$.id')=?1",[&topic.id],|r|r.get(0)).map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
             if last.is_some_and(|last| now < last + 7 * DAY) {
                 continue;
             }
             if matches!(topic.state, OpenLoopState::Tracking) {
-                tx.execute("UPDATE soul_open_loops SET state='due',updated_at=?2 WHERE id=?1 AND revision=?3",params![topic.id,now,topic.revision]).map_err(|_|"ledger_write_failed")?;
+                tx.execute("UPDATE soul_open_loops SET state='due',updated_at=?2 WHERE id=?1 AND revision=?3",params![topic.id,now,topic.revision]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
             }
-            let source = serde_json::from_str(&raw).map_err(|_| "invalid_source")?;
+            let source =
+                serde_json::from_str(&raw).map_err(|_| crate::error_codes::INVALID_SOURCE)?;
             proactive::queue(
                 tx,
                 ProactiveMessage {
@@ -111,7 +112,7 @@ pub fn propose(
     if topic.revision != context.source.revision
         || !matches!(topic.state, OpenLoopState::Tracking | OpenLoopState::Due)
     {
-        return Err("revision_conflict".into());
+        return Err(crate::error_codes::REVISION_CONFLICT.into());
     }
     let text = text.trim().trim_end_matches(['。', '.', '!', '！']);
     let (state, time) = match text {
@@ -144,7 +145,7 @@ pub fn propose(
         }
     };
     let id = format!("response-{message_id}");
-    let changed=conn.execute("INSERT INTO soul_topic_responses(id,message_id,topic_id,expected_revision,proposed_state,proposed_time,status,created_at) VALUES(?1,?2,?3,?4,?5,?6,'pending_review',?7) ON CONFLICT(id) DO NOTHING",params![id,message_id,topic.id,topic.revision,state,time.map(|time|serde_json::to_string(&time).unwrap()),now]).map_err(|_|"ledger_write_failed")?;
+    let changed=conn.execute("INSERT INTO soul_topic_responses(id,message_id,topic_id,expected_revision,proposed_state,proposed_time,status,created_at) VALUES(?1,?2,?3,?4,?5,?6,'pending_review',?7) ON CONFLICT(id) DO NOTHING",params![id,message_id,topic.id,topic.revision,state,time.map(|time|serde_json::to_string(&time).unwrap()),now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
     if changed == 0 {
         return conn
             .query_row(
@@ -152,12 +153,12 @@ pub fn propose(
                 [&id],
                 |r| r.get(0),
             )
-            .map_err(|_| "ledger_unreadable".into());
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.into());
     }
     Ok("pending_review".into())
 }
 pub fn responses(conn: &Connection) -> Result<Vec<TopicResponse>, String> {
-    let mut stmt=conn.prepare("SELECT id,message_id,topic_id,expected_revision,proposed_state,proposed_time,status FROM soul_topic_responses WHERE status='pending_review' ORDER BY created_at DESC").map_err(|_|"ledger_unreadable")?;
+    let mut stmt=conn.prepare("SELECT id,message_id,topic_id,expected_revision,proposed_state,proposed_time,status FROM soul_topic_responses WHERE status='pending_review' ORDER BY created_at DESC").map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
     let rows = stmt
         .query_map([], |r| {
             Ok((
@@ -170,10 +171,10 @@ pub fn responses(conn: &Connection) -> Result<Vec<TopicResponse>, String> {
                 r.get::<_, String>(6)?,
             ))
         })
-        .map_err(|_| "ledger_unreadable")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     rows.map(|row| {
         let (id, message_id, topic_id, expected_revision, proposed_state, time, status) =
-            row.map_err(|_| "ledger_unreadable")?;
+            row.map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         Ok(TopicResponse {
             id,
             message_id,
@@ -183,7 +184,7 @@ pub fn responses(conn: &Connection) -> Result<Vec<TopicResponse>, String> {
             proposed_time: time
                 .map(|raw| serde_json::from_str(&raw))
                 .transpose()
-                .map_err(|_| "invalid_loop_time")?,
+                .map_err(|_| crate::error_codes::INVALID_LOOP_TIME)?,
             status,
         })
     })
@@ -201,33 +202,33 @@ pub fn review_response(
         let candidate = responses(tx)?
             .into_iter()
             .find(|r| r.id == id)
-            .ok_or("candidate_missing")?;
+            .ok_or(crate::error_codes::CANDIDATE_MISSING)?;
         if approve {
-            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='pattern' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|"ledger_write_failed")?;
+            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='pattern' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
 
-            let current:Option<i64>=tx.query_row("SELECT revision FROM soul_open_loops WHERE id=?1 AND state IN ('tracking','due')",[&candidate.topic_id],|r|r.get(0)).optional().map_err(|_|"ledger_unreadable")?;
+            let current:Option<i64>=tx.query_row("SELECT revision FROM soul_open_loops WHERE id=?1 AND state IN ('tracking','due')",[&candidate.topic_id],|r|r.get(0)).optional().map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
             if current != Some(candidate.expected_revision) {
-                return Err("revision_conflict".into());
+                return Err(crate::error_codes::REVISION_CONFLICT.into());
             }
             let state = candidate
                 .proposed_state
                 .as_deref()
-                .ok_or("invalid_review")?;
+                .ok_or(crate::error_codes::INVALID_REVIEW)?;
             if !matches!(state, "closed" | "cancelled" | "tracking") {
-                return Err("invalid_review".into());
+                return Err(crate::error_codes::INVALID_REVIEW.into());
             }
             if let Some(time) = candidate.proposed_time {
-                tx.execute("UPDATE soul_open_loops SET revision=revision+1,state='tracking',time_expression=?2,time_baseline=?3,timezone=?4,starts_at=?5,ends_at=?6,parser_version=?7,updated_at=?8,closed_at=NULL WHERE id=?1",params![candidate.topic_id,time.expression,time.baseline,time.timezone,time.starts_at,time.ends_at,time.parser_version,now]).map_err(|_|"ledger_write_failed")?;
+                tx.execute("UPDATE soul_open_loops SET revision=revision+1,state='tracking',time_expression=?2,time_baseline=?3,timezone=?4,starts_at=?5,ends_at=?6,parser_version=?7,updated_at=?8,closed_at=NULL WHERE id=?1",params![candidate.topic_id,time.expression,time.baseline,time.timezone,time.starts_at,time.ends_at,time.parser_version,now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
             } else {
-                tx.execute("UPDATE soul_open_loops SET revision=revision+1,state=?2,updated_at=?3,closed_at=?3 WHERE id=?1",params![candidate.topic_id,state,now]).map_err(|_|"ledger_write_failed")?;
+                tx.execute("UPDATE soul_open_loops SET revision=revision+1,state=?2,updated_at=?3,closed_at=?3 WHERE id=?1",params![candidate.topic_id,state,now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
             }
-            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE category='open_loop' AND json_extract(source_ref,'$.id')=?1 AND state IN ('pending','dispatching','shown')",params![candidate.topic_id,now]).map_err(|_|"ledger_write_failed")?;
+            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE category='open_loop' AND json_extract(source_ref,'$.id')=?1 AND state IN ('pending','dispatching','shown')",params![candidate.topic_id,now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
         tx.execute(
             "UPDATE soul_topic_responses SET status=?2,reviewed_at=?3 WHERE id=?1",
             params![id, if approve { "approved" } else { "rejected" }, now],
         )
-        .map_err(|_| "ledger_write_failed")?;
+        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         Ok(())
     })
 }
@@ -305,7 +306,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             review_response(&mut c, "response-topic-topic-1", true, 204).unwrap_err(),
-            "revision_conflict"
+            crate::error_codes::REVISION_CONFLICT
         );
         produce_topics(&mut c, 201 + 7 * DAY).unwrap();
         assert!(matches!(

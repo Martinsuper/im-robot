@@ -4,8 +4,6 @@
   padding: 24px; gap: 20px; background: var(--piko-paper);
   grid-template-columns: 132px minmax(0, 1fr); font-size: 14px;
 }
-.panel-shell--blue, .bubble-shell--blue { --piko-accent: #38667c; --piko-soft: #e6eff2; --piko-paper: #f3f7f8; }
-.panel-shell--peach, .bubble-shell--peach { --piko-accent: #9a593b; --piko-soft: #f6e9df; --piko-paper: #faf5ef; }
 .panel-header { grid-column: 1 / -1; display: block; padding: 0; }
 .panel-brand { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; color: var(--panel-text); }
 .panel-brand strong { font-size: 17px; letter-spacing: -.4px; }

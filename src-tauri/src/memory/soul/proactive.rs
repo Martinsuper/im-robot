@@ -71,9 +71,10 @@ fn category_name(category: ProactiveCategory) -> String {
 }
 
 fn category_used_value(raw: &str) -> Result<Value, String> {
-    let value: Value = serde_json::from_str(raw).map_err(|_| "ledger_unreadable".to_string())?;
+    let value: Value =
+        serde_json::from_str(raw).map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
     if !value.is_object() {
-        return Err("ledger_unreadable".into());
+        return Err(crate::error_codes::LEDGER_UNREADABLE.into());
     }
     Ok(value)
 }
@@ -86,7 +87,7 @@ pub fn queue(
     now_unix: i64,
 ) -> Result<(), String> {
     if message.expires_at <= message.valid_from {
-        return Err("invalid_message_window".into());
+        return Err(crate::error_codes::INVALID_MESSAGE_WINDOW.into());
     }
     let retired: bool = tx
         .query_row(
@@ -94,7 +95,7 @@ pub fn queue(
             [&message.dedupe_key],
             |row| row.get(0),
         )
-        .map_err(|_| "ledger_unreadable")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     if retired {
         return Ok(());
     }
@@ -108,8 +109,8 @@ pub fn queue(
             serde_json::to_value(message.category)
                 .ok()
                 .and_then(|value| value.as_str().map(|s| s.to_string()))
-                .ok_or("invalid_message".to_string())?,
-            serde_json::to_string(&message.source).map_err(|_| "invalid_message".to_string())?,
+                .ok_or(crate::error_codes::INVALID_MESSAGE.to_string())?,
+            serde_json::to_string(&message.source).map_err(|_| crate::error_codes::INVALID_MESSAGE.to_string())?,
             message.dedupe_key,
             message.template_id,
             message.valid_from,
@@ -117,7 +118,7 @@ pub fn queue(
             now_unix,
         ],
     )
-    .map_err(|_| "ledger_write_failed".to_string())?;
+    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
     Ok(())
 }
 
@@ -141,7 +142,7 @@ fn read_gate(tx: &Transaction<'_>) -> Result<Gate, String> {
             },
         )
         .optional()
-        .map_err(|_| "ledger_unreadable".to_string())?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
     Ok(match row {
         // A missing control record fails closed: proactive stays silent until
         // the settings layer persists explicit switches.
@@ -151,8 +152,8 @@ fn read_gate(tx: &Transaction<'_>) -> Result<Gate, String> {
             category_enabled: HashMap::new(),
         },
         Some((enabled, paused, settings)) => {
-            let parsed: Vec<Value> =
-                serde_json::from_str(&settings).map_err(|_| "ledger_unreadable".to_string())?;
+            let parsed: Vec<Value> = serde_json::from_str(&settings)
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
             let mut category_enabled = HashMap::new();
             for entry in parsed {
                 let name = entry.get("category").and_then(Value::as_str);
@@ -186,31 +187,46 @@ fn candidates_allowed_by_gate(
             "SELECT id,category,source_ref,dedupe_key,template_id,valid_from,expires_at FROM soul_proactive_ledger
              WHERE state='pending' AND valid_from<=?1 AND expires_at>?1 AND created_at>=coalesce((SELECT enabled_since FROM soul_control WHERE singleton=1),0)",
         )
-        .map_err(|_| "ledger_unreadable".to_string())?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
     let mut rows = statement
         .query(params![clock.unix_now])
-        .map_err(|_| "ledger_unreadable".to_string())?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
     let mut items: Vec<ProactiveMessage> = Vec::new();
-    while let Some(row) = rows.next().map_err(|_| "ledger_unreadable".to_string())? {
-        let raw_category: String = row.get(1).map_err(|_| "ledger_unreadable".to_string())?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?
+    {
+        let raw_category: String = row
+            .get(1)
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         let category =
             serde_json::from_value::<ProactiveCategory>(Value::String(raw_category.clone()))
-                .map_err(|_| "ledger_unreadable".to_string())?;
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         if gate.category_enabled.get(&raw_category).copied() != Some(true) {
             continue;
         }
         items.push(ProactiveMessage {
-            id: row.get(0).map_err(|_| "ledger_unreadable".to_string())?,
+            id: row
+                .get(0)
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?,
             category,
             source: serde_json::from_str(
                 &row.get::<_, String>(2)
-                    .map_err(|_| "ledger_unreadable".to_string())?,
+                    .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?,
             )
-            .map_err(|_| "ledger_unreadable".to_string())?,
-            dedupe_key: row.get(3).map_err(|_| "ledger_unreadable".to_string())?,
-            template_id: row.get(4).map_err(|_| "ledger_unreadable".to_string())?,
-            valid_from: row.get(5).map_err(|_| "ledger_unreadable".to_string())?,
-            expires_at: row.get(6).map_err(|_| "ledger_unreadable".to_string())?,
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?,
+            dedupe_key: row
+                .get(3)
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?,
+            template_id: row
+                .get(4)
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?,
+            valid_from: row
+                .get(5)
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?,
+            expires_at: row
+                .get(6)
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?,
             state: DeliveryState::Pending,
         });
     }
@@ -274,7 +290,7 @@ fn reserve_quota(
             },
         )
         .optional()
-        .map_err(|_| "ledger_unreadable".to_string())?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
     let (
         mut local_date,
         timezone,
@@ -327,7 +343,7 @@ fn reserve_quota(
     let backed_off: bool = tx.query_row(
         "SELECT consecutive_ignored>=3 AND recover_after>?2 FROM soul_backoff WHERE category=?1",
         params![name, clock.unix_now], |row| row.get(0),
-    ).optional().map_err(|_| "ledger_unreadable")?.unwrap_or(false);
+    ).optional().map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?.unwrap_or(false);
     if backed_off {
         let last: Option<i64> = tx
             .query_row(
@@ -335,7 +351,7 @@ fn reserve_quota(
                 [&name],
                 |row| row.get(0),
             )
-            .map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         if last.is_some_and(|at| clock.unix_now.saturating_sub(at) < COOLDOWN_SECONDS * 2) {
             return Ok(None);
         }
@@ -353,7 +369,7 @@ fn reserve_quota(
             "UPDATE soul_proactive_ledger SET state='dispatching', dispatching_at=?2 WHERE id=?1 AND state='pending'",
             params![&message.id, clock.unix_now],
         )
-        .map_err(|_| "ledger_unreadable".to_string())?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
     if changed != 1 {
         return Ok(None);
     }
@@ -375,7 +391,7 @@ fn reserve_quota(
             clock.unix_now
         ],
     )
-    .map_err(|_| "ledger_write_failed".to_string())?;
+    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
     Ok(Some(()))
 }
 
@@ -389,7 +405,7 @@ pub fn expire_pending(conn: &mut Connection, unix_now: i64) -> Result<u64, Strin
                  WHERE state='pending' AND expires_at<=?1",
                 params![unix_now, unix_now],
             )
-            .map_err(|_| "ledger_unreadable".to_string())?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         Ok(u64::try_from(changed).unwrap_or(0))
     })
 }
@@ -403,12 +419,12 @@ pub fn recover_restart(conn: &mut Connection, now: i64) -> Result<u64, String> {
                 "UPDATE soul_proactive_ledger SET state='uncertain', receipt_at=?1 WHERE state='dispatching'",
                 params![now],
             )
-            .map_err(|_| "ledger_unreadable".to_string())?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         tx.execute(
             "UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE state='shown'",
             [now],
         )
-        .map_err(|_| "ledger_unreadable")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         Ok(u64::try_from(changed).unwrap_or(0))
     })
 }
@@ -423,7 +439,7 @@ pub fn revoke_on_disable(conn: &mut Connection, now: i64) -> Result<u64, String>
                  WHERE state IN ('pending','dispatching','shown')",
                 params![now],
             )
-            .map_err(|_| "ledger_unreadable".to_string())?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         Ok(u64::try_from(changed).unwrap_or(0))
     })
 }
@@ -444,7 +460,10 @@ pub fn acknowledge(
     monotonic_now: Instant,
     now: i64,
 ) -> Result<(), String> {
-    let mut shown = registry.0.lock().map_err(|_| "visibility_unavailable")?;
+    let mut shown = registry
+        .0
+        .lock()
+        .map_err(|_| crate::error_codes::VISIBILITY_UNAVAILABLE)?;
     let visible = shown
         .get(&receipt.message_id)
         .map(|at| monotonic_now.saturating_duration_since(*at).as_secs())
@@ -458,20 +477,20 @@ pub fn acknowledge(
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
-            .map_err(|_| "ledger_unreadable".to_string())?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         let Some((state, _shown_at)) = row else {
-            return Err("message_missing".into());
+            return Err(crate::error_codes::MESSAGE_MISSING.into());
         };
         match receipt.kind {
             ReceiptKind::Shown => {
                 if state != "dispatching" && state != "shown" {
-                    return Err("receipt_invalid".into());
+                    return Err(crate::error_codes::RECEIPT_INVALID.into());
                 }
                 tx.execute(
                     "UPDATE soul_proactive_ledger SET state='shown', shown_at=?2 WHERE id=?1 AND state IN ('dispatching','shown')",
                     params![&receipt.message_id, now],
                 )
-                .map_err(|_| "ledger_write_failed".to_string())?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 Ok(())
             }
             ReceiptKind::Hidden => {
@@ -482,42 +501,42 @@ pub fn acknowledge(
                     ) {
                         return Ok(());
                     }
-                    return Err("receipt_invalid".into());
+                    return Err(crate::error_codes::RECEIPT_INVALID.into());
                 }
                 tx.execute(
                     "UPDATE soul_proactive_ledger SET visible_seconds=visible_seconds+?2 WHERE id=?1 AND state='shown'",
                     params![&receipt.message_id, visible],
                 )
-                .map_err(|_| "ledger_write_failed".to_string())?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 Ok(())
             }
             ReceiptKind::Responded | ReceiptKind::Dismissed => {
                 if state != "shown" {
-                    return Err("receipt_invalid".into());
+                    return Err(crate::error_codes::RECEIPT_INVALID.into());
                 }
                 let terminal = serde_json::to_value(receipt.kind)
                     .ok()
                     .and_then(|value| value.as_str().map(|s| s.to_string()))
-                    .ok_or_else(|| "receipt_invalid".to_string())?;
+                    .ok_or_else(|| crate::error_codes::RECEIPT_INVALID.to_string())?;
                 tx.execute(
                     "UPDATE soul_proactive_ledger SET state=?3, receipt_at=?4, visible_seconds=visible_seconds+?2 WHERE id=?1 AND state='shown'",
                     params![&receipt.message_id, visible, terminal, now],
                 )
-                .map_err(|_| "ledger_write_failed".to_string())?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 if receipt.kind == ReceiptKind::Responded {
-                    tx.execute("DELETE FROM soul_backoff WHERE category=(SELECT category FROM soul_proactive_ledger WHERE id=?1)",[&receipt.message_id]).map_err(|_| "ledger_write_failed")?;
+                    tx.execute("DELETE FROM soul_backoff WHERE category=(SELECT category FROM soul_proactive_ledger WHERE id=?1)",[&receipt.message_id]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                 }
                 Ok(())
             }
             ReceiptKind::DeliveryFailed => {
                 if state != "dispatching" {
-                    return Err("receipt_invalid".into());
+                    return Err(crate::error_codes::RECEIPT_INVALID.into());
                 }
                 tx.execute(
                     "UPDATE soul_proactive_ledger SET state='failed', receipt_at=?2 WHERE id=?1 AND state='dispatching'",
                     params![&receipt.message_id, now],
                 )
-                .map_err(|_| "ledger_write_failed".to_string())?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 Ok(())
             }
         }
@@ -1070,7 +1089,7 @@ mod tests {
                 200
             )
             .unwrap_err(),
-            "receipt_invalid"
+            crate::error_codes::RECEIPT_INVALID
         );
         acknowledge(
             &mut conn,
@@ -1098,7 +1117,7 @@ mod tests {
                 350
             )
             .unwrap_err(),
-            "receipt_invalid"
+            crate::error_codes::RECEIPT_INVALID
         );
         // Unknown message ids are distinct from storage failures.
         assert_eq!(
@@ -1114,7 +1133,7 @@ mod tests {
                 350
             )
             .unwrap_err(),
-            "message_missing"
+            crate::error_codes::MESSAGE_MISSING
         );
     }
 
@@ -1147,7 +1166,7 @@ pub fn event_allowed(
     category: ProactiveCategory,
     event_at: i64,
 ) -> Result<bool, String> {
-    let row:Option<(bool,bool,i64,String)>=tx.query_row("SELECT enabled,paused,enabled_since,category_settings FROM soul_control WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|_| "ledger_unreadable")?;
+    let row:Option<(bool,bool,i64,String)>=tx.query_row("SELECT enabled,paused,enabled_since,category_settings FROM soul_control WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     let Some((enabled, paused, baseline, raw)) = row else {
         return Ok(false);
     };
@@ -1162,7 +1181,7 @@ pub fn event_allowed(
             |r| r.get(0),
         )
         .optional()
-        .map_err(|_| "ledger_unreadable")?
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
         .unwrap_or(0);
     let cleared: i64 = tx
         .query_row(
@@ -1171,13 +1190,14 @@ pub fn event_allowed(
             |r| r.get(0),
         )
         .optional()
-        .map_err(|_| "ledger_unreadable")?
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
         .unwrap_or(0);
     if event_at < category_baseline || event_at <= cleared {
         return Ok(false);
     }
-    let categories: Vec<Value> = serde_json::from_str(&raw).map_err(|_| "ledger_unreadable")?;
-    let name = serde_json::to_value(category).map_err(|_| "invalid_category")?;
+    let categories: Vec<Value> =
+        serde_json::from_str(&raw).map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
+    let name = serde_json::to_value(category).map_err(|_| crate::error_codes::INVALID_CATEGORY)?;
     Ok(categories
         .iter()
         .any(|item| item["category"] == name && item["enabled"].as_bool() == Some(true)))
@@ -1190,7 +1210,10 @@ pub fn expire_visible(
     now: i64,
     monotonic: Instant,
 ) -> Result<usize, String> {
-    let mut shown = registry.0.lock().map_err(|_| "ledger_unreadable")?;
+    let mut shown = registry
+        .0
+        .lock()
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     let due: Vec<String> = shown
         .iter()
         .filter(|(_, at)| monotonic.saturating_duration_since(**at) >= Duration::from_secs(20))
@@ -1205,10 +1228,10 @@ pub fn expire_visible(
                     |row| row.get(0),
                 )
                 .optional()
-                .map_err(|_| "ledger_unreadable")?;
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
             if let Some(category) = category {
-                tx.execute("UPDATE soul_proactive_ledger SET state='ignored',receipt_at=?2,visible_seconds=visible_seconds+20 WHERE id=?1 AND state='shown'",params![id,now]).map_err(|_| "ledger_write_failed")?;
-                tx.execute("INSERT INTO soul_backoff(category,consecutive_ignored,last_ignored_at,recover_after) VALUES(?1,1,?2,?3) ON CONFLICT(category) DO UPDATE SET consecutive_ignored=CASE WHEN recover_after<=?2 THEN 1 ELSE consecutive_ignored+1 END,last_ignored_at=?2,recover_after=?3",params![category,now,now+7*DAY]).map_err(|_| "ledger_write_failed")?;
+                tx.execute("UPDATE soul_proactive_ledger SET state='ignored',receipt_at=?2,visible_seconds=visible_seconds+20 WHERE id=?1 AND state='shown'",params![id,now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                tx.execute("INSERT INTO soul_backoff(category,consecutive_ignored,last_ignored_at,recover_after) VALUES(?1,1,?2,?3) ON CONFLICT(category) DO UPDATE SET consecutive_ignored=CASE WHEN recover_after<=?2 THEN 1 ELSE consecutive_ignored+1 END,last_ignored_at=?2,recover_after=?3",params![category,now,now+7*DAY]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
             }
         }
         Ok(())

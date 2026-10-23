@@ -67,7 +67,7 @@ export function I18nProvider({ children }: I18nProviderProps) {
   useEffect(() => {
     if (!isTauriRuntime) return;
     let disposed = false;
-    void runCommand<AppSettings>('get_settings', undefined, defaultAppSettings)
+    void runCommand('get_settings', undefined, defaultAppSettings)
       .then((settings) => {
         if (!disposed && isLocale(settings.language)) {
           setLocaleState(settings.language);

@@ -86,7 +86,7 @@ impl Supervisor {
             .name(name.into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| job(worker)))
-                    .unwrap_or_else(|_| Err("worker_panicked".into()));
+                    .unwrap_or_else(|_| Err(crate::error_codes::WORKER_PANICKED.into()));
                 monitor.finish(result);
             })
         {
@@ -106,7 +106,7 @@ impl Supervisor {
             let result = AssertUnwindSafe(job(worker))
                 .catch_unwind()
                 .await
-                .unwrap_or_else(|_| Err("worker_panicked".into()));
+                .unwrap_or_else(|_| Err(crate::error_codes::WORKER_PANICKED.into()));
             monitor.finish(result);
         });
     }
@@ -143,7 +143,7 @@ impl Supervisor {
             .ok_or("应用正在退出，无法启动数据任务")?;
         tauri::async_runtime::spawn_blocking(move || {
             let result = std::panic::catch_unwind(AssertUnwindSafe(job))
-                .unwrap_or_else(|_| Err("data_worker_panicked".into()));
+                .unwrap_or_else(|_| Err(crate::error_codes::DATA_WORKER_PANICKED.into()));
             monitor.finish(result.as_ref().map(|_| ()).map_err(Clone::clone));
             result
         })

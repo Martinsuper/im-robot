@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../../generated/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime as desktop } from "../app/appRuntime";
 import { toUserMessage } from "../../lib/errors";
@@ -25,8 +25,9 @@ export function MemoryExtractionControls() {
     let active = true;
     async function refresh() {
       try {
-        const next = await invoke<ExtractionStatus>(
+        const next = await invokeCommand(
           "get_memory_extraction_status",
+          {},
         );
         if (active) setStatus(next);
       } catch (reason) {
@@ -55,7 +56,7 @@ export function MemoryExtractionControls() {
     setMessage("");
     try {
       setStatus(
-        await invoke<ExtractionStatus>("configure_memory_extraction", {
+        await invokeCommand("configure_memory_extraction", {
           enabled,
           intervalMinutes,
         }),
@@ -72,8 +73,8 @@ export function MemoryExtractionControls() {
     setError("");
     setMessage("");
     try {
-      const count = await invoke<number>("extract_memories_now");
-      setStatus(await invoke<ExtractionStatus>("get_memory_extraction_status"));
+      const count = await invokeCommand("extract_memories_now", {});
+      setStatus(await invokeCommand("get_memory_extraction_status", {}));
       setMessage(
         t(
           "memory.extraction.result",

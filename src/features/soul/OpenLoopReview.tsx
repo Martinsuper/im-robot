@@ -36,11 +36,11 @@ export function OpenLoopReview() {
 
   const load = useCallback(() => {
     if (!isTauriRuntime) return;
-    void runCommand<typeof responses>("soul_list_topic_responses").then(setResponses).catch(() => undefined);
-    void runCommand<OpenLoopReviewQueue>("soul_list_open_loop_candidates")
+    void runCommand("soul_list_topic_responses").then((value) => setResponses(value as Array<{ id: string; topic_id: string; proposed_state: string; proposed_time: OpenLoopTime | null }>)).catch(() => undefined);
+    void runCommand("soul_list_open_loop_candidates")
       .then(setQueue)
       .catch((error) => toast.error(toUserMessage(error, t("soul.review.loadFailed"))));
-    void runCommand<OpenLoop[]>("soul_list_open_loops", { input: { state: null } })
+    void runCommand("soul_list_open_loops", { input: { state: null } })
       .then(setTopics)
       .catch(() => undefined);
   }, [t, toast]);

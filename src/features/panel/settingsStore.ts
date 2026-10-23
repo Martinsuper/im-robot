@@ -38,14 +38,14 @@ async function ensureLoaded(): Promise<void> {
   if (!loadPromise) {
     const startedAt = revision;
     const generation = ++loadGeneration;
-    loadPromise = runCommand<AppSettings>(
+    loadPromise = runCommand(
       "get_settings",
       undefined,
       defaultAppSettings,
     )
       .then((next) => {
         if (generation === loadGeneration && revision === startedAt)
-          publish(next);
+          publish(next as AppSettings);
       })
       .catch((error: unknown) => {
         if (generation === loadGeneration) loadPromise = undefined;

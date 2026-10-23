@@ -33,7 +33,6 @@ import { useAppSettings } from "../settingsStore";
 import type {
   AiSettings,
   AppSettings,
-  ModelInfo,
   QuietMode,
   SpeechModelDownloadProgress,
   SpeechModelStatus,
@@ -190,7 +189,7 @@ export function SettingsTab() {
 
   function updateQuietMode(mode: QuietMode) {
     setQuietMode(mode);
-    void runCommand<AppSettings>(
+    void runCommand(
       "update_quiet_mode",
       { quietMode: mode },
       {
@@ -231,7 +230,7 @@ export function SettingsTab() {
   async function saveAiSettings() {
     setIsSavingAi(true);
     try {
-      const next = await runCommand<AppSettings>(
+      const next = await runCommand(
         "update_ai_settings",
         {
           input: {
@@ -277,7 +276,7 @@ export function SettingsTab() {
   }
 
   async function loadSpeechModels() {
-    const models = await runCommand<SpeechModelStatus[]>(
+    const models = await runCommand(
       "get_speech_model_status",
       undefined,
       [
@@ -291,20 +290,20 @@ export function SettingsTab() {
         },
       ],
     );
-    setSpeechModels(models);
+    setSpeechModels(models as SpeechModelStatus[]);
   }
 
   async function downloadSpeechModel(modelId: string) {
     setDownloadingSpeechModelId(modelId);
     try {
-      const model = await runCommand<SpeechModelStatus>(
+      const model = await runCommand(
         "download_speech_model",
         {
           input: { modelId },
         },
       );
       setSpeechModels((current) =>
-        current.map((item) => (item.id === model.id ? model : item)),
+        current.map((item) => (item.id === model.id ? (model as SpeechModelStatus) : item)),
       );
       toast.success(
         `${model.name} ${t("settings.feedback.modelReady", "已可用")}`,
@@ -323,7 +322,7 @@ export function SettingsTab() {
     setConnectionStatus({ kind: "connecting" });
     try {
       await saveAiSettings();
-      const models = await runCommand<ModelInfo[]>("list_models", undefined, [
+      const models = await runCommand("list_models", undefined, [
         { id: aiSettings.model },
       ]);
       const modelNames = models.map((model) => model.id).join("、");
@@ -390,7 +389,7 @@ export function SettingsTab() {
   async function clearMyData() {
     setIsClearing(true);
     try {
-      const result = await runCommand<{ backupDir: string; cleared: string[] }>(
+      const result = await runCommand(
         "clear_my_data",
         undefined,
         {
@@ -402,7 +401,7 @@ export function SettingsTab() {
         message: t(
           "settings.feedback.cleared",
           "已清空 {count} 类数据，备份在 backups 目录",
-        ).replace("{count}", String(result?.cleared.length ?? 0)),
+        ).replace("{count}", String(((result as { cleared: string[] } | null)?.cleared ?? []).length)),
         tone: "success",
       });
       setConfirmClear(false);
@@ -436,7 +435,7 @@ export function SettingsTab() {
 
   async function refreshNotificationStatus() {
     try {
-      const status = await runCommand<NotificationStatus>(
+      const status = await runCommand(
         "get_notification_status",
       );
       setNotificationDetails(status);
@@ -451,7 +450,7 @@ export function SettingsTab() {
   async function enableNotifications() {
     setNotificationBusy(true);
     try {
-      const status = await runCommand<NotificationStatus>(
+      const status = await runCommand(
         "request_notification_permission",
       );
       setNotificationDetails(status);
@@ -501,7 +500,7 @@ export function SettingsTab() {
     setAgentAutoApproveCommands(enabled);
     setSavingCommandPermission(true);
     try {
-      const next = await runCommand<AppSettings>(
+      const next = await runCommand(
         "update_agent_auto_approve_commands",
         { enabled },
         {
@@ -509,7 +508,7 @@ export function SettingsTab() {
           agentAutoApproveCommands: enabled,
         },
       );
-      applyServer(next);
+      applyServer(next as AppSettings);
       toast.success(
         enabled
           ? t(
@@ -537,7 +536,7 @@ export function SettingsTab() {
   /** 「关于 → 重新运行引导」。门禁本身在 shell（PanelWindow），这里只负责重置。 */
   async function rerunOnboarding() {
     try {
-      await runCommand<AppSettings>("reset_onboarding", undefined, {
+      await runCommand("reset_onboarding", undefined, {
         ...defaultAppSettings,
         companionName,
         ai: aiSettings,

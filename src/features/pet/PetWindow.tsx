@@ -78,7 +78,7 @@ function PetWindowContent() {
   const [soulMood, setSoulMood] = useState<SoulMood>("calm");
   useEffect(() => {
     let disposed = false;
-    const refresh = () => void runCommand<SoulMood>("soul_get_mood").then((mood) => {
+    const refresh = () => void runCommand("soul_get_mood").then((mood) => {
       if (!disposed) setSoulMood(mood);
     }).catch(() => { if (!disposed) setSoulMood("calm"); });
     refresh();
@@ -86,7 +86,7 @@ function PetWindowContent() {
     return () => { disposed = true; window.clearInterval(timer); };
   }, []);
   useTauriEventSubscription("soul:changed", () => {
-    void runCommand<SoulMood>("soul_get_mood").then(setSoulMood).catch(() => setSoulMood("calm"));
+    void runCommand("soul_get_mood").then(setSoulMood).catch(() => setSoulMood("calm"));
   });
 
   const [companionName, setCompanionName] = useState("Piko");
@@ -252,7 +252,8 @@ function PetWindowContent() {
   }, [petState.mode, quietMode, idleRhythm]);
 
   useEffect(() => {
-    void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings).then((settings) => {
+    void runCommand("get_settings", undefined, defaultAppSettings).then((raw) => {
+      const settings = raw as AppSettings;
       setCompanionName(settings.companionName);
       setQuietMode(settings.quietMode);
       setSensingPaused(settings.sensingPaused);

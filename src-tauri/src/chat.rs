@@ -535,7 +535,7 @@ async fn stream_chat(
     context: &ChatContext,
     registry: &PluginRegistry,
     drafts: &ActionDrafts,
-    memory_db: &memory::MemoryDb,
+    memory_db: &Arc<memory::MemoryDb>,
     input: StreamChatInput<'_>,
 ) -> Result<StreamChatOutcome, String> {
     let StreamChatInput {

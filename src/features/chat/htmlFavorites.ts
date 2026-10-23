@@ -23,7 +23,7 @@ export function useHtmlFavorites() {
   const [favorites, setFavorites] = useState<HtmlFavorite[]>([]);
 
   const refresh = useCallback(async () => {
-    const items = await runCommand<HtmlFavorite[]>("list_html_favorites", undefined, []);
+    const items = await runCommand("list_html_favorites", undefined, []);
     setFavorites(items ?? []);
   }, []);
 

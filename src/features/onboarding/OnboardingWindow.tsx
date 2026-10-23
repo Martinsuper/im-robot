@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppSettings, ModelInfo } from "../../types/appTypes";
 import { toUserMessage } from "../../lib/errors";
 import { useToast } from "../../components/feedback/toastStore";
 import { defaultAiSettings, defaultAppSettings } from "../app/appShared";
@@ -130,7 +129,7 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
   const advancedRef = useRef<AdvancedAiParams>(FALLBACK_ADVANCED);
   useEffect(() => {
     let cancelled = false;
-    void runCommand<AppSettings>("get_settings", undefined, defaultAppSettings)
+    void runCommand("get_settings", undefined, defaultAppSettings)
       .then((settings) => {
         const ai = settings?.ai;
         if (cancelled || !ai) return;
@@ -160,10 +159,10 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
     setTesting(true);
     setTest({ tone: "pending", text: "正在连接…" });
     try {
-      await runCommand<AppSettings>("update_ai_settings", {
+      await runCommand("update_ai_settings", {
         input: buildAiInput(preset, apiKey, advancedRef.current),
       });
-      const models = await runCommand<ModelInfo[]>(
+      const models = await runCommand(
         "list_models",
         undefined,
         [],
@@ -194,7 +193,7 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
   /** 第 2 步主按钮：保存后进入第 3 步。保存失败只提示，不拦住流程。 */
   const handleSaveAi = useCallback(async () => {
     try {
-      await runCommand<AppSettings>("update_ai_settings", {
+      await runCommand("update_ai_settings", {
         input: buildAiInput(preset, apiKey, advancedRef.current),
       });
     } catch (error) {
@@ -216,7 +215,7 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
     setFinishing(true);
     const name = companionName.trim() || DEFAULT_COMPANION_NAME;
     try {
-      await runCommand<AppSettings>("complete_onboarding", {
+      await runCommand("complete_onboarding", {
         companionName: name,
         onboardingVersion: ONBOARDING_VERSION,
       });
@@ -234,7 +233,7 @@ export function OnboardingWindow({ onComplete, onSkip }: OnboardingProps) {
   /** 任何一步都能整体跳过（约束 3 / 05 §3.3）。 */
   const handleSkipOnboarding = useCallback(async () => {
     try {
-      await runCommand<AppSettings>("skip_onboarding");
+      await runCommand("skip_onboarding");
     } catch {
       // 后端没记住也要让用户进得去：面板会按本地状态刷新。
     }

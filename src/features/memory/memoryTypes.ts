@@ -1,79 +1,43 @@
-export type MemoryType = "profile" | "event" | "semantic" | "operational" | "reflection";
-export type MemorySource = "userExplicit" | "conversation" | "toolResult" | "taskOutcome" | "systemReflection";
-export type PrivacyLevel = "publicToUser" | "sensitiveLocalOnly" | "ephemeral";
-export type MemoryStatus = "active" | "archived" | "superseded" | "deleted";
+import type {
+  T_memory_model_BuildContextInput_Input,
+  T_memory_model_CreateMemoryInput_Input,
+  T_memory_model_FeedbackInput_Input,
+  T_memory_model_ListMemoriesInput_Input,
+  T_memory_model_MemoryCandidate_Output,
+  T_memory_model_MemoryExport_Output,
+  T_memory_model_MemoryItem_Output,
+  T_memory_model_MemoryRelation_Output,
+  T_memory_model_MemorySource_Output,
+  T_memory_model_MemoryStatus_Output,
+  T_memory_model_MemoryType_Output,
+  T_memory_model_PrivacyLevel_Output,
+  T_memory_model_ReflectionSummary_Output,
+  T_memory_model_SearchMemoriesInput_Input,
+  T_memory_model_SearchRelatedInput_Input,
+  T_memory_model_UpdateMemoryInput_Input,
+} from "../../generated/ipc";
 
-export interface MemoryItem {
-  id: string;
-  memoryType: MemoryType;
-  title: string;
-  content: string;
-  source: MemorySource;
-  importance: number;
-  confidence: number;
-  recencyScore: number;
-  privacyLevel: PrivacyLevel;
-  status: MemoryStatus;
-  createdAt: number;
-  updatedAt: number;
-  lastUsedAt?: number;
-  expiresAt?: number;
-  tags: string[];
-  embeddingId?: string;
-  isPinned: boolean;
-}
+export type MemoryType = T_memory_model_MemoryType_Output;
+export type MemorySource = T_memory_model_MemorySource_Output;
+export type PrivacyLevel = T_memory_model_PrivacyLevel_Output;
+export type MemoryStatus = T_memory_model_MemoryStatus_Output;
 
-export interface CreateMemoryInput {
-  memoryType: MemoryType;
-  title: string;
-  content: string;
-  source: MemorySource;
-  importance?: number;
-  tags?: string[];
-}
+export type MemoryItem = T_memory_model_MemoryItem_Output;
+export type CreateMemoryInput = T_memory_model_CreateMemoryInput_Input;
+export type UpdateMemoryInput = T_memory_model_UpdateMemoryInput_Input;
+export type ListMemoriesInput = T_memory_model_ListMemoriesInput_Input;
+export type SearchMemoriesInput = T_memory_model_SearchMemoriesInput_Input;
+export type SearchRelatedInput = T_memory_model_SearchRelatedInput_Input;
+export type BuildContextInput = T_memory_model_BuildContextInput_Input;
+export type FeedbackInput = T_memory_model_FeedbackInput_Input;
+export type MemoryRelation = T_memory_model_MemoryRelation_Output;
+export type MemoryCandidate = T_memory_model_MemoryCandidate_Output;
+export type ReflectionSummary = T_memory_model_ReflectionSummary_Output;
+export type MemoryExport = T_memory_model_MemoryExport_Output;
 
-export interface UpdateMemoryInput {
-  title?: string;
-  content?: string;
-  importance?: number;
-  tags?: string[];
-}
-
-export interface ListMemoriesInput {
-  memoryType?: MemoryType;
-  status?: MemoryStatus;
-  limit?: number;
-}
-
-export interface SearchMemoriesInput {
-  query: string;
-  memoryType?: MemoryType;
-  limit?: number;
-}
-
-export interface SearchRelatedInput {
-  query: string;
-  contextTags?: string[];
-  limit?: number;
-}
-
-export interface BuildContextInput {
-  currentQuery?: string;
-  windowType?: string;
-  limit?: number;
-}
-
-export interface FeedbackInput {
-  memoryId: string;
-  feedbackType: string;
-  value: number;
-  comment?: string;
-}
-
-export interface MemoryRelation {
-  fromId: string;
-  toId: string;
-  relationType: string;
+export interface MergeCandidate {
+  keep: MemoryItem;
+  remove: MemoryItem;
 }
 
 export const MEMORY_TYPE_LABELS: Record<MemoryType, string> = {
@@ -107,41 +71,6 @@ export const FEEDBACK_TYPES: Array<{ label: string; value: string; valueNum: num
   { label: "✅ 正确", value: "correct", valueNum: 1 },
   { label: "❌ 错误", value: "incorrect", valueNum: -1 },
 ];
-
-// === Phase 3+ types ===
-
-export interface MemoryCandidate {
-  id: string;
-  title: string;
-  content: string;
-  memoryType: MemoryType;
-  source: MemorySource;
-  confidence: number;
-  importance: number;
-  tags: string[];
-  requiresConfirmation: boolean;
-}
-
-export interface ReflectionSummary {
-  id: string;
-  summaryType: string;
-  content: string;
-  createdAt: number;
-  periodStart?: number;
-  periodEnd?: number;
-}
-
-export interface MemoryExport {
-  version: string;
-  exportedAt: number;
-  memories: MemoryItem[];
-  relations: MemoryRelation[];
-}
-
-export interface MergeCandidate {
-  keep: MemoryItem;
-  remove: MemoryItem;
-}
 
 export const RELATION_LABELS: Record<string, string> = {
   duplicatesOf: "重复",

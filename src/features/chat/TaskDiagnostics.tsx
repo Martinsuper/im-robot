@@ -8,7 +8,7 @@ export function TaskDiagnostics({ terminal }: { terminal: TaskTerminal | null })
   if (!terminal || terminal.status === "completed") return null;
   async function load() {
     try {
-      const result = await runCommand<{ text: string; truncated: boolean }>("agent_get_diagnostics", { requestId: terminal!.requestId });
+      const result = (await runCommand("agent_get_diagnostics", { requestId: terminal!.requestId })) as { text?: string; truncated?: boolean };
       setText((result.text || "没有额外诊断输出。") + (result.truncated ? "\n（输出已截断）" : ""));
     } catch (error) { setText(toUserMessage(error, "诊断读取失败，请重试")); }
   }

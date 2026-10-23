@@ -17,21 +17,23 @@ pub struct Continuity {
     pub versions: Vec<Value>,
 }
 fn initialize(conn: &Connection, now: i64) -> Result<(), String> {
-    conn.execute("INSERT INTO soul_continuity_control VALUES(1,1,0,?1,?2,NULL) ON CONFLICT(singleton) DO NOTHING",params![now,iana_time_zone::get_timezone().unwrap_or_else(|_|"UTC".into())]).map_err(|_|"ledger_write_failed")?;
+    conn.execute("INSERT INTO soul_continuity_control VALUES(1,1,0,?1,?2,NULL) ON CONFLICT(singleton) DO NOTHING",params![now,iana_time_zone::get_timezone().unwrap_or_else(|_|"UTC".into())]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
     Ok(())
 }
 pub fn get(conn: &mut Connection, now: i64) -> Result<Continuity, String> {
     initialize(conn, now)?;
-    let(revision,enabled,baseline,zone,nickname):(i64,bool,i64,String,Option<String>)=conn.query_row("SELECT revision,history_enabled,enabled_at,timezone,nickname FROM soul_continuity_control WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(|_|"ledger_unreadable")?;
+    let(revision,enabled,baseline,zone,nickname):(i64,bool,i64,String,Option<String>)=conn.query_row("SELECT revision,history_enabled,enabled_at,timezone,nickname FROM soul_continuity_control WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
     let mut stmt = conn
         .prepare("SELECT milestone_key FROM soul_milestones ORDER BY achieved_at,milestone_key")
-        .map_err(|_| "ledger_unreadable")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     let milestones: Vec<String> = stmt
         .query_map([], |r| r.get(0))
-        .map_err(|_| "ledger_unreadable")?
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
         .collect::<Result<_, _>>()
-        .map_err(|_| "ledger_unreadable")?;
-    let zone: chrono_tz::Tz = zone.parse().map_err(|_| "invalid_timezone")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
+    let zone: chrono_tz::Tz = zone
+        .parse()
+        .map_err(|_| crate::error_codes::INVALID_TIMEZONE)?;
     let days = if enabled {
         zone.timestamp_opt(now, 0)
             .single()
@@ -48,19 +50,20 @@ pub fn get(conn: &mut Connection, now: i64) -> Result<Continuity, String> {
     if enabled && milestones.iter().any(|m| m == "first_reply") {
         options.push("friend".into());
     }
-    let mut stmt=conn.prepare("SELECT id,payload FROM soul_candidates WHERE kind='evolution' AND status='pending_review' ORDER BY created_at DESC").map_err(|_|"ledger_unreadable")?;
+    let mut stmt=conn.prepare("SELECT id,payload FROM soul_candidates WHERE kind='evolution' AND status='pending_review' ORDER BY created_at DESC").map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
     let rows = stmt
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-        .map_err(|_| "ledger_unreadable")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     let mut proposals = vec![];
     for row in rows {
-        let (id, raw) = row.map_err(|_| "ledger_unreadable")?;
-        let mut value: Value = serde_json::from_str(&raw).map_err(|_| "invalid_candidate")?;
+        let (id, raw) = row.map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
+        let mut value: Value =
+            serde_json::from_str(&raw).map_err(|_| crate::error_codes::INVALID_CANDIDATE)?;
         value["id"] = json!(id);
         proposals.push(value);
     }
-    let mut stmt=conn.prepare("SELECT id,revision,snapshot,created_at FROM soul_role_versions WHERE profile_id='piko' ORDER BY revision DESC LIMIT 50").map_err(|_|"ledger_unreadable")?;
-    let versions=stmt.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"revision":r.get::<_,i64>(1)?,"snapshot":r.get::<_,String>(2)?,"created_at":r.get::<_,i64>(3)?}))).map_err(|_|"ledger_unreadable")?.collect::<Result<Vec<_>,_>>().map_err(|_|"ledger_unreadable")?;
+    let mut stmt=conn.prepare("SELECT id,revision,snapshot,created_at FROM soul_role_versions WHERE profile_id='piko' ORDER BY revision DESC LIMIT 50").map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
+    let versions=stmt.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"revision":r.get::<_,i64>(1)?,"snapshot":r.get::<_,String>(2)?,"created_at":r.get::<_,i64>(3)?}))).map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?.collect::<Result<Vec<_>,_>>().map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
     Ok(Continuity {
         revision,
         history_enabled: enabled,
@@ -81,18 +84,18 @@ pub fn update(
 ) -> Result<(), String> {
     let current = get(conn, now)?;
     if current.revision != revision {
-        return Err("revision_conflict".into());
+        return Err(crate::error_codes::REVISION_CONFLICT.into());
     }
     if nickname
         .as_ref()
         .is_some_and(|name| !enabled || !current.nickname_options.contains(name))
     {
-        return Err("nickname_locked".into());
+        return Err(crate::error_codes::NICKNAME_LOCKED.into());
     }
     store::transaction(conn, |tx| {
         if enabled && !current.history_enabled {
             tx.execute("DELETE FROM soul_history_baseline", [])
-                .map_err(|_| "ledger_write_failed")?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
             tx.execute(
                 "INSERT INTO soul_history_baseline VALUES(1,?1,?2,?3)",
                 params![
@@ -101,11 +104,11 @@ pub fn update(
                     iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into())
                 ],
             )
-            .map_err(|_| "ledger_write_failed")?;
+            .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
-        tx.execute("UPDATE soul_continuity_control SET revision=revision+1,history_enabled=?2,nickname=?3,enabled_at=CASE WHEN history_enabled=0 AND ?2=1 THEN ?4 ELSE enabled_at END,timezone=CASE WHEN history_enabled=0 AND ?2=1 THEN ?5 ELSE timezone END WHERE singleton=1 AND revision=?1",params![revision,enabled,nickname,now,iana_time_zone::get_timezone().unwrap_or_else(|_|"UTC".into())]).map_err(|_|"ledger_write_failed")?;
+        tx.execute("UPDATE soul_continuity_control SET revision=revision+1,history_enabled=?2,nickname=?3,enabled_at=CASE WHEN history_enabled=0 AND ?2=1 THEN ?4 ELSE enabled_at END,timezone=CASE WHEN history_enabled=0 AND ?2=1 THEN ?5 ELSE timezone END WHERE singleton=1 AND revision=?1",params![revision,enabled,nickname,now,iana_time_zone::get_timezone().unwrap_or_else(|_|"UTC".into())]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         if !enabled {
-            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='milestone' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|"ledger_write_failed")?;
+            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='milestone' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
         Ok(())
     })
@@ -132,7 +135,7 @@ pub(crate) fn record_event(
             |r| Ok((r.get::<_, bool>(0)?, r.get::<_, i64>(1)?)),
         )
         .optional()
-        .map_err(|_| "ledger_unreadable")?
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
     else {
         return Ok(());
     };
@@ -140,7 +143,7 @@ pub(crate) fn record_event(
         return Ok(());
     }
     store::transaction(conn, |tx| {
-        let changed=tx.execute("INSERT INTO soul_milestones VALUES(?1,?2,?3) ON CONFLICT(milestone_key) DO NOTHING",params![milestone,occurred_at,serde_json::to_string(source).map_err(|_|"invalid_source")?]).map_err(|_|"ledger_write_failed")?;
+        let changed=tx.execute("INSERT INTO soul_milestones VALUES(?1,?2,?3) ON CONFLICT(milestone_key) DO NOTHING",params![milestone,occurred_at,serde_json::to_string(source).map_err(|_|crate::error_codes::INVALID_SOURCE)?]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         if changed == 1 && proactive::event_allowed(tx, ProactiveCategory::Milestone, occurred_at)?
         {
             proactive::queue(
@@ -197,7 +200,7 @@ pub fn observe_preference(
             |r| r.get::<_, bool>(0),
         )
         .optional()
-        .map_err(|_| "ledger_unreadable")?
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
         .unwrap_or(false);
     if !enabled {
         return Ok(());
@@ -209,7 +212,7 @@ pub fn observe_preference(
                 [&source.id],
                 |r| r.get(0),
             )
-            .map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         if deleted {
             return Ok(());
         }
@@ -219,7 +222,7 @@ pub fn observe_preference(
                 [field],
                 |r| r.get(0),
             )
-            .map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         if paused {
             return Ok(());
         }
@@ -230,7 +233,7 @@ pub fn observe_preference(
                 |r| r.get(0),
             )
             .optional()
-            .map_err(|_| "ledger_unreadable")?
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
             .unwrap_or(0);
         if now <= baseline {
             return Ok(());
@@ -241,15 +244,15 @@ pub fn observe_preference(
             params![
                 format!("{}:{field}:{}", source.id, source.revision),
                 conversation,
-                serde_json::to_string(source).map_err(|_| "invalid_source")?,
+                serde_json::to_string(source).map_err(|_| crate::error_codes::INVALID_SOURCE)?,
                 field,
                 value.to_string(),
                 now
             ],
         )
-        .map_err(|_| "ledger_write_failed")?;
-        let count:i64=tx.query_row("SELECT count(DISTINCT conversation_id) FROM soul_evidence WHERE field=?1 AND value=?2 AND occurred_at>?3",params![field,value.to_string(),baseline],|r|r.get(0)).map_err(|_|"ledger_unreadable")?;
-        let last:Option<i64>=tx.query_row("SELECT max(created_at) FROM soul_candidates WHERE kind='evolution' AND json_extract(payload,'$.field')=?1",[field],|r|r.get(0)).map_err(|_|"ledger_unreadable")?;
+        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+        let count:i64=tx.query_row("SELECT count(DISTINCT conversation_id) FROM soul_evidence WHERE field=?1 AND value=?2 AND occurred_at>?3",params![field,value.to_string(),baseline],|r|r.get(0)).map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
+        let last:Option<i64>=tx.query_row("SELECT max(created_at) FROM soul_candidates WHERE kind='evolution' AND json_extract(payload,'$.field')=?1",[field],|r|r.get(0)).map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
         if count < 3 || last.is_some_and(|last| now < last + WEEK) {
             return Ok(());
         }
@@ -259,7 +262,7 @@ pub fn observe_preference(
                 [&key],
                 |r| r.get(0),
             )
-            .map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         if retired {
             return Ok(());
         }
@@ -270,11 +273,11 @@ pub fn observe_preference(
                 |r| r.get(0),
             )
             .optional()
-            .map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         let previous: Value = previous
             .and_then(|raw| serde_json::from_str(&raw).ok())
             .unwrap_or(json!({}));
-        tx.execute("INSERT INTO soul_candidates VALUES(?1,'evolution',?2,?1,?3,'pending_review',?4,NULL) ON CONFLICT DO NOTHING",params![key,serde_json::to_string(source).unwrap(),json!({"field":field,"before":previous.get(field),"after":value,"evidence_count":count}).to_string(),now]).map_err(|_|"ledger_write_failed")?;
+        tx.execute("INSERT INTO soul_candidates VALUES(?1,'evolution',?2,?1,?3,'pending_review',?4,NULL) ON CONFLICT DO NOTHING",params![key,serde_json::to_string(source).unwrap(),json!({"field":field,"before":previous.get(field),"after":value,"evidence_count":count}).to_string(),now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         Ok(())
     })
 }
@@ -291,7 +294,7 @@ fn save_version(
             [revision],
             |r| r.get(0),
         )
-        .map_err(|_| "revision_conflict")?;
+        .map_err(|_| crate::error_codes::REVISION_CONFLICT)?;
     tx.execute(
         "INSERT INTO soul_role_versions VALUES(?1,'piko',?2,?3,?4,?5) ON CONFLICT DO NOTHING",
         params![
@@ -302,10 +305,10 @@ fn save_version(
             now
         ],
     )
-    .map_err(|_| "ledger_write_failed")?;
-    let changes=tx.execute("UPDATE soul_profiles SET revision=revision+1,confirmed_evolution=?2,updated_at=?3 WHERE profile_id='piko' AND revision=?1",params![revision,layer.to_string(),now]).map_err(|_|"ledger_write_failed")?;
+    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+    let changes=tx.execute("UPDATE soul_profiles SET revision=revision+1,confirmed_evolution=?2,updated_at=?3 WHERE profile_id='piko' AND revision=?1",params![revision,layer.to_string(),now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
     if changes != 1 {
-        return Err("revision_conflict".into());
+        return Err(crate::error_codes::REVISION_CONFLICT.into());
     }
     tx.execute(
         "INSERT INTO soul_role_versions VALUES(?1,'piko',?2,?3,?4,?5)",
@@ -317,8 +320,8 @@ fn save_version(
             now
         ],
     )
-    .map_err(|_| "ledger_write_failed")?;
-    tx.execute("DELETE FROM soul_role_versions WHERE profile_id='piko' AND id NOT IN(SELECT id FROM soul_role_versions WHERE profile_id='piko' ORDER BY revision DESC LIMIT 50)",[]).map_err(|_|"ledger_write_failed")?;
+    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+    tx.execute("DELETE FROM soul_role_versions WHERE profile_id='piko' AND id NOT IN(SELECT id FROM soul_role_versions WHERE profile_id='piko' ORDER BY revision DESC LIMIT 50)",[]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
     Ok(())
 }
 pub fn review_evolution(
@@ -331,7 +334,7 @@ pub fn review_evolution(
 ) -> Result<(), String> {
     profile::load_or_create(conn, locale, now)?;
     store::transaction(conn, |tx| {
-        let(raw,source):(String,String)=tx.query_row("SELECT payload,source_ref FROM soul_candidates WHERE id=?1 AND kind='evolution' AND status='pending_review'",[id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|_|"candidate_missing")?;
+        let(raw,source):(String,String)=tx.query_row("SELECT payload,source_ref FROM soul_candidates WHERE id=?1 AND kind='evolution' AND status='pending_review'",[id],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|_|crate::error_codes::CANDIDATE_MISSING)?;
         if approve {
             let enabled: bool = tx
                 .query_row(
@@ -339,14 +342,17 @@ pub fn review_evolution(
                     [],
                     |r| r.get(0),
                 )
-                .map_err(|_| "ledger_unreadable")?;
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
             if !enabled {
-                return Err("evolution_disabled".into());
+                return Err(crate::error_codes::EVOLUTION_DISABLED.into());
             }
-            let proposal: Value = serde_json::from_str(&raw).map_err(|_| "invalid_candidate")?;
-            let field = proposal["field"].as_str().ok_or("invalid_candidate")?;
+            let proposal: Value =
+                serde_json::from_str(&raw).map_err(|_| crate::error_codes::INVALID_CANDIDATE)?;
+            let field = proposal["field"]
+                .as_str()
+                .ok_or(crate::error_codes::INVALID_CANDIDATE)?;
             if !matches!(field, "tone" | "catchphrases") {
-                return Err("invalid_candidate".into());
+                return Err(crate::error_codes::INVALID_CANDIDATE.into());
             }
             let mut layer: Value = serde_json::from_str(
                 &tx.query_row(
@@ -354,20 +360,21 @@ pub fn review_evolution(
                     [],
                     |r| r.get::<_, String>(0),
                 )
-                .map_err(|_| "profile_missing")?,
+                .map_err(|_| crate::error_codes::PROFILE_MISSING)?,
             )
-            .map_err(|_| "invalid_profile")?;
+            .map_err(|_| crate::error_codes::INVALID_PROFILE)?;
             if layer.get(field).unwrap_or(&Value::Null) != &proposal["before"] {
-                return Err("revision_conflict".into());
+                return Err(crate::error_codes::REVISION_CONFLICT.into());
             }
             layer[field] = proposal["after"].clone();
-            let _: RoleOverrides =
-                serde_json::from_value(layer.clone()).map_err(|_| "invalid_profile")?;
+            let _: RoleOverrides = serde_json::from_value(layer.clone())
+                .map_err(|_| crate::error_codes::INVALID_PROFILE)?;
             save_version(
                 tx,
                 revision,
                 &layer,
-                &serde_json::from_str::<Value>(&source).map_err(|_| "invalid_source")?,
+                &serde_json::from_str::<Value>(&source)
+                    .map_err(|_| crate::error_codes::INVALID_SOURCE)?,
                 now,
             )?;
         }
@@ -375,7 +382,7 @@ pub fn review_evolution(
             "UPDATE soul_candidates SET status=?2,reviewed_at=?3 WHERE id=?1",
             params![id, if approve { "approved" } else { "rejected" }, now],
         )
-        .map_err(|_| "ledger_write_failed")?;
+        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         Ok(())
     })
 }
@@ -387,10 +394,11 @@ pub fn rollback(conn: &mut Connection, id: &str, revision: i64, now: i64) -> Res
                 [id],
                 |r| r.get(0),
             )
-            .map_err(|_| "version_missing")?;
-        let layer: Value = serde_json::from_str(&raw).map_err(|_| "invalid_profile")?;
-        let _: RoleOverrides =
-            serde_json::from_value(layer.clone()).map_err(|_| "invalid_profile")?;
+            .map_err(|_| crate::error_codes::VERSION_MISSING)?;
+        let layer: Value =
+            serde_json::from_str(&raw).map_err(|_| crate::error_codes::INVALID_PROFILE)?;
+        let _: RoleOverrides = serde_json::from_value(layer.clone())
+            .map_err(|_| crate::error_codes::INVALID_PROFILE)?;
         save_version(
             tx,
             revision,
@@ -399,9 +407,9 @@ pub fn rollback(conn: &mut Connection, id: &str, revision: i64, now: i64) -> Res
             now,
         )?;
         for field in ["tone", "catchphrases"] {
-            tx.execute("INSERT INTO soul_evolution_pauses VALUES(?1,?2) ON CONFLICT(field) DO UPDATE SET paused_at=?2",params![field,now]).map_err(|_|"ledger_write_failed")?;
+            tx.execute("INSERT INTO soul_evolution_pauses VALUES(?1,?2) ON CONFLICT(field) DO UPDATE SET paused_at=?2",params![field,now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
-        tx.execute("UPDATE soul_candidates SET status='rejected',reviewed_at=?1 WHERE kind='evolution' AND status='pending_review'",[now]).map_err(|_|"ledger_write_failed")?;
+        tx.execute("UPDATE soul_candidates SET status='rejected',reviewed_at=?1 WHERE kind='evolution' AND status='pending_review'",[now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         Ok(())
     })
 }
@@ -462,7 +470,7 @@ mod tests {
         assert_eq!(state.nickname_options, vec!["partner"]);
         assert_eq!(
             update(&mut c, state.revision, true, Some("friend".into()), 104).unwrap_err(),
-            "nickname_locked"
+            crate::error_codes::NICKNAME_LOCKED
         );
         update(&mut c, state.revision, true, Some("partner".into()), 104).unwrap();
         assert_eq!(nickname(&c, "en-US"), Some("partner".into()));

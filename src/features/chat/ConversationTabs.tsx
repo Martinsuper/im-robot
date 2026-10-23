@@ -125,8 +125,8 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
     ];
     void Promise.all(subscriptions).then(async () => {
       const [windows, snapshots] = await Promise.all([
-        runCommand<WindowSnapshot>("conversation_list_windows", undefined, { revision: 0, windows: [] }),
-        runCommand<AgentTaskSnapshot[]>("agent_get_task_snapshots", undefined, []),
+        runCommand("conversation_list_windows", undefined, { revision: 0, windows: [] }),
+        runCommand("agent_get_task_snapshots", undefined, []) as unknown as Promise<AgentTaskSnapshot[]>,
       ]);
       if (disposed) return;
       applyWindows(windows);

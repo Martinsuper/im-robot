@@ -20,11 +20,11 @@ export function DesktopObservationSettings() {
   useEffect(() => {
     if (!isTauriRuntime) return;
     let disposed = false;
-    void runCommand<DesktopSettings>("soul_get_desktop_settings").then(value => {
+    void runCommand("soul_get_desktop_settings").then(value => {
       if (!disposed) { setSettings({ ...value, model: value.model ?? "" }); setExcluded(value.excluded_apps.join("\n")); }
     }).catch(() => { if (!disposed) setFailed(true); });
     const refresh = () => {
-      void runCommand<DesktopStatus>("soul_desktop_status").then(value => {
+      void runCommand("soul_desktop_status").then(value => {
         if (!disposed && value && typeof value.enabled === "boolean") { setStatus(value); setStatusFailed(false); }
       }).catch(() => { if (!disposed) setStatusFailed(true); });
     };
@@ -40,7 +40,7 @@ export function DesktopObservationSettings() {
     if (!settings) return;
     setSaving(true);
     try {
-      const next = await runCommand<DesktopSettings>("soul_update_desktop_settings", { input: { ...settings, model: settings.model.trim(), excluded_apps: excluded.split("\n").map(s => s.trim()).filter(Boolean) } });
+      const next = await runCommand("soul_update_desktop_settings", { input: { ...settings, model: settings.model.trim(), excluded_apps: excluded.split("\n").map(s => s.trim()).filter(Boolean) } });
       setSettings(next);
       setExcluded(next.excluded_apps.join("\n"));
       toast.success(t("soul.desktop.saved"));
@@ -51,14 +51,14 @@ export function DesktopObservationSettings() {
     if (!settings) return;
     setTesting(true);
     try {
-      await runCommand<void>("soul_test_desktop_model", { model: settings.model.trim() });
+      await runCommand("soul_test_desktop_model", { model: settings.model.trim() });
       toast.success(t("soul.desktop.testPassed"));
     } catch (error) { toast.error(modelError(error)); }
     finally { setTesting(false); }
   }
   async function testSpeech() {
     try {
-      await runCommand<void>("soul_test_desktop_speech");
+      await runCommand("soul_test_desktop_speech");
       toast.success(t("soul.desktop.speechArmed"));
     } catch (error) { toast.error(toUserMessage(error)); }
   }

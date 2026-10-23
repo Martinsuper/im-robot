@@ -1,7 +1,7 @@
 {
   "name": "im-robot",
   "private": true,
-  "version": "1.2.21",
+  "version": "1.2.22",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -25,7 +25,7 @@
     "test:ui": "npm run build && playwright test",
     "test:ui:report": "playwright show-report --host 127.0.0.1",
     "test:notifications-native": "node scripts/test-notification-bridge.mjs",
-    "check": "node scripts/check-version.mjs && node scripts/check-runtime-boundaries.mjs && node scripts/check-i18n-keys.mjs && npm run contracts:check",
+    "check": "node scripts/check-version.mjs && node scripts/check-runtime-boundaries.mjs && node scripts/check-unused-files.mjs && node scripts/check-i18n-keys.mjs && npm run contracts:check",
     "verify": "npm run check && npm run lint && npm test && npm run test:agent && npm run build",
     "smoke:runtime": "node scripts/native-runtime-smoke.mjs",
     "contracts:generate": "cargo run --locked --quiet --manifest-path tools/contracts/Cargo.toml",

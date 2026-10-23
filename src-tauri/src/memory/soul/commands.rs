@@ -9,9 +9,11 @@ pub fn soul_get_settings(
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<SoulSettings, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     settings::get(&mut conn, now())
 }
 
@@ -22,9 +24,11 @@ pub fn soul_update_settings(
     input: UpdateSoulSettingsInput,
 ) -> Result<SoulSettings, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     settings::update(&mut conn, &input, now())?;
     let updated = settings::get(&mut conn, now())?;
     if !updated.enabled
@@ -49,9 +53,11 @@ pub fn soul_clear(
     input: ClearSoulInput,
 ) -> Result<(), String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     settings::clear(&mut conn, &input.scopes, now())?;
     super::desktop::clear_cache();
     drop(conn);
@@ -75,7 +81,9 @@ pub fn soul_diagnostics(
     app: AppHandle,
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<SoulDiagnostics, String> {
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     Ok(diagnostics::inspect(&conn, boot_ok(&app)))
 }
 
@@ -86,7 +94,7 @@ pub fn soul_report_activity(
     mut snapshot: ActivitySnapshot,
 ) -> Result<(), String> {
     if !["bubble", "pet"].contains(&window.label()) {
-        return Err("activity_source_invalid".into());
+        return Err(crate::error_codes::ACTIVITY_SOURCE_INVALID.into());
     }
     // Trust the window only for its input state, never for OS or Agent state.
     snapshot.locked = activity::system_locked();
@@ -110,15 +118,17 @@ pub fn soul_ack_message(
     receipt: MessageReceipt,
 ) -> Result<(), String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
     if window.label() != "bubble" {
-        return Err("receipt_source_invalid".into());
+        return Err(crate::error_codes::RECEIPT_SOURCE_INVALID.into());
     }
     if matches!(receipt.kind, ReceiptKind::Shown) && !window.is_visible().unwrap_or(false) {
-        return Err("bubble_hidden".into());
+        return Err(crate::error_codes::BUBBLE_HIDDEN.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::proactive::acknowledge(
         &mut conn,
         &registry,
@@ -201,7 +211,9 @@ fn attempt_dispatch(app: &AppHandle) -> Result<Option<ProactiveMessage>, String>
     }
     {
         let db = app.state::<Arc<MemoryDb>>();
-        let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+        let mut conn =
+            db.0.lock()
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
         diagnostics::check_ledger(&conn)?;
         super::lifecycle::sweep(&mut conn, now())?;
         super::proactive::expire_pending(&mut conn, now())?;
@@ -261,13 +273,15 @@ fn attempt_dispatch(app: &AppHandle) -> Result<Option<ProactiveMessage>, String>
             .and_then(|(snapshot, _)| snapshot.locked),
     ) {
         let db = app.state::<Arc<MemoryDb>>();
-        let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+        let mut conn =
+            db.0.lock()
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
         let event_id = format!(
             "return-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| "clock_unavailable")?
+                .map_err(|_| crate::error_codes::CLOCK_UNAVAILABLE)?
                 .as_nanos()
         );
         super::tasks::queue_greeting(&mut conn, &event_id, now())?;
@@ -290,7 +304,9 @@ fn attempt_dispatch(app: &AppHandle) -> Result<Option<ProactiveMessage>, String>
         .get_webview_window("bubble")
         .is_some_and(|window| window.is_visible().unwrap_or(false));
     let db = app.state::<Arc<MemoryDb>>();
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let registry = app.state::<super::proactive::ShownRegistry>();
     if bubble_visible {
         if super::proactive::expire_visible(&mut conn, &registry, now(), std::time::Instant::now())?
@@ -298,17 +314,21 @@ fn attempt_dispatch(app: &AppHandle) -> Result<Option<ProactiveMessage>, String>
         {
             drop(conn);
             reconcile_visible(app);
-            conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+            conn =
+                db.0.lock()
+                    .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
         }
     } else {
         registry
             .0
             .lock()
-            .map_err(|_| "storage_unavailable")?
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?
             .clear();
     }
     let cooldown = app.state::<Mutex<super::proactive::Cooldown>>();
-    let mut cooldown = cooldown.lock().map_err(|_| "storage_unavailable")?;
+    let mut cooldown = cooldown
+        .lock()
+        .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let timezone = iana_time_zone::get_timezone().unwrap_or_else(|_| "unknown".into());
     let clock = super::proactive::DispatchClock {
         unix_now: now(),
@@ -335,10 +355,12 @@ pub fn soul_update_profile(
     input: UpdateRoleInput,
 ) -> Result<RoleSnapshot, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
-    store::ensure_available(&conn).map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
+    store::ensure_available(&conn).map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let result = profile::update(&mut conn, input, now())?;
     drop(conn);
     // State is committed before notification; a dropped UI listener cannot undo it.
@@ -353,9 +375,11 @@ pub fn soul_reset_profile(
     input: ResetRoleInput,
 ) -> Result<RoleSnapshot, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let result = profile::reset(&mut conn, input, now())?;
     drop(conn);
     let _ = app.emit("soul:changed", result.revision);
@@ -368,9 +392,11 @@ pub fn soul_list_open_loop_candidates(
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<OpenLoopReviewQueue, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     open_loops::pending(&conn)
 }
 
@@ -381,9 +407,11 @@ pub fn soul_list_open_loops(
     input: Option<ListOpenLoopsInput>,
 ) -> Result<Vec<OpenLoop>, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     open_loops::list(&conn, input.and_then(|input| input.state))
 }
 
@@ -394,9 +422,11 @@ pub fn soul_update_open_loop(
     input: UpdateOpenLoopInput,
 ) -> Result<OpenLoop, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let result = open_loops::update(&mut conn, input, now())?;
     drop(conn);
     let _ = app.emit("soul:changed", ());
@@ -411,9 +441,11 @@ pub fn soul_review_candidate(
     input: ReviewOpenLoopInput,
 ) -> Result<Option<OpenLoop>, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let result = open_loops::review(&mut conn, input, now())?;
     drop(conn);
     let _ = app.emit("soul:changed", ());
@@ -446,13 +478,15 @@ pub fn reconcile_visible(app: &AppHandle) {
 
 fn revoke_visible(app: &AppHandle) -> Result<(), String> {
     let db = app.state::<Arc<MemoryDb>>();
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     store::transaction(&mut conn, |tx| {
         tx.execute(
             "UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE state='shown'",
             [now()],
         )
-        .map_err(|_| "ledger_write_failed")?;
+        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         Ok(())
     })?;
     drop(conn);
@@ -467,9 +501,11 @@ pub fn soul_reply_context(
     message_id: String,
 ) -> Result<super::tasks::ReplyContext, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::tasks::reply_context(&conn, &message_id)
 }
 
@@ -480,9 +516,11 @@ pub fn soul_resolve_task(
     task_id: String,
 ) -> Result<(), String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::tasks::resolve(&mut conn, &task_id, now())?;
     drop(conn);
     reconcile_visible(&app);
@@ -510,13 +548,15 @@ pub fn soul_current_message(
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<Option<serde_json::Value>, String> {
     if window.label() != "bubble" {
-        return Err("message_source_invalid".into());
+        return Err(crate::error_codes::MESSAGE_SOURCE_INVALID.into());
     }
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
     let language = crate::settings::read_settings(&app).language;
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     diagnostics::check_ledger(&conn)?;
     current_message(&conn, now(), &language)
 }
@@ -543,9 +583,11 @@ pub fn soul_get_mood(
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<super::mood::Mood, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::mood::snapshot(&mut conn, now())
 }
 
@@ -555,9 +597,11 @@ pub fn soul_list_topic_responses(
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<Vec<super::engagement::TopicResponse>, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::engagement::responses(&conn)
 }
 #[tauri::command]
@@ -568,9 +612,11 @@ pub fn soul_review_topic_response(
     approve: bool,
 ) -> Result<(), String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::engagement::review_response(&mut conn, &id, approve, now())?;
     drop(conn);
     reconcile_visible(&app);
@@ -584,9 +630,11 @@ pub fn soul_get_continuity(
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<super::continuity::Continuity, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::continuity::get(&mut conn, now())
 }
 #[tauri::command]
@@ -598,9 +646,11 @@ pub fn soul_update_continuity(
     nickname: Option<String>,
 ) -> Result<super::continuity::Continuity, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::continuity::update(
         &mut conn,
         expected_revision,
@@ -624,9 +674,11 @@ pub fn soul_review_evolution(
     locale: String,
 ) -> Result<(), String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::continuity::review_evolution(
         &mut conn,
         &id,
@@ -647,9 +699,11 @@ pub fn soul_rollback_evolution(
     expected_revision: i64,
 ) -> Result<(), String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     super::continuity::rollback(&mut conn, &id, expected_revision, now())?;
     drop(conn);
     let _ = app.emit("soul:changed", ());
@@ -670,7 +724,9 @@ pub fn soul_preview_visibility(
         && window.is_visible().unwrap_or(false)
         && window.is_focused().unwrap_or(false)
         && activity::system_locked() == Some(false);
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let registry = app.state::<super::observations::PreviewVisibility>();
     super::observations::visible(
         &mut conn,
@@ -691,9 +747,11 @@ pub fn soul_clear_category(
     expected_revision: i64,
 ) -> Result<SoulSettings, String> {
     if !boot_ok(&app) {
-        return Err("storage_unavailable".into());
+        return Err(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     settings::clear_category(&mut conn, category, expected_revision, now())?;
     if category == ProactiveCategory::DesktopObservation {
         super::desktop::clear_cache();
@@ -709,7 +767,7 @@ pub async fn soul_request_notification_permission(
     window: tauri::WebviewWindow,
 ) -> Result<bool, String> {
     if !matches!(window.label(), "panel" | "bubble") {
-        return Err("permission_source_invalid".into());
+        return Err(crate::error_codes::PERMISSION_SOURCE_INVALID.into());
     }
     super::notifications::request_permission().await
 }

@@ -38,17 +38,17 @@ export function SoulSettings() {
 
   const load = useCallback(() => {
     if (!isTauriRuntime) return;
-    runCommand<SoulSettings>("soul_get_settings", undefined)
+    runCommand("soul_get_settings", undefined)
       .then(setSettings)
       .catch((error) => toast.error(t("soul.settings.loadFailed") + toUserMessage(error)));
   }, [t, toast]);
 
   const loadRole = useCallback((locale: string) => {
     if (!isTauriRuntime) return;
-    void runCommand<RoleSnapshot>("soul_get_profile", { locale })
+    void runCommand("soul_get_profile", { locale })
       .then((snapshot) => {
-        setRole(snapshot);
-        setDraft({ ...snapshot.user_overrides });
+        setRole(snapshot as RoleSnapshot);
+        setDraft({ ...snapshot.user_overrides } as RoleOverrides);
       })
       .catch((error) => toast.error(toUserMessage(error, t("soul.settings.loadFailed"))));
   }, [toast, t]);
@@ -71,11 +71,11 @@ export function SoulSettings() {
 
   async function saveRole() {
     try {
-      const updated = await runCommand<RoleSnapshot>("soul_update_profile", {
+      const updated = await runCommand("soul_update_profile", {
         input: { expected_revision: role?.revision ?? 0, locale, user_overrides: draft },
       });
-      setRole(updated);
-      setDraft({ ...updated.user_overrides });
+      setRole(updated as RoleSnapshot);
+      setDraft({ ...updated.user_overrides } as RoleOverrides);
       toast.success(t("soul.settings.saved"));
     } catch (error) {
       toast.error(toUserMessage(error, t("soul.settings.conflict")));
@@ -95,7 +95,7 @@ export function SoulSettings() {
           .map((category) => ({ ...category, enabled: patch.category!.enabled }))
       : null;
     try {
-      const updated = await runCommand<SoulSettings>("soul_update_settings", {
+      const updated = await runCommand("soul_update_settings", {
         input: {
           expected_revision: settings.revision, enabled: patch.enabled ?? null,
           paused: patch.paused ?? null, categories, mood_enabled: patch.mood_enabled ?? null, evolution_enabled: patch.evolution_enabled ?? null,
@@ -156,7 +156,7 @@ export function SoulSettings() {
           <p>{t("soul.settings.moodHint")}</p>
           <label><input type="checkbox" checked={settings.evolution_enabled} onChange={event=>void toggleSwitch({evolution_enabled:event.currentTarget.checked})}/>{t("soul.continuity.evolution")}</label>
           <p>{t("soul.continuity.evolutionHint")}</p>
-          <button type="button" onClick={()=>void runCommand<boolean>("soul_request_notification_permission").then(granted=>{
+          <button type="button" onClick={()=>void runCommand("soul_request_notification_permission").then(granted=>{
             if(granted)toast.success(t("soul.settings.notificationGranted"));else toast.error(t("soul.settings.notificationDenied"));
           }).catch(error=>toast.error(toUserMessage(error)))}>{t("soul.settings.notificationPermission")}</button>
           {categoryRows.map((category) => (
@@ -174,7 +174,7 @@ export function SoulSettings() {
                 <span className="soul-settings__pending">（{t("soul.settings.notShipped")}）</span>
               )}
             </label><button type="button" aria-label={`${t("soul.settings.clearCategory")} ${t(`soul.category.${category.category}`)}`} onClick={()=>{
-              if(window.confirm(t("soul.settings.clearCategoryConfirm")))void runCommand<SoulSettings>("soul_clear_category",{category:category.category,expectedRevision:settings.revision}).then(setSettings).catch(error=>toast.error(toUserMessage(error,t("soul.settings.conflict"))));
+              if(window.confirm(t("soul.settings.clearCategoryConfirm")))void runCommand("soul_clear_category",{category:category.category,expectedRevision:settings.revision}).then(setSettings).catch(error=>toast.error(toUserMessage(error,t("soul.settings.conflict"))));
             }}>{t("soul.settings.clearCategory")}</button></div>
           ))}
           <button type="button" disabled={clearing} onClick={() => void clearAll()}>
@@ -231,12 +231,12 @@ export function SoulSettings() {
               disabled={role.revision < 1}
               onClick={() => {
                 if (!window.confirm(t("soul.settings.resetConfirm"))) return;
-                void runCommand<RoleSnapshot>("soul_reset_profile", {
+                void runCommand("soul_reset_profile", {
                   input: { expected_revision: role.revision, locale, clear_evolution_history: clearHistory },
                 })
                   .then((updated) => {
-                    setRole(updated);
-                    setDraft({ ...updated.user_overrides });
+                    setRole(updated as RoleSnapshot);
+                    setDraft({ ...updated.user_overrides } as RoleOverrides);
                     toast.success(t("soul.settings.resetDone"));
                   })
                   .catch((error) => toast.error(toUserMessage(error, t("soul.settings.conflict"))));

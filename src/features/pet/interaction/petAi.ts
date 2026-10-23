@@ -61,7 +61,7 @@ export async function generatePetCompanionResponse(
 ): Promise<PetCompanionGenerationOutput | null> {
   if (!isTauriRuntime) return null;
   try {
-    const result = await runCommand<PetCompanionGenerationOutput>(
+    const result = await runCommand(
       "generate_pet_companion_response",
       { input },
       undefined

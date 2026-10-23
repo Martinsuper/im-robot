@@ -253,9 +253,10 @@ export function WelcomeState({ companionName, message, onSuggest }: { companionN
         {suggestions.map((suggestion, index) => {
           const Icon = SUGGESTION_ICONS[index] ?? MessageCircle;
           return (
-            <button key={suggestion.label} type="button" onClick={() => onSuggest(suggestion.prompt)}>
-              <Icon size={14} />
-              {suggestion.label}
+            <button key={suggestion.label} type="button" aria-label={suggestion.label} onClick={() => onSuggest(suggestion.prompt)}>
+              <span className="bubble-suggestion__icon"><Icon size={17} /></span>
+              <span className="bubble-suggestion__copy"><strong>{suggestion.label}</strong><small>{suggestion.description}</small></span>
+              <ChevronRight size={14} className="bubble-suggestion__arrow" aria-hidden="true" />
             </button>
           );
         })}

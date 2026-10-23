@@ -236,7 +236,8 @@ fn extract_with_candidates(
         // the user's disabled setting for generating new open-topic candidates.
         if enabled {
             if let Some(timezone) = topic_timezone {
-                let topic_now = i64::try_from(now).map_err(|_| "invalid_extraction_time")?;
+                let topic_now =
+                    i64::try_from(now).map_err(|_| crate::error_codes::INVALID_EXTRACTION_TIME)?;
                 count += super::soul::open_loops::enqueue(&tx, entry, topic_now, timezone)?;
             }
         }
@@ -254,7 +255,7 @@ fn extract_with_candidates(
             .map_err(|e| e.to_string())?;
         }
         processed += 1;
-        if processed >= 100 {
+        if processed >= super::tuning::EXTRACTION_BATCH_LIMIT {
             break;
         }
     }
@@ -329,8 +330,11 @@ async fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let db = app.state::<Arc<MemoryDb>>();
-    let current = status(&db)?;
+    let db = Arc::clone(app.state::<Arc<MemoryDb>>().inner());
+    let current = {
+        let db = Arc::clone(&db);
+        crate::common::on_blocking(move || status(&db)).await?
+    };
     if !force
         && (!current.enabled
             || (current.last_run_at != 0
@@ -345,7 +349,11 @@ async fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
     let settings = crate::settings::read_settings(app);
     let mut count = 0;
     if crate::providers::validate_ai_settings(&settings.ai).is_ok() {
-        let pending = semantic_backlog(&db, &entries, force)?;
+        let pending = {
+            let db = Arc::clone(&db);
+            let entries = entries.clone();
+            crate::common::on_blocking(move || semantic_backlog(&db, &entries, force)).await?
+        };
         // Manual extraction reviews all history; the worker drains one bounded batch per tick.
         for batch in
             pending
@@ -353,7 +361,11 @@ async fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
                 .take(if force { usize::MAX } else { 1 })
         {
             let candidates = super::semantic::generate(&settings.ai, batch).await?;
-            if !force && !status(&db)?.enabled {
+            let enabled = {
+                let db = Arc::clone(&db);
+                crate::common::on_blocking(move || Ok(status(&db)?.enabled)).await?
+            };
+            if !force && !enabled {
                 return Ok(count);
             }
             let latest = crate::chat_session::entries_view(
@@ -368,42 +380,61 @@ async fn run(app: &AppHandle, force: bool) -> Result<usize, String> {
                 })
                 .cloned()
                 .collect();
-            let added = extract_with_candidates(
-                &db,
-                &live,
-                now,
-                true,
-                timezone.as_deref(),
-                Some(&candidates),
-                true,
-            )?;
+            let added = {
+                let db = Arc::clone(&db);
+                let timezone = timezone.clone();
+                crate::common::on_blocking(move || {
+                    extract_with_candidates(
+                        &db,
+                        &live,
+                        now,
+                        true,
+                        timezone.as_deref(),
+                        Some(&candidates),
+                        true,
+                    )
+                })
+                .await?
+            };
             count += added;
             emit_extraction(app, added);
         }
         if !force && pending.len() > super::semantic::BATCH_SIZE {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
-            conn.execute(
-                "UPDATE memory_extraction_settings SET last_run_at=0 WHERE id=1",
-                [],
-            )
-            .map_err(|e| e.to_string())?;
+            let db = Arc::clone(&db);
+            crate::common::on_blocking(move || {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
+                conn.execute(
+                    "UPDATE memory_extraction_settings SET last_run_at=0 WHERE id=1",
+                    [],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            })
+            .await?;
         }
     } else {
-        if force {
-            for batch in entries.chunks(100) {
-                count += extract_with_candidates(
-                    &db,
-                    batch,
-                    now,
-                    true,
-                    timezone.as_deref(),
-                    None,
-                    true,
-                )?;
+        let db = Arc::clone(&db);
+        let timezone = timezone.clone();
+        count = crate::common::on_blocking(move || {
+            let mut count = 0;
+            if force {
+                for batch in entries.chunks(100) {
+                    count += extract_with_candidates(
+                        &db,
+                        batch,
+                        now,
+                        true,
+                        timezone.as_deref(),
+                        None,
+                        true,
+                    )?;
+                }
+            } else {
+                count = extract_with_topics(&db, &entries, now, false, timezone.as_deref())?;
             }
-        } else {
-            count = extract_with_topics(&db, &entries, now, false, timezone.as_deref())?;
-        }
+            Ok(count)
+        })
+        .await?;
         emit_extraction(app, count);
     }
     Ok(count)

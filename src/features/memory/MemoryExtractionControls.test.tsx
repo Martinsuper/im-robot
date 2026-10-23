@@ -87,7 +87,7 @@ describe("memory extraction controls", () => {
         "新增 2 条候选记忆",
       ),
     );
-    expect(invokeMock).toHaveBeenCalledWith("extract_memories_now");
+    expect(invokeMock).toHaveBeenCalledWith("extract_memories_now", {});
     expect(
       invokeMock.mock.calls.filter(
         ([command]) => command === "get_memory_extraction_status",

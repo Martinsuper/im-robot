@@ -9,7 +9,7 @@ type History={revision:number;history_enabled:boolean;days:number;nickname:strin
 function description(value:unknown):string{return value==null?"—":Array.isArray(value)?value.join("、"):String(value);}
 export function ContinuitySettings({roleRevision,onChanged}:{roleRevision:number;onChanged:()=>void}){
  const {t,locale}=useTranslation();const toast=useToast();const [history,setHistory]=useState<History>();const [pending,setPending]=useState(false);
- const load=useCallback(()=>void runCommand<History>("soul_get_continuity").then(setHistory).catch(error=>toast.error(toUserMessage(error,t("soul.settings.loadFailed")))),[t,toast]);
+ const load=useCallback(()=>void runCommand("soul_get_continuity").then((value)=>setHistory(value as History)).catch(error=>toast.error(toUserMessage(error,t("soul.settings.loadFailed")))),[t,toast]);
  useEffect(load,[load]);
  async function action<K extends "soul_update_continuity" | "soul_review_evolution" | "soul_rollback_evolution">(command:K,args:CommandMap[K]["args"]){
   setPending(true);try{await invokeCommand(command,args);load();onChanged();}catch(error){toast.error(toUserMessage(error,t("soul.settings.conflict")));}finally{setPending(false);}

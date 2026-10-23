@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../../generated/ipc";
 import type { MemoryItem } from "./memoryTypes";
 import { toUserMessage } from "../../lib/errors";
 
@@ -23,9 +23,9 @@ export function MemoryHistory({
     if (!("__TAURI_INTERNALS__" in window)) return;
     let disposed = false;
     void Promise.all([
-      invoke<Revision[]>("memory_revisions", { id: memory.id }),
-      invoke<Provenance | null>("memory_get_provenance", { id: memory.id }),
-      invoke<MemoryItem[]>("list_memories", {
+      invokeCommand("memory_revisions", { id: memory.id }),
+      invokeCommand("memory_get_provenance", { id: memory.id }),
+      invokeCommand("list_memories", {
         input: { status: "active", memoryType: memory.memoryType, limit: 200 },
       }),
     ])
@@ -102,7 +102,7 @@ export function MemoryHistory({
                 return;
               setBusy(true);
               setError("");
-              void invoke("supersede_memory", {
+              void invokeCommand("supersede_memory", {
                 oldId: memory.id,
                 newId: replacement,
               })

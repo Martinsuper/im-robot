@@ -14,7 +14,7 @@ export function SoulDiagnostics() {
     setLoading(true);
     setFailed(false);
     try {
-      setStatus(await runCommand<Diagnostics>("soul_diagnostics"));
+      setStatus(await runCommand("soul_diagnostics"));
     } catch {
       setFailed(true);
     } finally {
@@ -25,7 +25,7 @@ export function SoulDiagnostics() {
   useEffect(() => {
     if (!isTauriRuntime) return;
     let active = true;
-    void runCommand<Diagnostics>("soul_diagnostics")
+    void runCommand("soul_diagnostics")
       .then((result) => { if (active) setStatus(result); })
       .catch(() => { if (active) setFailed(true); })
       .finally(() => { if (active) setLoading(false); });

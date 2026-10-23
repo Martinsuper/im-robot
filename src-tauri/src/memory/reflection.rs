@@ -211,7 +211,7 @@ fn titles_similar(a: &str, b: &str) -> bool {
     let min_len = a_chars.len().min(b_chars.len());
     let ratio = shared as f32 / min_len as f32;
 
-    ratio > 0.7
+    ratio > super::tuning::TITLE_SIMILARITY_THRESHOLD
 }
 
 // === Pattern Detection ===

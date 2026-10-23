@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../../generated/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toUserMessage } from "../../lib/errors";
@@ -49,7 +49,7 @@ export function MemoryVaultPanel() {
   const [message, setMessage] = useState("");
   const load = useCallback(async () => {
     if (!desktop) return;
-    const result = await invoke<Status>("memory_vault_status");
+    const result = await invokeCommand("memory_vault_status", {});
     if (!result?.config || !result?.report)
       throw new Error("Markdown 同步状态格式无效");
     setStatus(result);
@@ -59,7 +59,7 @@ export function MemoryVaultPanel() {
     let disposed = false;
     async function refresh() {
       try {
-        const result = await invoke<Status>("memory_vault_status");
+        const result = await invokeCommand("memory_vault_status", {});
         if (!disposed && result?.config && result?.report) setStatus(result);
       } catch (e) {
         if (!disposed) setError(toUserMessage(e, "Markdown 状态加载失败"));
@@ -153,7 +153,7 @@ export function MemoryVaultPanel() {
             disabled={busy || !available}
             onClick={() =>
               void perform(async () => {
-                const updated = await invoke<Status>("memory_vault_configure", {
+                const updated = await invokeCommand("memory_vault_configure", {
                   enabled: !enabled,
                   directory: null,
                 });
@@ -171,7 +171,7 @@ export function MemoryVaultPanel() {
             disabled={busy || !available || !enabled}
             onClick={() =>
               void perform(async () => {
-                const report = await invoke<Report>("memory_vault_sync");
+                const report = await invokeCommand("memory_vault_sync", {});
                 await load();
                 setMessage(
                   `本次写出 ${report.exported} 条，读入 ${report.imported} 条，移除 ${report.removed} 个文件。`,
@@ -188,10 +188,10 @@ export function MemoryVaultPanel() {
               void perform(async () => {
                 if (!status) return;
                 if (enabled && status.trackedCount === 0) {
-                  await invoke("memory_vault_sync");
+                  await invokeCommand("memory_vault_sync", {});
                   await load();
                 }
-                await invoke("memory_vault_open_directory");
+                await invokeCommand("memory_vault_open_directory", {});
               })
             }
           >
@@ -209,7 +209,7 @@ export function MemoryVaultPanel() {
                 });
                 if (selected && !Array.isArray(selected)) {
                   setStatus(
-                    await invoke<Status>("memory_vault_configure", {
+                    await invokeCommand("memory_vault_configure", {
                       enabled,
                       directory: selected,
                     }),
@@ -249,10 +249,10 @@ export function MemoryVaultPanel() {
                     onClick={() =>
                       void perform(async () => {
                         setPreview(
-                          await invoke<Preview>("memory_vault_preview", {
-                            memoryId: issue.memoryId,
+                          (await invokeCommand("memory_vault_preview", {
+                            memoryId: issue.memoryId as string,
                             path: issue.path,
-                          }),
+                          })) as Preview,
                         );
                       })
                     }
@@ -305,7 +305,7 @@ export function MemoryVaultPanel() {
                       if (!confirm(`确定${label}？请先检查上方两侧内容。`))
                         return;
                       void perform(async () => {
-                        await invoke("memory_vault_resolve", {
+                        await invokeCommand("memory_vault_resolve", {
                           input: {
                             memoryId: activePreview.memoryId,
                             path: activePreview.path,

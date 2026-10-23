@@ -376,12 +376,15 @@ pub fn resolve_window(expression: &str, baseline: i64, offset: i64) -> Option<(i
 
 pub fn resolve_time(time: &OpenLoopTime) -> Result<OpenLoopTime, String> {
     use chrono::TimeZone;
-    let zone: chrono_tz::Tz = time.timezone.parse().map_err(|_| "invalid_loop_timezone")?;
+    let zone: chrono_tz::Tz = time
+        .timezone
+        .parse()
+        .map_err(|_| crate::error_codes::INVALID_LOOP_TIMEZONE)?;
     let mut result = time.clone();
     if result.starts_at.is_some() || result.ends_at.is_some() {
         match (result.starts_at, result.ends_at) {
             (Some(start), Some(end)) if start >= 0 && end >= start => {}
-            _ => return Err("invalid_loop_time".into()),
+            _ => return Err(crate::error_codes::INVALID_LOOP_TIME.into()),
         }
         return Ok(result);
     }
@@ -389,7 +392,7 @@ pub fn resolve_time(time: &OpenLoopTime) -> Result<OpenLoopTime, String> {
         let date = zone
             .timestamp_opt(time.baseline, 0)
             .single()
-            .ok_or("invalid_loop_time")?
+            .ok_or(crate::error_codes::INVALID_LOOP_TIME)?
             .date_naive();
         if let Some((start, end)) = calendar_bounds(expression, date) {
             if let (Some(start), Some(end)) = (
@@ -432,7 +435,7 @@ pub(crate) fn enqueue(
             |r| r.get::<_, i64>(0),
         )
         .optional()
-        .map_err(|_| "storage_unavailable")?
+        .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?
         .unwrap_or(0);
     let deleted = tx
         .query_row(
@@ -441,7 +444,7 @@ pub(crate) fn enqueue(
             |_| Ok(()),
         )
         .optional()
-        .map_err(|_| "storage_unavailable")?
+        .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?
         .is_some();
     if deleted || (baseline > 0 && i64::try_from(entry.created_at).unwrap_or(0) <= baseline) {
         return Ok(0);
@@ -455,14 +458,14 @@ pub(crate) fn enqueue(
                 |_| Ok(()),
             )
             .optional()
-            .map_err(|_| "storage_unavailable")?
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?
             .is_some();
         if retired {
             continue;
         }
         added += tx.execute("INSERT INTO soul_candidates(id,kind,source_ref,dedupe_key,payload,status,created_at) VALUES(?1,?2,?3,?4,?5,'pending_review',?6) ON CONFLICT(dedupe_key) DO NOTHING",
-            params![candidate.id,KIND,serde_json::to_string(&candidate.source).map_err(|_| "candidate_invalid")?,candidate.dedupe_key,serde_json::to_string(&candidate).map_err(|_| "candidate_invalid")?,now])
-            .map_err(|_| "topic_extraction_write_failed")?;
+            params![candidate.id,KIND,serde_json::to_string(&candidate.source).map_err(|_| crate::error_codes::CANDIDATE_INVALID)?,candidate.dedupe_key,serde_json::to_string(&candidate).map_err(|_| crate::error_codes::CANDIDATE_INVALID)?,now])
+            .map_err(|_| crate::error_codes::TOPIC_EXTRACTION_WRITE_FAILED)?;
     }
     Ok(added)
 }
@@ -475,15 +478,17 @@ fn decode_candidate(
     payload: &str,
 ) -> Result<OpenLoopCandidate, String> {
     let candidate: OpenLoopCandidate =
-        serde_json::from_str(payload).map_err(|_| "candidate_corrupt")?;
-    let stored_source: SourceRef = serde_json::from_str(source).map_err(|_| "candidate_corrupt")?;
-    let actual_status = serde_json::to_value(candidate.status).map_err(|_| "candidate_corrupt")?;
+        serde_json::from_str(payload).map_err(|_| crate::error_codes::CANDIDATE_CORRUPT)?;
+    let stored_source: SourceRef =
+        serde_json::from_str(source).map_err(|_| crate::error_codes::CANDIDATE_CORRUPT)?;
+    let actual_status = serde_json::to_value(candidate.status)
+        .map_err(|_| crate::error_codes::CANDIDATE_CORRUPT)?;
     if candidate.id != id
         || actual_status.as_str() != Some(status)
         || candidate.source != stored_source
         || candidate.dedupe_key != dedupe
     {
-        return Err("candidate_corrupt".into());
+        return Err(crate::error_codes::CANDIDATE_CORRUPT.into());
     }
     let mut candidate = candidate;
     if matches!(candidate.status, CandidateStatus::PendingReview)
@@ -496,8 +501,8 @@ fn decode_candidate(
 
 fn load_candidate(conn: &Connection, id: &str) -> Result<OpenLoopCandidate, String> {
     let row: Option<(String,String,String,String)> = conn.query_row("SELECT status,source_ref,dedupe_key,payload FROM soul_candidates WHERE id=?1 AND kind=?2",
-        params![id,KIND], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|_| "storage_unavailable")?;
-    let (status, source, dedupe, payload) = row.ok_or("candidate_missing")?;
+        params![id,KIND], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
+    let (status, source, dedupe, payload) = row.ok_or(crate::error_codes::CANDIDATE_MISSING)?;
     decode_candidate(id, &status, &source, &dedupe, &payload)
 }
 
@@ -523,9 +528,9 @@ fn similar(a: &str, b: &str) -> bool {
 }
 
 pub fn pending(conn: &Connection) -> Result<OpenLoopReviewQueue, String> {
-    store::ensure_available(conn).map_err(|_| "storage_unavailable")?;
+    store::ensure_available(conn).map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let mut statement = conn.prepare("SELECT id,status,source_ref,dedupe_key,payload FROM soul_candidates WHERE kind=?1 AND status='pending_review' ORDER BY created_at,id LIMIT 100")
-        .map_err(|_| "storage_unavailable")?;
+        .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let rows = statement
         .query_map([KIND], |r| {
             Ok((
@@ -536,10 +541,11 @@ pub fn pending(conn: &Connection) -> Result<OpenLoopReviewQueue, String> {
                 r.get::<_, String>(4)?,
             ))
         })
-        .map_err(|_| "storage_unavailable")?;
+        .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let mut candidates = vec![];
     for row in rows {
-        let (id, status, source, dedupe, payload) = row.map_err(|_| "storage_unavailable")?;
+        let (id, status, source, dedupe, payload) =
+            row.map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
         candidates.push(decode_candidate(&id, &status, &source, &dedupe, &payload)?);
     }
     let loops = list(conn, None)?;
@@ -577,7 +583,7 @@ pub fn pending(conn: &Connection) -> Result<OpenLoopReviewQueue, String> {
 }
 
 pub fn list(conn: &Connection, state: Option<OpenLoopState>) -> Result<Vec<OpenLoop>, String> {
-    store::ensure_available(conn).map_err(|_| "storage_unavailable")?;
+    store::ensure_available(conn).map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let state = state.map(|state| {
         serde_json::to_value(state)
             .unwrap()
@@ -586,34 +592,38 @@ pub fn list(conn: &Connection, state: Option<OpenLoopState>) -> Result<Vec<OpenL
             .to_string()
     });
     let mut statement = conn.prepare("SELECT id,revision,content,source_ref,time_expression,time_baseline,timezone,starts_at,ends_at,parser_version,state,closed_at FROM soul_open_loops WHERE (?1 IS NULL OR state=?1) ORDER BY created_at,id")
-        .map_err(|_| "storage_unavailable")?;
+        .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let mut rows = statement
         .query([state])
-        .map_err(|_| "storage_unavailable")?;
+        .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let mut result = vec![];
-    while let Some(row) = rows.next().map_err(|_| "storage_unavailable")? {
+    while let Some(row) = rows
+        .next()
+        .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?
+    {
         let item = (|| -> Result<OpenLoop, String> {
             Ok(OpenLoop {
-                id: row.get(0).map_err(|_| "topic_corrupt")?,
-                revision: row.get(1).map_err(|_| "topic_corrupt")?,
-                content: row.get(2).map_err(|_| "topic_corrupt")?,
+                id: row.get(0).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
+                revision: row.get(1).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
+                content: row.get(2).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
                 source: serde_json::from_str(
-                    &row.get::<_, String>(3).map_err(|_| "topic_corrupt")?,
+                    &row.get::<_, String>(3)
+                        .map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
                 )
-                .map_err(|_| "topic_corrupt")?,
+                .map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
                 time: OpenLoopTime {
-                    expression: row.get(4).map_err(|_| "topic_corrupt")?,
-                    baseline: row.get(5).map_err(|_| "topic_corrupt")?,
-                    timezone: row.get(6).map_err(|_| "topic_corrupt")?,
-                    starts_at: row.get(7).map_err(|_| "topic_corrupt")?,
-                    ends_at: row.get(8).map_err(|_| "topic_corrupt")?,
-                    parser_version: row.get(9).map_err(|_| "topic_corrupt")?,
+                    expression: row.get(4).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
+                    baseline: row.get(5).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
+                    timezone: row.get(6).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
+                    starts_at: row.get(7).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
+                    ends_at: row.get(8).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
+                    parser_version: row.get(9).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
                 },
                 state: serde_json::from_value(serde_json::Value::String(
-                    row.get(10).map_err(|_| "topic_corrupt")?,
+                    row.get(10).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
                 ))
-                .map_err(|_| "topic_corrupt")?,
-                closed_at: row.get(11).map_err(|_| "topic_corrupt")?,
+                .map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
+                closed_at: row.get(11).map_err(|_| crate::error_codes::TOPIC_CORRUPT)?,
             })
         })()?;
         result.push(item);
@@ -627,7 +637,7 @@ pub fn review(
     now: i64,
 ) -> Result<Option<OpenLoop>, String> {
     if matches!(input.decision, CandidateStatus::PendingReview) {
-        return Err("invalid_review".into());
+        return Err(crate::error_codes::INVALID_REVIEW.into());
     }
     store::transaction(conn, |tx| {
         let mut candidate = load_candidate(tx, &input.candidate_id)?;
@@ -649,7 +659,7 @@ pub fn review(
             ) {
                 return Ok(None);
             }
-            return Err("candidate_reviewed".into());
+            return Err(crate::error_codes::CANDIDATE_REVIEWED.into());
         }
         let approved = matches!(input.decision, CandidateStatus::Approved);
         if approved {
@@ -669,10 +679,10 @@ pub fn review(
                     .chars()
                     .any(|c| c.is_control() && c != '\n' && c != '\t')
             {
-                return Err("invalid_topic".into());
+                return Err(crate::error_codes::INVALID_TOPIC.into());
             }
             if policy::contains_sensitive_content(&candidate.content) {
-                return Err("sensitive_topic".into());
+                return Err(crate::error_codes::SENSITIVE_TOPIC.into());
             }
             let active: u32 = tx
                 .query_row(
@@ -680,21 +690,21 @@ pub fn review(
                     [],
                     |r| r.get(0),
                 )
-                .map_err(|_| "storage_unavailable")?;
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
             if active >= MAX_ACTIVE_LOOPS {
-                return Err("open_loop_limit".into());
+                return Err(crate::error_codes::OPEN_LOOP_LIMIT.into());
             }
             tx.execute("INSERT INTO soul_open_loops(id,revision,content,source_ref,candidate_id,time_expression,time_baseline,timezone,starts_at,ends_at,parser_version,state,created_at,updated_at) VALUES(?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'tracking',?11,?11)",
-                params![format!("loop-{}",candidate.id),candidate.content,serde_json::to_string(&candidate.source).map_err(|_| "candidate_corrupt")?,candidate.id,candidate.time.expression,candidate.time.baseline,candidate.time.timezone,candidate.time.starts_at,candidate.time.ends_at,candidate.time.parser_version,now])
-                .map_err(|_| "storage_write_failed")?;
+                params![format!("loop-{}",candidate.id),candidate.content,serde_json::to_string(&candidate.source).map_err(|_| crate::error_codes::CANDIDATE_CORRUPT)?,candidate.id,candidate.time.expression,candidate.time.baseline,candidate.time.timezone,candidate.time.starts_at,candidate.time.ends_at,candidate.time.parser_version,now])
+                .map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED)?;
         }
         candidate.status = input.decision;
         candidate.reviewed_at = Some(now);
         let status = if approved { "approved" } else { "rejected" };
         let changed = tx.execute("UPDATE soul_candidates SET status=?2,reviewed_at=?3,payload=?4 WHERE id=?1 AND status='pending_review'",
-            params![candidate.id,status,now,serde_json::to_string(&candidate).map_err(|_| "candidate_corrupt")?]).map_err(|_| "storage_write_failed")?;
+            params![candidate.id,status,now,serde_json::to_string(&candidate).map_err(|_| crate::error_codes::CANDIDATE_CORRUPT)?]).map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED)?;
         if changed != 1 {
-            return Err("candidate_reviewed".into());
+            return Err(crate::error_codes::CANDIDATE_REVIEWED.into());
         }
         if approved {
             let id = format!("loop-{}", candidate.id);
@@ -724,16 +734,16 @@ fn transition_allowed(from: OpenLoopState, to: OpenLoopState) -> bool {
 
 fn validate_topic_content(content: &str) -> Result<(), String> {
     if content.is_empty() || content.chars().count() > 500 {
-        return Err("invalid_topic".into());
+        return Err(crate::error_codes::INVALID_TOPIC.into());
     }
     if content
         .chars()
         .any(|c| c.is_control() && c != '\n' && c != '\t')
     {
-        return Err("invalid_topic".into());
+        return Err(crate::error_codes::INVALID_TOPIC.into());
     }
     if policy::contains_sensitive_content(content) {
-        return Err("sensitive_topic".into());
+        return Err(crate::error_codes::SENSITIVE_TOPIC.into());
     }
     Ok(())
 }
@@ -747,19 +757,19 @@ pub fn update(
     now: i64,
 ) -> Result<OpenLoop, String> {
     if input.content.is_none() && input.time.is_none() && input.state.is_none() {
-        return Err("no_changes".into());
+        return Err(crate::error_codes::NO_CHANGES.into());
     }
     if let Some(content) = &input.content {
         validate_topic_content(content)?;
     }
     if let Some(time) = &input.time {
         if time.timezone.parse::<chrono_tz::Tz>().is_err() || time.baseline < 0 {
-            return Err("invalid_loop_time".into());
+            return Err(crate::error_codes::INVALID_LOOP_TIME.into());
         }
         match (time.starts_at, time.ends_at) {
             (Some(starts), Some(ends)) if starts >= 0 && ends >= starts => {}
             (None, None) => {}
-            _ => return Err("invalid_loop_time".into()),
+            _ => return Err(crate::error_codes::INVALID_LOOP_TIME.into()),
         }
     }
     store::transaction(conn, |tx| {
@@ -786,7 +796,7 @@ pub fn update(
                 },
             )
             .optional()
-            .map_err(|_| "storage_unavailable")?;
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
         let (
             revision,
             mut content,
@@ -801,13 +811,13 @@ pub fn update(
         // expected_revision is a strict compare-and-swap value (-loops start at 1);
         // 0 is only a creation marker elsewhere and always stale here.
         if input.expected_revision != revision || input.expected_revision == 0 {
-            return Err("loop_revision_conflict".into());
+            return Err(crate::error_codes::LOOP_REVISION_CONFLICT.into());
         }
         let state_now: OpenLoopState = serde_json::from_value(serde_json::Value::String(raw_state))
-            .map_err(|_| "topic_corrupt")?;
+            .map_err(|_| crate::error_codes::TOPIC_CORRUPT)?;
         let mut state_next = input.state.unwrap_or(state_now);
         if !transition_allowed(state_now, state_next) {
-            return Err("invalid_transition".into());
+            return Err(crate::error_codes::INVALID_TRANSITION.into());
         }
         let mut parser_version = parser_now;
         if let Some(time) = &input.time {
@@ -844,15 +854,15 @@ pub fn update(
                  AND json_extract(source_ref,'$.id')=?1",
                 params![&input.id, now],
             )
-            .map_err(|_| "storage_write_failed")?;
+            .map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED)?;
         }
         let closed_at = if terminal { Some(now) } else { None };
         let revision_next = revision
             .checked_add(1)
-            .ok_or("loop_revision_conflict".to_string())?;
+            .ok_or(crate::error_codes::LOOP_REVISION_CONFLICT.to_string())?;
         // An edited plan can invalidate any member of a multi-source pattern.
         // Withdraw conservatively rather than leave a stale aggregate visible.
-        tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='pattern' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|"storage_write_failed")?;
+        tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='pattern' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|crate::error_codes::STORAGE_WRITE_FAILED)?;
         let changed = tx.execute(
             "UPDATE soul_open_loops SET revision=?2, content=?3, starts_at=?4, ends_at=?5, time_expression=?6, time_baseline=?7, timezone=?8, parser_version=?9, state=?10, closed_at=?11, updated_at=?12 WHERE id=?13 AND revision=?14",
             params![
@@ -860,9 +870,9 @@ pub fn update(
                 parser_version, state_to_sql(state_next), closed_at, now, &input.id, revision
             ],
         )
-        .map_err(|_| "storage_write_failed")?;
+        .map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED)?;
         if changed != 1 {
-            return Err("loop_revision_conflict".into());
+            return Err(crate::error_codes::LOOP_REVISION_CONFLICT.into());
         }
         Ok(())
     })?;
@@ -890,19 +900,19 @@ pub fn purge_for_source(conn: &mut Connection, source_id: &str, now: i64) -> Res
              AND json_extract(source_ref,'$.id')=?2",
             params![now, source_id],
         )
-        .map_err(|_| "ledger_unreadable".to_string())?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         let candidates = tx
             .execute(
                 "DELETE FROM soul_candidates WHERE json_extract(source_ref,'$.id')=?1",
                 params![source_id],
             )
-            .map_err(|_| "storage_write_failed".to_string())?;
+            .map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED.to_string())?;
         let loops = tx
             .execute(
                 "DELETE FROM soul_open_loops WHERE json_extract(source_ref,'$.id')=?1",
                 params![source_id],
             )
-            .map_err(|_| "storage_write_failed".to_string())?;
+            .map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED.to_string())?;
         Ok(candidates as u64 + loops as u64)
     })
 }
@@ -1031,7 +1041,7 @@ mod tests {
         let id = pending_ids(&conn).remove(0);
         assert_eq!(
             review(&mut conn, &id, CandidateStatus::Approved).unwrap_err(),
-            "open_loop_limit"
+            crate::error_codes::OPEN_LOOP_LIMIT
         );
         assert_eq!(pending_ids(&conn).as_slice(), [id.as_str()]);
         conn.execute("UPDATE soul_open_loops SET state='closed' WHERE id='0'", [])
@@ -1195,7 +1205,7 @@ mod tests {
             300,
         )
         .unwrap_err();
-        assert_eq!(error, "loop_revision_conflict");
+        assert_eq!(error, crate::error_codes::LOOP_REVISION_CONFLICT);
         let item = list(&conn, None).unwrap();
         assert_eq!(item.len(), 1);
         assert_eq!(item[0].content, "我打算整理仓库");
@@ -1314,7 +1324,7 @@ mod tests {
             400,
         )
         .unwrap_err();
-        assert_eq!(error, "invalid_loop_time");
+        assert_eq!(error, crate::error_codes::INVALID_LOOP_TIME);
         // Content-only edits bump revision and keep everything else.
         let renamed = update(
             &mut conn,

@@ -1,9 +1,9 @@
 import { MemoryHistory } from "./MemoryHistory";
 import type { ComponentProps } from "react";
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { toUserMessage } from "../../lib/errors";
 import { useToast } from "../../components/feedback/toastStore";
+import { runCommand } from "../app/appRuntime";
 import {
   MemoryItem,
   MemoryRelation,
@@ -11,12 +11,6 @@ import {
   MEMORY_TYPE_LABELS,
   MEMORY_SOURCE_LABELS,
 } from "./memoryTypes";
-
-const isTauriRuntime = "__TAURI_INTERNALS__" in window;
-
-function runCommand<T>(command: string, args?: Record<string, unknown>) {
-  return isTauriRuntime ? invoke<T>(command, args) : Promise.resolve({} as T);
-}
 
 function formatDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleString("zh-CN");
@@ -49,7 +43,7 @@ function MemoryDetailEditor({
   const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
-    void runCommand<MemoryRelation[]>("get_memory_relations", {
+    void runCommand("get_memory_relations", {
       memoryId: memory.id,
     })
       .then(setRelations)
@@ -63,7 +57,7 @@ function MemoryDetailEditor({
 
   async function handleSave() {
     try {
-      const updated = await runCommand<MemoryItem>("update_memory", {
+      const updated = await runCommand("update_memory", {
         id: memory.id,
         input: { title: editTitle, content: editContent },
       });
@@ -92,7 +86,7 @@ function MemoryDetailEditor({
       await runCommand(memory.isPinned ? "unpin_memory" : "pin_memory", {
         id: memory.id,
       });
-      const updated = await runCommand<MemoryItem>("get_memory_detail", {
+      const updated = await runCommand("get_memory_detail", {
         id: memory.id,
       });
       onUpdated?.(updated);

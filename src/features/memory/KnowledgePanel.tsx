@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../../generated/ipc";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toUserMessage } from "../../lib/errors";
 import "./knowledge.css";
@@ -29,8 +29,6 @@ type Hit = {
   content: string;
   score: number;
 };
-type ImportReport = { imported: number; unchanged: number; errors: string[] };
-type IndexReport = { indexed: number; remaining: number };
 const defaults: Settings = {
   enabled: false,
   endpoint: "http://localhost:11434/v1/embeddings",
@@ -57,14 +55,14 @@ export function KnowledgePanel() {
   const stop = useRef(false);
 
   async function load() {
-    setDocuments(await invoke<Document[]>("knowledge_list_documents"));
+    setDocuments(await invokeCommand("knowledge_list_documents", {}));
   }
   useEffect(() => {
     if (!desktop) return;
     let disposed = false;
     void Promise.all([
-      invoke<Document[]>("knowledge_list_documents"),
-      invoke<Settings>("knowledge_get_settings"),
+      invokeCommand("knowledge_list_documents", {}),
+      invokeCommand("knowledge_get_settings", {}),
     ])
       .then(([docs, config]) => {
         if (!disposed) {
@@ -99,7 +97,7 @@ export function KnowledgePanel() {
   }
   async function importPaths(paths: string[], projectScope = scope.trim()) {
     setImportErrors([]);
-    const report = await invoke<ImportReport>("knowledge_import", {
+    const report = await invokeCommand("knowledge_import", {
       paths,
       scope: projectScope,
     });
@@ -136,7 +134,7 @@ export function KnowledgePanel() {
       stop.current = false;
       let total = 0;
       do {
-        const result = await invoke<IndexReport>("knowledge_reindex");
+        const result = await invokeCommand("knowledge_reindex", {});
         total += result.indexed;
         setMessage(`本次已索引 ${total} 个片段，剩余 ${result.remaining} 个。`);
         if (result.remaining === 0 || result.indexed === 0) break;
@@ -194,10 +192,7 @@ export function KnowledgePanel() {
         onSubmit={(e) => {
           e.preventDefault();
           void perform("搜索", async () => {
-            const result = await invoke<{
-              hits: Hit[];
-              warning: string | null;
-            }>("knowledge_search", { query, scope: scope.trim() || null });
+            const result = await invokeCommand("knowledge_search", { query, scope: scope.trim() || null });
             setHits(result.hits);
             setSearched(true);
             if (result.warning) setMessage(result.warning);
@@ -298,7 +293,7 @@ export function KnowledgePanel() {
                   )
                     return;
                   void perform("删除", async () => {
-                    await invoke("knowledge_delete_document", { id: doc.id });
+                    await invokeCommand("knowledge_delete_document", { id: doc.id });
                     setHits([]);
                     setSearched(false);
                     await load();
@@ -323,7 +318,7 @@ export function KnowledgePanel() {
           onSubmit={(e) => {
             e.preventDefault();
             void perform("保存设置", async () => {
-              const saved = await invoke<Settings>("knowledge_save_settings", {
+              const saved = await invokeCommand("knowledge_save_settings", {
                 input: settings,
                 apiKeyUpdate: clearKey ? "" : key || null,
               });

@@ -65,7 +65,7 @@ export function usePreferenceDrafts(settings: AppSettings) {
     // update_preferences 是整组替换，必须带上组内全部字段，不能只传改动的那个。
     preferencesSave.schedule(
       () =>
-        runCommand<AppSettings>(
+        runCommand(
           "update_preferences",
           { input: next },
           {
@@ -73,7 +73,7 @@ export function usePreferenceDrafts(settings: AppSettings) {
             ...next,
             ai: settings.ai,
           },
-        ),
+        ) as Promise<AppSettings>,
       {
         rollback: () => {
           const saved = savedPreferencesRef.current;
@@ -99,7 +99,7 @@ export function usePreferenceDrafts(settings: AppSettings) {
     }
     rhythmSave.schedule(
       () =>
-        runCommand<AppSettings>(
+        runCommand(
           "update_work_rhythm_preferences",
           { input: next },
           {
@@ -107,7 +107,7 @@ export function usePreferenceDrafts(settings: AppSettings) {
             ...next,
             ai: settings.ai,
           },
-        ),
+        ) as Promise<AppSettings>,
       {
         rollback: () => {
           const saved = savedWorkRhythmRef.current;

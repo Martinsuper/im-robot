@@ -117,13 +117,13 @@ export function RecordsTab() {
    */
   const loadMemos = useCallback(async () => {
     try {
-      const items = await runCommand<Memo[]>(
+      const items = await runCommand(
         "list_memos",
         undefined,
         undefined,
       );
       setMemos((current) => {
-        if (isTauriRuntime || items?.length) return items ?? [];
+        if (isTauriRuntime || items?.length) return (items ?? []) as Memo[];
         return current.length ? current : previewMemos();
       });
       setMemosError("");
@@ -134,7 +134,7 @@ export function RecordsTab() {
 
   const loadMemories = useCallback(async () => {
     try {
-      const items = await runCommand<MemoryItem[]>(
+      const items = await runCommand(
         "list_memories",
         { input: { status: "active", limit: 100 } },
         [],
@@ -150,7 +150,7 @@ export function RecordsTab() {
 
   const loadChatHistory = useCallback(async () => {
     try {
-      const items = await runCommand<ChatHistoryEntry[]>(
+      const items = await runCommand(
         "list_chat_history",
         undefined,
         isTauriRuntime ? undefined : previewChatHistory(),

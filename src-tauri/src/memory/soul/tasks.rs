@@ -95,7 +95,7 @@ fn queue_task_reminder_local(
         .and_then(|record| i64::try_from(record.updated_at).ok())
         .and_then(|unix| next_nine_in_zone(unix, &chrono::Local));
     if due.is_none() {
-        return Err("invalid_task_time".into());
+        return Err(crate::error_codes::INVALID_TASK_TIME.into());
     }
     queue_task_reminder_at(conn, records, request_id, offset, now, due)
 }
@@ -134,14 +134,14 @@ fn queue_task_reminder_at(
             "INSERT INTO soul_task_links VALUES(?1,?2) ON CONFLICT(task_id) DO NOTHING",
             params![request_id, root],
         )
-        .map_err(|_| "ledger_write_failed")?;
+        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         if matches!(record.status.as_str(), "completed" | "cancelled") {
             tx.execute(
                 "UPDATE soul_task_followups SET state='resolved',updated_at=?2 WHERE root_id=?1",
                 params![root, now],
             )
-            .map_err(|_| "ledger_write_failed")?;
-            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE dedupe_key=?1 AND state IN ('pending','dispatching','shown')",params![format!("task:{root}"),now]).map_err(|_| "ledger_write_failed")?;
+            .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE dedupe_key=?1 AND state IN ('pending','dispatching','shown')",params![format!("task:{root}"),now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
             return Ok(());
         }
         let Some(mut candidate) = task_candidate(records, request_id, offset) else {
@@ -159,13 +159,13 @@ fn queue_task_reminder_at(
                 |r| r.get::<_, bool>(0),
             )
             .optional()
-            .map_err(|_| "ledger_unreadable")?
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
             .unwrap_or(false);
         if resolved {
             return Ok(());
         }
-        tx.execute("INSERT INTO soul_task_followups(root_id,task_id,state,updated_at) VALUES(?1,?2,'needs_check',?3) ON CONFLICT(root_id) DO UPDATE SET task_id=excluded.task_id,updated_at=excluded.updated_at",params![root,request_id,now]).map_err(|_| "ledger_write_failed")?;
-        let baseline=tx.query_row("SELECT max(value) FROM (SELECT coalesce(enabled_since,0) AS value FROM soul_control UNION ALL SELECT cleared_through FROM soul_domain_baselines WHERE domain='proactive')",[],|r|r.get::<_,Option<i64>>(0)).map_err(|_| "ledger_unreadable")?.unwrap_or(0);
+        tx.execute("INSERT INTO soul_task_followups(root_id,task_id,state,updated_at) VALUES(?1,?2,'needs_check',?3) ON CONFLICT(root_id) DO UPDATE SET task_id=excluded.task_id,updated_at=excluded.updated_at",params![root,request_id,now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+        let baseline=tx.query_row("SELECT max(value) FROM (SELECT coalesce(enabled_since,0) AS value FROM soul_control UNION ALL SELECT cleared_through FROM soul_domain_baselines WHERE domain='proactive')",[],|r|r.get::<_,Option<i64>>(0)).map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?.unwrap_or(0);
         if i64::try_from(record.updated_at).unwrap_or(0) < baseline || candidate.expires_at <= now {
             return Ok(());
         };
@@ -472,13 +472,13 @@ pub fn reply_context(conn: &Connection, id: &str) -> Result<ReplyContext, String
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
-        .map_err(|_| "ledger_unreadable")?;
-    let (source, template, state) = row.ok_or("message_missing")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
+    let (source, template, state) = row.ok_or(crate::error_codes::MESSAGE_MISSING)?;
     if !matches!(state.as_str(), "shown" | "responded") {
-        return Err("message_inactive".into());
+        return Err(crate::error_codes::MESSAGE_INACTIVE.into());
     }
     let source: model::SourceRef =
-        serde_json::from_str(&source).map_err(|_| "ledger_unreadable")?;
+        serde_json::from_str(&source).map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     let verification_of = if template == "task_interrupted" {
         Some(
             conn.query_row(
@@ -487,7 +487,7 @@ pub fn reply_context(conn: &Connection, id: &str) -> Result<ReplyContext, String
                 |r| r.get::<_, String>(0),
             )
             .optional()
-            .map_err(|_| "ledger_unreadable")?
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
             .ok_or("task_missing")?,
         )
     } else {
@@ -509,14 +509,14 @@ pub fn resolve(conn: &mut Connection, task_id: &str, now: i64) -> Result<(), Str
                 |r| r.get::<_, String>(0),
             )
             .optional()
-            .map_err(|_| "ledger_unreadable")?
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
             .ok_or("task_missing")?;
         tx.execute(
             "UPDATE soul_task_followups SET state='resolved',updated_at=?2 WHERE root_id=?1",
             params![root, now],
         )
-        .map_err(|_| "ledger_write_failed")?;
-        tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE dedupe_key=?1 AND state IN ('pending','dispatching','shown')",params![format!("task:{root}"),now]).map_err(|_| "ledger_write_failed")?;
+        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+        tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE dedupe_key=?1 AND state IN ('pending','dispatching','shown')",params![format!("task:{root}"),now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         Ok(())
     })
 }

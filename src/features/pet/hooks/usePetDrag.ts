@@ -89,7 +89,7 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     moveQueue.current = moveQueue.current
       .then(async () => {
         if (gesture.current !== activeGesture) return;
-        const [x, y] = await runCommand<[number, number]>("move_pet", {
+        const [x, y] = await runCommand("move_pet", {
           ...petPos.current,
           snapInsets: visualInsets.current,
         });
@@ -111,7 +111,7 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
           moveVersion.current !== version
         )
           return;
-        const [actualX, actualY] = await runCommand<[number, number]>(
+        const [actualX, actualY] = await runCommand(
           "move_pet",
           requested,
         );
@@ -227,7 +227,7 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     moveQueue.current = moveQueue.current
       .then(() => {
         if (gesture.current !== activeGesture) return;
-        return runCommand<[number, number]>("get_pet_position", undefined, [
+        return runCommand("get_pet_position", undefined, [
           petPos.current.x,
           petPos.current.y,
         ]);

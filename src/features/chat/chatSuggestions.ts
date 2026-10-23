@@ -9,26 +9,55 @@
 
 export interface Suggestion {
   label: string;
+  description: string;
   /** 点击后填入输入框的内容（**不自动发送**，02 §11）。 */
   prompt: string;
 }
 
 const MORNING: Suggestion[] = [
-  { label: "梳理今天", prompt: "帮我梳理一下今天要做的事" },
-  { label: "安排提醒", prompt: "提醒我 10 分钟后喝水" },
-  { label: "看看安排", prompt: "今天有什么安排" },
+  {
+    label: "梳理今天",
+    description: "理清今天的优先事项",
+    prompt: "帮我梳理一下今天要做的事",
+  },
+  {
+    label: "安排提醒",
+    description: "让重要的小事不遗漏",
+    prompt: "提醒我 10 分钟后喝水",
+  },
+  {
+    label: "看看安排",
+    description: "接下来，一目了然",
+    prompt: "今天有什么安排",
+  },
 ];
 
 const AFTERNOON: Suggestion[] = [
-  { label: "整理想法", prompt: "帮我整理这段文字的重点：" },
-  { label: "记一笔", prompt: "帮我记一件事：" },
-  { label: "看看安排", prompt: "今天还有什么安排" },
+  {
+    label: "整理想法",
+    description: "把零散想法变清晰",
+    prompt: "帮我整理这段文字的重点：",
+  },
+  { label: "记一笔", description: "留住此刻的灵感", prompt: "帮我记一件事：" },
+  {
+    label: "看看安排",
+    description: "接下来，一目了然",
+    prompt: "今天还有什么安排",
+  },
 ];
 
 const EVENING: Suggestion[] = [
-  { label: "回顾今天", prompt: "帮我回顾一下今天做了什么" },
-  { label: "记一笔", prompt: "帮我记一件事：" },
-  { label: "随便聊聊", prompt: "陪我聊一会儿吧" },
+  {
+    label: "回顾今天",
+    description: "看看今天的收获",
+    prompt: "帮我回顾一下今天做了什么",
+  },
+  { label: "记一笔", description: "留住此刻的灵感", prompt: "帮我记一件事：" },
+  {
+    label: "随便聊聊",
+    description: "轻松聊聊，放松一下",
+    prompt: "陪我聊一会儿吧",
+  },
 ];
 
 export function suggestionsFor(reference: Date = new Date()): Suggestion[] {

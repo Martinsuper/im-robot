@@ -50,7 +50,7 @@ pub(crate) fn update_quiet_mode(app: AppHandle, quiet_mode: String) -> Result<Ap
 pub(crate) fn update_language(app: AppHandle, language: String) -> Result<AppSettings, String> {
     let _transaction = storage::transaction();
     if !["zh-CN", "en-US", "ja-JP"].contains(&language.as_str()) {
-        return Err("unsupported_language".to_string());
+        return Err(crate::error_codes::UNSUPPORTED_LANGUAGE.to_string());
     }
     let mut settings = read_settings(&app);
     settings.language = language;

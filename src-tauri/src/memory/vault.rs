@@ -1208,13 +1208,23 @@ pub async fn memory_vault_resolve(
     })
     .await
     .map_err(|_| "Markdown 冲突处理失败")??;
-    if let Some(item) = app.state::<Arc<MemoryDb>>().get(&cleanup_id)? {
-        if item.status == MemoryStatus::Deleted {
-            if let Ok(mut conn) = app.state::<Arc<MemoryDb>>().0.lock() {
-                let _ =
-                    super::soul::lifecycle::delete_sources(&mut conn, &[cleanup_id], now() as i64);
+    {
+        let db = Arc::clone(app.state::<Arc<MemoryDb>>().inner());
+        crate::common::on_blocking(move || {
+            if let Some(item) = db.get(&cleanup_id)? {
+                if item.status == MemoryStatus::Deleted {
+                    if let Ok(mut conn) = db.0.lock() {
+                        let _ = super::soul::lifecycle::delete_sources(
+                            &mut conn,
+                            &[cleanup_id],
+                            now() as i64,
+                        );
+                    }
+                }
             }
-        }
+            Ok(())
+        })
+        .await?;
     }
     let _ = app.emit("memories-updated", ());
     emit_updates(&app, &report);

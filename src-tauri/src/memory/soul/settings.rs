@@ -31,13 +31,13 @@ fn category_policy() -> Vec<CategorySetting> {
 
 fn enabled_map(raw: &str) -> Result<serde_json::Map<String, Value>, String> {
     let value: Vec<Value> =
-        serde_json::from_str(raw).map_err(|_| "ledger_unreadable".to_string())?;
+        serde_json::from_str(raw).map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
     let mut map = serde_json::Map::new();
     for entry in value {
         let name = entry
             .get("category")
             .and_then(Value::as_str)
-            .ok_or("ledger_unreadable")?;
+            .ok_or(crate::error_codes::LEDGER_UNREADABLE)?;
         let enabled = entry
             .get("enabled")
             .and_then(Value::as_bool)
@@ -64,7 +64,7 @@ pub fn get(conn: &mut Connection, now: i64) -> Result<SoulSettings, String> {
                 },
             )
             .optional()
-            .map_err(|_| "ledger_unreadable".to_string())?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         let (revision, enabled, paused, enabled_since, category_settings) = match row {
             Some(values) => values,
             None => {
@@ -80,14 +80,14 @@ pub fn get(conn: &mut Connection, now: i64) -> Result<SoulSettings, String> {
                         })
                     })
                     .collect();
-                let stored_json =
-                    serde_json::to_string(&stored).map_err(|_| "invalid_settings".to_string())?;
+                let stored_json = serde_json::to_string(&stored)
+                    .map_err(|_| crate::error_codes::INVALID_SETTINGS.to_string())?;
                 tx.execute(
                     "INSERT INTO soul_control(singleton,revision,enabled,paused,enabled_since,cleared_through,category_settings)
                      VALUES(1,1,0,0,?1,0,?2)",
                     rusqlite::params![now, stored_json],
                 )
-                .map_err(|_| "ledger_write_failed".to_string())?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 (1, 0, 0, Some(now), stored_json)
             }
         };
@@ -106,7 +106,7 @@ pub fn get(conn: &mut Connection, now: i64) -> Result<SoulSettings, String> {
                     |r| r.get::<_, i64>(0),
                 )
                 .optional()
-                .map_err(|_| "ledger_unreadable")?;
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
             categories.push(CategorySetting {
                 enabled,
                 enabled_since,
@@ -119,7 +119,7 @@ pub fn get(conn: &mut Connection, now: i64) -> Result<SoulSettings, String> {
                 [],
                 |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
             )
-            .map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         Ok(SoulSettings {
             revision,
             enabled: enabled == 1,
@@ -155,13 +155,13 @@ pub fn update(
                 },
             )
             .optional()
-            .map_err(|_| "ledger_unreadable".to_string())?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         let Some((revision, enabled_old, paused_old, enabled_since_old, category_settings)) = row
         else {
-            return Err("control_missing".into());
+            return Err(crate::error_codes::CONTROL_MISSING.into());
         };
         if input.expected_revision != revision {
-            return Err("revision_conflict".into());
+            return Err(crate::error_codes::REVISION_CONFLICT.into());
         }
         let enabled_old = enabled_old == 1;
         let paused_old = paused_old == 1;
@@ -173,15 +173,15 @@ pub fn update(
                 let name = serde_json::to_value(toggle.category)
                     .ok()
                     .and_then(|value| value.as_str().map(|s| s.to_string()))
-                    .ok_or("invalid_settings")?;
+                    .ok_or(crate::error_codes::INVALID_SETTINGS)?;
                 let available = category_policy()
                     .iter()
                     .any(|policy| policy.category == toggle.category && policy.available);
                 if !available {
-                    return Err("capability_unavailable".into());
+                    return Err(crate::error_codes::CAPABILITY_UNAVAILABLE.into());
                 }
                 if toggle.enabled && stored.get(&name).and_then(Value::as_bool) != Some(true) {
-                    tx.execute("INSERT INTO soul_category_baselines VALUES(?1,?2) ON CONFLICT(category) DO UPDATE SET enabled_since=max(enabled_since,excluded.enabled_since)",rusqlite::params![name,now]).map_err(|_| "ledger_write_failed")?;
+                    tx.execute("INSERT INTO soul_category_baselines VALUES(?1,?2) ON CONFLICT(category) DO UPDATE SET enabled_since=max(enabled_since,excluded.enabled_since)",rusqlite::params![name,now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                 }
                 stored.insert(name, json!(toggle.enabled));
             }
@@ -193,19 +193,19 @@ pub fn update(
                     [],
                     |r| r.get(0),
                 )
-                .map_err(|_| "ledger_unreadable")?;
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
             if !was {
                 tx.execute("DELETE FROM soul_evolution_pauses", [])
-                    .map_err(|_| "ledger_write_failed")?;
+                    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                 tx.execute("DELETE FROM soul_evidence", [])
-                    .map_err(|_| "ledger_write_failed")?;
-                tx.execute("INSERT INTO soul_domain_baselines VALUES('evolution',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_|"ledger_write_failed")?;
+                    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                tx.execute("INSERT INTO soul_domain_baselines VALUES('evolution',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
             }
             tx.execute(
                 "UPDATE soul_control SET evolution_enabled=1 WHERE singleton=1",
                 [],
             )
-            .map_err(|_| "ledger_write_failed")?;
+            .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
         if input.mood_enabled == Some(true) {
             let was_enabled: bool = tx
@@ -214,38 +214,38 @@ pub fn update(
                     [],
                     |row| row.get(0),
                 )
-                .map_err(|_| "ledger_unreadable")?;
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
             if !was_enabled {
                 tx.execute("DELETE FROM soul_mood_snapshot", [])
-                    .map_err(|_| "ledger_write_failed")?;
+                    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                 tx.execute("DELETE FROM soul_events WHERE kind LIKE 'mood:%'", [])
-                    .map_err(|_| "ledger_write_failed")?;
-                tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| "ledger_write_failed")?;
+                    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
             }
             tx.execute(
                 "UPDATE soul_control SET mood_enabled=1 WHERE singleton=1",
                 [],
             )
-            .map_err(|_| "ledger_write_failed")?;
+            .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
         if input.mood_enabled == Some(false) {
             tx.execute(
                 "UPDATE soul_control SET mood_enabled=0 WHERE singleton=1",
                 [],
             )
-            .map_err(|_| "ledger_write_failed")?;
+            .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
             tx.execute("DELETE FROM soul_mood_snapshot", [])
-                .map_err(|_| "ledger_write_failed")?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
             tx.execute("DELETE FROM soul_events WHERE kind LIKE 'mood:%'", [])
-                .map_err(|_| "ledger_write_failed")?;
-            tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| "ledger_write_failed")?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+            tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
         if input.evolution_enabled == Some(false) {
             tx.execute(
                 "UPDATE soul_control SET evolution_enabled=0 WHERE singleton=1",
                 [],
             )
-            .map_err(|_| "ledger_write_failed")?;
+            .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
         let enabled_since = if (!enabled_old && enabled) || (paused_old && !paused) {
             Some(now)
@@ -265,19 +265,19 @@ pub fn update(
                     "category": name,
                     "enabled": value.as_bool().unwrap_or(false),
                 })).collect::<Vec<_>>())
-                .map_err(|_| "invalid_settings".to_string())?,
+                .map_err(|_| crate::error_codes::INVALID_SETTINGS.to_string())?,
                 revision,
             ],
         )
-        .map_err(|_| "ledger_write_failed".to_string())?;
+        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
         // Switches and revocation are one commit: a failed ledger write cannot
         // leave settings changed while visible/queued messages remain active.
         if !enabled || paused {
-            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE state IN ('pending','dispatching','shown')",[now]).map_err(|_| "ledger_write_failed")?;
+            tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE state IN ('pending','dispatching','shown')",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         } else if let Some(toggles) = &input.categories {
             for toggle in toggles.iter().filter(|toggle| !toggle.enabled) {
                 let name = serde_json::to_value(toggle.category).unwrap();
-                tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category=?2 AND state IN ('pending','dispatching','shown')",rusqlite::params![now,name.as_str().unwrap()]).map_err(|_| "ledger_write_failed")?;
+                tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category=?2 AND state IN ('pending','dispatching','shown')",rusqlite::params![now,name.as_str().unwrap()]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
             }
         }
         Ok(())
@@ -286,79 +286,79 @@ pub fn update(
 
 pub fn clear(conn: &mut Connection, scopes: &[SoulDataScope], now: i64) -> Result<(), String> {
     if scopes.is_empty() {
-        return Err("no_scope".into());
+        return Err(crate::error_codes::NO_SCOPE.into());
     }
     store::transaction(conn, |tx| {
         for scope in scopes {
             match scope {
                 SoulDataScope::Profile => {
                     tx.execute("DELETE FROM soul_evidence", [])
-                        .map_err(|_| "ledger_write_failed")?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                     tx.execute("DELETE FROM soul_candidates WHERE kind='evolution'", [])
-                        .map_err(|_| "ledger_write_failed")?;
-                    tx.execute("INSERT INTO soul_domain_baselines VALUES('evolution',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_|"ledger_write_failed")?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                    tx.execute("INSERT INTO soul_domain_baselines VALUES('evolution',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
                     tx.execute("DELETE FROM soul_profiles", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                     tx.execute("DELETE FROM soul_role_versions", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 }
                 SoulDataScope::OpenLoops => {
                     tx.execute("DELETE FROM soul_topic_responses", [])
-                        .map_err(|_| "ledger_write_failed")?;
-                    tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='pattern' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|"ledger_write_failed")?;
-                    tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('open_loops',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=excluded.cleared_through",[now]).map_err(|_| "ledger_write_failed")?;
-                    tx.execute("INSERT OR IGNORE INTO soul_candidate_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_candidates WHERE kind='open_loop'",[now]).map_err(|_| "ledger_write_failed")?;
-                    tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='open_loop' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_| "ledger_write_failed")?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                    tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='pattern' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
+                    tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('open_loops',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=excluded.cleared_through",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                    tx.execute("INSERT OR IGNORE INTO soul_candidate_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_candidates WHERE kind='open_loop'",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                    tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='open_loop' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                     tx.execute("DELETE FROM soul_open_loops", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                     tx.execute("DELETE FROM soul_candidates WHERE kind='open_loop'", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 }
                 SoulDataScope::Proactive => {
                     tx.execute("DELETE FROM soul_output_observations", [])
-                        .map_err(|_| "ledger_write_failed")?;
-                    tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('proactive',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=excluded.cleared_through",[now]).map_err(|_| "ledger_write_failed")?;
-                    tx.execute("INSERT OR IGNORE INTO soul_delivery_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_proactive_ledger",[now]).map_err(|_| "ledger_write_failed")?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                    tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('proactive',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=excluded.cleared_through",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                    tx.execute("INSERT OR IGNORE INTO soul_delivery_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_proactive_ledger",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                     tx.execute("DELETE FROM soul_proactive_ledger", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                     // Keep non-content quota/cooldown guards: clearing must never refund delivery.
                     tx.execute("DELETE FROM soul_backoff", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 }
                 SoulDataScope::Mood => {
-                    tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| "ledger_write_failed")?;
+                    tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES('mood',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                     tx.execute("DELETE FROM soul_mood_snapshot", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                     tx.execute(
                         "DELETE FROM soul_events WHERE kind='mood' OR kind LIKE 'mood:%'",
                         [],
                     )
-                    .map_err(|_| "ledger_write_failed".to_string())?;
+                    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 }
                 SoulDataScope::History => {
                     tx.execute("DELETE FROM soul_continuity_control", [])
-                        .map_err(|_| "ledger_write_failed")?;
-                    tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='milestone' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|"ledger_write_failed")?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                    tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='milestone' AND state IN ('pending','dispatching','shown')",[now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
                     tx.execute("DELETE FROM soul_history_baseline", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                     tx.execute("DELETE FROM soul_milestones", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                     tx.execute("DELETE FROM soul_events WHERE kind='milestone'", [])
-                        .map_err(|_| "ledger_write_failed".to_string())?;
+                        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 }
                 SoulDataScope::All => {
-                    tx.execute("UPDATE soul_desktop_control SET revision=revision+1,frequency='natural',excluded_apps='[]',model='' WHERE singleton=1", []).map_err(|_| "settings_write_failed")?;
-                    tx.execute_batch("DELETE FROM soul_topic_responses; DELETE FROM soul_continuity_control; DELETE FROM soul_evidence; DELETE FROM soul_evolution_pauses; DELETE FROM soul_output_observations; DELETE FROM soul_observation_sources;").map_err(|_|"ledger_write_failed")?;
+                    tx.execute("UPDATE soul_desktop_control SET revision=revision+1,frequency='natural',excluded_apps='[]',model='' WHERE singleton=1", []).map_err(|_| crate::error_codes::SETTINGS_WRITE_FAILED)?;
+                    tx.execute_batch("DELETE FROM soul_topic_responses; DELETE FROM soul_continuity_control; DELETE FROM soul_evidence; DELETE FROM soul_evolution_pauses; DELETE FROM soul_output_observations; DELETE FROM soul_observation_sources;").map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
                     for domain in ["open_loops", "proactive", "mood", "history"] {
-                        tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES(?1,?2) ON CONFLICT(domain) DO UPDATE SET cleared_through=excluded.cleared_through",rusqlite::params![domain,now]).map_err(|_| "ledger_write_failed")?;
+                        tx.execute("INSERT INTO soul_domain_baselines(domain,cleared_through) VALUES(?1,?2) ON CONFLICT(domain) DO UPDATE SET cleared_through=excluded.cleared_through",rusqlite::params![domain,now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                     }
-                    tx.execute("INSERT OR IGNORE INTO soul_delivery_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_proactive_ledger",[now]).map_err(|_| "ledger_write_failed")?;
-                    tx.execute("INSERT OR IGNORE INTO soul_candidate_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_candidates",[now]).map_err(|_| "ledger_write_failed")?;
+                    tx.execute("INSERT OR IGNORE INTO soul_delivery_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_proactive_ledger",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
+                    tx.execute("INSERT OR IGNORE INTO soul_candidate_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_candidates",[now]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                     tx.execute(
                         "UPDATE soul_task_followups SET state='resolved',updated_at=?1",
                         [now],
                     )
-                    .map_err(|_| "ledger_write_failed")?;
+                    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
                     tx.execute_batch(
                         "DELETE FROM soul_profiles; DELETE FROM soul_role_versions;
                          DELETE FROM soul_open_loops; DELETE FROM soul_candidates;
@@ -367,13 +367,13 @@ pub fn clear(conn: &mut Connection, scopes: &[SoulDataScope], now: i64) -> Resul
                          DELETE FROM soul_events; DELETE FROM soul_history_baseline;
                          DELETE FROM soul_milestones;",
                     )
-                    .map_err(|_| "ledger_write_failed".to_string())?;
+                    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                     // 清空即建立新基准：重启/重新开启都不扫描旧记录重建。
                     tx.execute(
                         "UPDATE soul_control SET enabled=0,paused=0,mood_enabled=0,evolution_enabled=0,revision=revision+1,enabled_since=?1, cleared_through=?1",
                         rusqlite::params![now],
                     )
-                    .map_err(|_| "ledger_write_failed".to_string())?;
+                    .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED.to_string())?;
                 }
             }
         }
@@ -507,7 +507,7 @@ mod tests {
         };
         assert_eq!(
             update(&mut conn, &input, 100).unwrap_err(),
-            "revision_conflict"
+            crate::error_codes::REVISION_CONFLICT
         );
         input.expected_revision = 1;
         input.categories = Some(vec![CategorySetting {
@@ -768,9 +768,9 @@ pub fn clear_category(
     now: i64,
 ) -> Result<(), String> {
     let name = serde_json::to_value(category)
-        .map_err(|_| "invalid_category")?
+        .map_err(|_| crate::error_codes::INVALID_CATEGORY)?
         .as_str()
-        .ok_or("invalid_category")?
+        .ok_or(crate::error_codes::INVALID_CATEGORY)?
         .to_string();
     store::transaction(conn, |tx| {
         if tx
@@ -778,23 +778,23 @@ pub fn clear_category(
                 "UPDATE soul_control SET revision=revision+1 WHERE singleton=1 AND revision=?1",
                 [revision],
             )
-            .map_err(|_| "ledger_write_failed")?
+            .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?
             != 1
         {
-            return Err("revision_conflict".into());
+            return Err(crate::error_codes::REVISION_CONFLICT.into());
         }
-        tx.execute("INSERT INTO soul_category_baselines VALUES(?1,?2) ON CONFLICT(category) DO UPDATE SET enabled_since=max(enabled_since,excluded.enabled_since)",rusqlite::params![name,now]).map_err(|_|"ledger_write_failed")?;
-        tx.execute("INSERT OR IGNORE INTO soul_delivery_tombstones SELECT dedupe_key,source_ref,?2 FROM soul_proactive_ledger WHERE category=?1",rusqlite::params![name,now]).map_err(|_|"ledger_write_failed")?;
+        tx.execute("INSERT INTO soul_category_baselines VALUES(?1,?2) ON CONFLICT(category) DO UPDATE SET enabled_since=max(enabled_since,excluded.enabled_since)",rusqlite::params![name,now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
+        tx.execute("INSERT OR IGNORE INTO soul_delivery_tombstones SELECT dedupe_key,source_ref,?2 FROM soul_proactive_ledger WHERE category=?1",rusqlite::params![name,now]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         tx.execute(
             "DELETE FROM soul_proactive_ledger WHERE category=?1",
             [&name],
         )
-        .map_err(|_| "ledger_write_failed")?;
+        .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         tx.execute("DELETE FROM soul_backoff WHERE category=?1", [&name])
-            .map_err(|_| "ledger_write_failed")?;
+            .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         if category == ProactiveCategory::OutputFeedback {
             tx.execute("DELETE FROM soul_output_observations", [])
-                .map_err(|_| "ledger_write_failed")?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
         Ok(())
     })

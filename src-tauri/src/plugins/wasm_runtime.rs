@@ -50,12 +50,12 @@ fn module_path(directory: &Path, name: &str) -> Result<PathBuf, String> {
             .components()
             .any(|c| !matches!(c, std::path::Component::Normal(_)))
     {
-        return Err("wasm_module_path_invalid".into());
+        return Err(crate::error_codes::WASM_MODULE_PATH_INVALID.into());
     }
     let root = directory.canonicalize().map_err(|e| e.to_string())?;
     let module = root.join(name).canonicalize().map_err(|e| e.to_string())?;
     if !module.starts_with(&root) || module.extension().and_then(|s| s.to_str()) != Some("wasm") {
-        return Err("wasm_module_outside_plugin".into());
+        return Err(crate::error_codes::WASM_MODULE_OUTSIDE_PLUGIN.into());
     }
     Ok(module)
 }
@@ -63,7 +63,7 @@ impl Runtime {
     fn module(&self, path: &Path) -> Result<Module, String> {
         let metadata = std::fs::metadata(path).map_err(|e| e.to_string())?;
         if !metadata.is_file() || metadata.len() > MAX_MODULE {
-            return Err("wasm_module_too_large".into());
+            return Err(crate::error_codes::WASM_MODULE_TOO_LARGE.into());
         }
         let modified = metadata.modified().ok();
         let mut cache = self.modules.lock().map_err(|e| e.to_string())?;
@@ -81,7 +81,7 @@ impl Runtime {
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
         if bytes.len() as u64 > MAX_MODULE {
-            return Err("wasm_module_too_large".into());
+            return Err(crate::error_codes::WASM_MODULE_TOO_LARGE.into());
         }
         let module = Module::new(&self.engine, bytes).map_err(|e| e.to_string())?;
         if cache.len() >= 16 {
@@ -104,14 +104,14 @@ pub(super) fn execute(
     input: Vec<u8>,
 ) -> Result<(String, String), String> {
     if input.len() > MAX_INPUT {
-        return Err("wasm_input_too_large".into());
+        return Err(crate::error_codes::WASM_INPUT_TOO_LARGE.into());
     }
     if crate::background::SUPERVISOR
         .statuses()
         .iter()
         .any(|s| s.name == "wasm-epoch-clock" && s.state != "running")
     {
-        return Err("wasm_runtime_stopped".into());
+        return Err(crate::error_codes::WASM_RUNTIME_STOPPED.into());
     }
     let runtime = RUNTIME.as_ref().map_err(Clone::clone)?;
     let module = runtime.module(&module_path(directory, name)?)?;

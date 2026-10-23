@@ -19,7 +19,7 @@ pub fn register_preview(
         if !proactive::event_allowed(tx, ProactiveCategory::OutputFeedback, now)? {
             return Ok(());
         }
-        tx.execute("INSERT INTO soul_output_observations(output_id,created_at,output_kind,source_ref,owner_window) VALUES(?1,?2,'html',?3,?4) ON CONFLICT DO NOTHING",params![id,now,serde_json::to_string(&SourceRef{kind:"chat_session".into(),id:source.into(),revision:1}).unwrap(),owner]).map_err(|_|"ledger_write_failed")?;
+        tx.execute("INSERT INTO soul_output_observations(output_id,created_at,output_kind,source_ref,owner_window) VALUES(?1,?2,'html',?3,?4) ON CONFLICT DO NOTHING",params![id,now,serde_json::to_string(&SourceRef{kind:"chat_session".into(),id:source.into(),revision:1}).unwrap(),owner]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         Ok(())
     })
 }
@@ -32,17 +32,20 @@ pub fn visible(
     now: i64,
     mono: Instant,
 ) -> Result<(), String> {
-    let mut timers = registry.0.lock().map_err(|_| "visibility_unavailable")?;
+    let mut timers = registry
+        .0
+        .lock()
+        .map_err(|_| crate::error_codes::VISIBILITY_UNAVAILABLE)?;
     if !is_visible {
         timers.remove(id);
         return Ok(());
     }
-    let row:Option<(String,String,i64)>=conn.query_row("SELECT owner_window,source_ref,created_at FROM soul_output_observations WHERE output_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|_|"ledger_unreadable")?;
+    let row:Option<(String,String,i64)>=conn.query_row("SELECT owner_window,source_ref,created_at FROM soul_output_observations WHERE output_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|_|crate::error_codes::LEDGER_UNREADABLE)?;
     let Some((expected, raw, created)) = row else {
         return Ok(());
     };
     if expected != owner {
-        return Err("receipt_source_invalid".into());
+        return Err(crate::error_codes::RECEIPT_SOURCE_INVALID.into());
     }
     let (_, start, last) = timers
         .entry(id.into())
@@ -54,7 +57,7 @@ pub fn visible(
     if mono.saturating_duration_since(*start) < Duration::from_secs(60) {
         return Ok(());
     }
-    let source = serde_json::from_str(&raw).map_err(|_| "invalid_source")?;
+    let source = serde_json::from_str(&raw).map_err(|_| crate::error_codes::INVALID_SOURCE)?;
     emit_output(conn, id, &source, "viewed", created, now)?;
     timers.remove(id);
     Ok(())
@@ -68,7 +71,7 @@ pub fn emit_output(
     now: i64,
 ) -> Result<(), String> {
     if !matches!(evidence, "viewed" | "favorited") {
-        return Err("invalid_evidence".into());
+        return Err(crate::error_codes::INVALID_EVIDENCE.into());
     }
     store::transaction(conn, |tx| {
         if !proactive::event_allowed(tx, ProactiveCategory::OutputFeedback, created)? {
@@ -80,11 +83,11 @@ pub fn emit_output(
                 [&source.id],
                 |r| r.get(0),
             )
-            .map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         if deleted {
             return Ok(());
         }
-        tx.execute("UPDATE soul_output_observations SET observed_at=?2,evidence_kind=?3 WHERE output_id=?1 AND observed_at IS NULL",params![id,now,evidence]).map_err(|_|"ledger_write_failed")?;
+        tx.execute("UPDATE soul_output_observations SET observed_at=?2,evidence_kind=?3 WHERE output_id=?1 AND observed_at IS NULL",params![id,now,evidence]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
         proactive::queue(
             tx,
             ProactiveMessage {
@@ -199,7 +202,7 @@ pub fn produce_local(conn: &mut Connection, now: i64) -> Result<(), String> {
                     |r| r.get(0),
                 )
                 .optional()
-                .map_err(|_| "ledger_unreadable")?
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
                 .unwrap_or(0);
             // Historical topics are not scanned into fresh observations after enabling.
             let mut recent = false;
@@ -210,7 +213,7 @@ pub fn produce_local(conn: &mut Connection, now: i64) -> Result<(), String> {
                         params![topic.id, baseline, now],
                         |r| r.get::<_, bool>(0),
                     )
-                    .map_err(|_| "ledger_unreadable")?;
+                    .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
             }
             if !recent {
                 continue;
@@ -221,7 +224,7 @@ pub fn produce_local(conn: &mut Connection, now: i64) -> Result<(), String> {
                     "INSERT INTO soul_observation_sources VALUES(?1,?2) ON CONFLICT DO NOTHING",
                     params![id, topic.source.id],
                 )
-                .map_err(|_| "ledger_write_failed")?;
+                .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
             }
             proactive::queue(
                 tx,

@@ -44,7 +44,7 @@ export function VersionSettings() {
     setChecking(true);
     setDownloadedPath("");
     try {
-      const result = await runCommand<UpdateStatus>(
+      const result = await runCommand(
         "check_for_updates_extended",
         undefined,
         {
@@ -81,7 +81,7 @@ export function VersionSettings() {
     setProgress(undefined);
     setDownloadedPath("");
     try {
-      const result = await runCommand<{ filePath: string; fileName: string }>(
+      const result = await runCommand(
         "download_update_asset",
         {
           downloadUrl: release.downloadUrl,

@@ -1,6 +1,5 @@
 import { useStableEvent } from "../../hooks/useStableEvent";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   MemoryItem,
@@ -10,7 +9,6 @@ import {
   FeedbackInput,
   MemoryCandidate,
   ReflectionSummary,
-  MemoryExport,
   MEMORY_TYPE_OPTIONS,
 } from "./memoryTypes";
 import { MemoryVaultPanel } from "./MemoryVaultPanel";
@@ -19,19 +17,11 @@ import { MemoryExtractionControls } from "./MemoryExtractionControls";
 import { OpenLoopReview } from "../soul/OpenLoopReview";
 import { MemoryCard } from "./MemoryCard";
 import { MemoryDetail } from "./MemoryDetail";
-import { runCommandAndRefresh } from "../app/appRuntime";
+import { isTauriRuntime, runCommand, runCommandAndRefresh } from "../app/appRuntime";
 import { toUserMessage } from "../../lib/errors";
 import { EmptyState, ErrorState } from "../../components/feedback/States";
 import { useToast } from "../../components/feedback/toastStore";
 import { useTranslation } from "../i18n/I18nProvider";
-
-const isTauriRuntime = "__TAURI_INTERNALS__" in window;
-
-function runCommand<T>(command: string, args?: Record<string, unknown>) {
-  return isTauriRuntime
-    ? invoke<T>(command, args)
-    : Promise.resolve([] as unknown as T);
-}
 
 export function MemoryCenter() {
   const [memories, setMemories] = useState<MemoryItem[]>([]);
@@ -73,7 +63,7 @@ export function MemoryCenter() {
       memoryType: filterType !== "all" ? filterType : undefined,
     };
     try {
-      const items = await runCommand<MemoryItem[]>("list_memories", { input });
+      const items = await runCommand("list_memories", { input }, []);
       setMemories(items);
       setListError("");
     } catch (error) {
@@ -84,9 +74,13 @@ export function MemoryCenter() {
 
   async function loadRecent() {
     try {
-      const items = await runCommand<MemoryItem[]>("get_recent_memories", {
-        limit: 20,
-      });
+      const items = await runCommand(
+        "get_recent_memories",
+        {
+          limit: 20,
+        },
+        [],
+      );
       setMemories(items);
       setListError("");
     } catch (error) {
@@ -97,9 +91,10 @@ export function MemoryCenter() {
 
   async function loadPending() {
     try {
-      const items = await runCommand<MemoryCandidate[]>(
+      const items = await runCommand(
         "get_pending_candidates",
         {},
+        [],
       );
       setPendingCandidates(items);
       setPendingError("");
@@ -111,11 +106,12 @@ export function MemoryCenter() {
 
   async function loadSummaries() {
     try {
-      const items = await runCommand<ReflectionSummary[]>(
+      const items = await runCommand(
         "get_memory_summaries",
         {
           limit: 5,
         },
+        [],
       );
       setSummaries(items);
       setSummariesError("");
@@ -153,9 +149,13 @@ export function MemoryCenter() {
       limit: 30,
     };
     try {
-      const items = await runCommand<MemoryItem[]>("search_memories", {
-        input,
-      });
+      const items = await runCommand(
+        "search_memories",
+        {
+          input,
+        },
+        [],
+      );
       setMemories(items);
       setListError("");
     } catch (error) {
@@ -290,7 +290,12 @@ export function MemoryCenter() {
 
   async function handleExport() {
     try {
-      const data = await runCommand<MemoryExport>("export_memories", {});
+      const data = await runCommand("export_memories", {}, {
+        version: "",
+        exportedAt: 0,
+        memories: [],
+        relations: [],
+      });
       const json = JSON.stringify(data, null, 2);
       await navigator.clipboard.writeText(json);
       toast.success(t("memory.export.copied"));

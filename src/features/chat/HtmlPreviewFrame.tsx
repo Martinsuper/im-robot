@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- preview parsing helpers are intentionally colocated with the renderer */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Code, Copy, Check, ExternalLink, Eye, Star } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../../generated/ipc";
 import { isTauriRuntime } from "../app/appRuntime";
 import { useTranslation } from "../i18n/I18nProvider";
 
@@ -156,11 +156,11 @@ export function HtmlPreviewFrame({
       const token=previewToken.current;
       if (!token) return;
       const visible=document.visibilityState==="visible" && visibilityRatio.current>=0.5;
-      void invoke("soul_preview_visibility",{id:token,visible}).catch(()=>undefined);
+      void invokeCommand("soul_preview_visibility",{id:token,visible}).catch(()=>undefined);
     };
     const timer=window.setInterval(report,5000);
     document.addEventListener("visibilitychange",report);
-    return ()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",report);if(previewToken.current)void invoke("soul_preview_visibility",{id:previewToken.current,visible:false}).catch(()=>undefined);};
+    return ()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",report);if(previewToken.current)void invokeCommand("soul_preview_visibility",{id:previewToken.current,visible:false}).catch(()=>undefined);};
   }, [source]);
 
   async function openDetached(position?: { x: number; y: number }) {
@@ -169,7 +169,7 @@ export function HtmlPreviewFrame({
     setOpenFailed(false);
     try {
       if (isTauriRuntime) {
-        await invoke("open_html_preview_window", { html: srcDoc,
+        await invokeCommand("open_html_preview_window", { html: srcDoc,
           ...(sourceChatId ? {sourceChatId} : {}), ...(networkAllowed ? { allowNetwork: true } : {}), ...position });
       } else {
         const popup = window.open("", "_blank", "popup,width=1000,height=720,resizable=yes,scrollbars=yes");
@@ -198,14 +198,14 @@ export function HtmlPreviewFrame({
     let token: string | null = null;
     (async () => {
       try {
-        token = await invoke<string>("create_html_preview_frame", { html: srcDoc,
+        token = await invokeCommand("create_html_preview_frame", { html: srcDoc,
           ...(sourceChatId ? {sourceChatId} : {}), ...(networkAllowed ? { allowNetwork: true } : {}) });
       } catch {
         if (!disposed) setFrameState({ source: frameKey, url: null, failed: true });
         return;
       }
       if (disposed) {
-        void invoke("remove_html_preview_frame", { token }).catch(() => undefined);
+        void invokeCommand("remove_html_preview_frame", { token }).catch(() => undefined);
         return;
       }
       previewToken.current = token;
@@ -214,7 +214,7 @@ export function HtmlPreviewFrame({
     return () => {
       disposed = true;
       if (token) {
-        void invoke("remove_html_preview_frame", { token }).catch(() => undefined);
+        void invokeCommand("remove_html_preview_frame", { token }).catch(() => undefined);
       }
     };
   }, [srcDoc, networkAllowed, frameKey, sourceChatId]);
@@ -326,9 +326,9 @@ export function HtmlPreviewWindow() {
   const token = new URLSearchParams(window.location.search).get("token");
   useEffect(()=>{
     if (!isTauriRuntime || !token) return;
-    const report=()=>void invoke("soul_preview_visibility",{id:token,visible:document.visibilityState==="visible"}).catch(()=>undefined);
+    const report=()=>void invokeCommand("soul_preview_visibility",{id:token,visible:document.visibilityState==="visible"}).catch(()=>undefined);
     report();const timer=window.setInterval(report,5000);document.addEventListener("visibilitychange",report);
-    return ()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",report);void invoke("soul_preview_visibility",{id:token,visible:false}).catch(()=>undefined);};
+    return ()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",report);void invokeCommand("soul_preview_visibility",{id:token,visible:false}).catch(()=>undefined);};
   },[token]);
 
   return (

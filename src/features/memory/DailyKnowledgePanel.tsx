@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../../generated/ipc";
 import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "../app/appRuntime";
 import { toUserMessage } from "../../lib/errors";
@@ -31,11 +31,11 @@ export function DailyKnowledgePanel({ onReview }: { onReview: () => void }) {
   const refresh = useCallback(async () => {
     if (!isTauriRuntime) return;
     const [next, semantic, operational] = await Promise.all([
-      invoke<Status>("knowledge_get_maintenance_status"),
-      invoke<MemoryItem[]>("list_memories", {
+      invokeCommand("knowledge_get_maintenance_status", {}),
+      invokeCommand("list_memories", {
         input: { memoryType: "semantic", status: "active", limit: 200 },
       }),
-      invoke<MemoryItem[]>("list_memories", {
+      invokeCommand("list_memories", {
         input: { memoryType: "operational", status: "active", limit: 200 },
       }),
     ]);
@@ -110,7 +110,7 @@ export function DailyKnowledgePanel({ onReview }: { onReview: () => void }) {
             disabled={!status || busy}
             onClick={() =>
               void act(async () => {
-                const report = await invoke<Report>("knowledge_maintain");
+                const report = await invokeCommand("knowledge_maintain", {});
                 setMessage(
                   `本次整理：收录 ${report.collected} 条，跳过重复 ${report.duplicates} 条，归档过期 ${report.archived} 条。`,
                 );
@@ -131,7 +131,7 @@ export function DailyKnowledgePanel({ onReview }: { onReview: () => void }) {
             onChange={(event) => {
               const autoStore = event.currentTarget.checked;
               void act(() =>
-                invoke("knowledge_configure_maintenance", { autoStore }),
+                invokeCommand("knowledge_configure_maintenance", { autoStore }),
               );
             }}
           />

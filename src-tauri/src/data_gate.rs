@@ -37,7 +37,10 @@ pub(crate) fn read() -> ReadLease {
     ReadLease { counted }
 }
 pub(crate) fn try_read() -> Result<ReadLease, String> {
-    let mut state = GATE.state.lock().map_err(|_| "data_gate_unavailable")?;
+    let mut state = GATE
+        .state
+        .lock()
+        .map_err(|_| crate::error_codes::DATA_GATE_UNAVAILABLE)?;
     if state.owner.is_some() {
         return Err("数据正在备份或恢复，请稍后重试".into());
     }
@@ -46,7 +49,10 @@ pub(crate) fn try_read() -> Result<ReadLease, String> {
 }
 pub(crate) fn freeze(timeout: Duration) -> Result<Freeze, String> {
     let deadline = Instant::now() + timeout;
-    let mut state = GATE.state.lock().map_err(|_| "data_gate_unavailable")?;
+    let mut state = GATE
+        .state
+        .lock()
+        .map_err(|_| crate::error_codes::DATA_GATE_UNAVAILABLE)?;
     loop {
         if state.owner.is_none() && state.readers == 0 {
             state.owner = Some(std::thread::current().id());
@@ -59,7 +65,7 @@ pub(crate) fn freeze(timeout: Duration) -> Result<Freeze, String> {
         state = GATE
             .changed
             .wait_timeout(state, remaining)
-            .map_err(|_| "data_gate_unavailable")?
+            .map_err(|_| crate::error_codes::DATA_GATE_UNAVAILABLE)?
             .0;
     }
 }

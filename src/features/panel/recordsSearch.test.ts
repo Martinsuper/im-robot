@@ -23,6 +23,9 @@ const memo: Memo = {
 };
 
 const memory: MemoryItem = {
+  lastUsedAt: null,
+  expiresAt: null,
+  embeddingId: null,
   id: "r1",
   memoryType: "profile",
   title: "她在准备搬家",

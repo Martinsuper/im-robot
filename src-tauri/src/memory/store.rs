@@ -27,6 +27,10 @@ fn context_terms(query: &str) -> Vec<String> {
     terms
 }
 
+use super::tuning::{
+    CONTEXT_LIKE_CONTENT_WEIGHT, CONTEXT_LIKE_TITLE_WEIGHT, RECENCY_DECAY_PER_DAY, RECENCY_FLOOR,
+};
+
 pub struct MemoryDb(pub(crate) crate::data_gate::DataMutex<Connection>);
 
 pub fn memory_db_path(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -64,7 +68,7 @@ pub fn init_memory_db(app: &tauri::AppHandle) -> Result<MemoryDb, String> {
         let had_delivery = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM soul_quota WHERE last_dispatch_at IS NOT NULL) OR EXISTS(SELECT 1 FROM soul_proactive_ledger WHERE dispatching_at IS NOT NULL)",
             [], |row| row.get::<_, bool>(0),
-        ).map_err(|_| "ledger_unreadable".to_string())?;
+        ).map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())?;
         super::soul::proactive::recover_restart(&mut conn, i64::try_from(crate::common::unix_timestamp()).unwrap_or(i64::MAX))?;
         super::soul::diagnostics::check_ledger(&conn)?;
         Ok(had_delivery)
@@ -100,6 +104,9 @@ pub fn open_in_memory_db() -> Result<MemoryDb, String> {
 
     Ok(MemoryDb(crate::data_gate::DataMutex::new(conn)))
 }
+
+/// 数据库结构版本。迁移行为（含旧格式数据重写）只在 `user_version < SCHEMA_VERSION` 时执行。
+const SCHEMA_VERSION: i64 = 1;
 
 fn run_migrations(conn: &Connection) -> Result<(), String> {
     super::knowledge::migrate(conn)?;
@@ -187,7 +194,16 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
             period_start INTEGER,
             period_end INTEGER
         );
+    "#,
+    )
+    .map_err(|e| format!("创建内存表失败: {}", e))?;
 
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|e| format!("读取数据库版本失败: {}", e))?;
+    if version < SCHEMA_VERSION {
+        conn.execute_batch(
+            r#"
         UPDATE memory_items
         SET memory_type = CASE memory_type
             WHEN 'Profile' THEN '"profile"'
@@ -219,8 +235,12 @@ fn run_migrations(conn: &Connection) -> Result<(), String> {
             ELSE status
         END;
     "#,
-    )
-    .map_err(|e| format!("创建内存表失败: {}", e))
+        )
+        .map_err(|e| format!("迁移旧格式数据失败: {}", e))?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)
+            .map_err(|e| format!("记录数据库版本失败: {}", e))?;
+    }
+    Ok(())
 }
 
 /// Read a MemoryItem from a row with 17 columns (including is_pinned).
@@ -263,6 +283,17 @@ const SELECT_COLS: &str = "SELECT id, memory_type, title, content, source, impor
     confidence, recency_score, privacy_level, status, \
     created_at, updated_at, last_used_at, expires_at, tags, embedding_id, is_pinned";
 
+/// 枚举以 JSON 字符串存入 TEXT 列（见 enum_sql_literal）。SQL 语句里的字面量统一
+/// 从这里取，避免多处硬编码后悄悄漂移。
+pub(crate) mod sql_literal {
+    pub const STATUS_ACTIVE: &str = "'\"active\"'";
+    pub const STATUS_SUPERSEDED: &str = "'\"superseded\"'";
+    pub const STATUS_DELETED: &str = "'\"deleted\"'";
+    pub const PRIVACY_PUBLIC: &str = "'\"publicToUser\"'";
+    pub const TYPE_SEMANTIC: &str = "'\"semantic\"'";
+    pub const TYPE_OPERATIONAL: &str = "'\"operational\"'";
+}
+
 fn enum_sql_literal<T: Serialize>(value: &T) -> Result<String, String> {
     let serialized = serde_json::to_string(value).map_err(|e| e.to_string())?;
     Ok(format!("'{}'", serialized.replace('\'', "''")))
@@ -271,7 +302,7 @@ fn enum_sql_literal<T: Serialize>(value: &T) -> Result<String, String> {
 /// Recency decay factor: score drops ~50% after 30 days.
 fn recency_decay_factor(updated_at: u64, now: u64) -> f32 {
     let days = ((now.saturating_sub(updated_at)) as f32) / 86400.0;
-    1.0 / (1.0 + 0.02 * days)
+    1.0 / (1.0 + super::tuning::RECENCY_DECAY_PER_DAY * days)
 }
 
 impl MemoryDb {
@@ -552,7 +583,7 @@ impl MemoryDb {
     pub fn search(&self, input: SearchMemoriesInput) -> Result<Vec<MemoryItem>, String> {
         let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
-        let limit = input.limit.unwrap_or(20);
+        let limit = input.limit.unwrap_or(super::tuning::SEARCH_DEFAULT_LIMIT);
         let query = input.query.trim();
         let active_status = enum_sql_literal(&MemoryStatus::Active)?;
 
@@ -642,7 +673,9 @@ impl MemoryDb {
     pub fn search_related(&self, input: SearchRelatedInput) -> Result<Vec<MemoryItem>, String> {
         let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
-        let limit = input.limit.unwrap_or(10);
+        let limit = input
+            .limit
+            .unwrap_or(super::tuning::SEARCH_RELATED_DEFAULT_LIMIT);
         let query = input.query.trim();
         let active_status = enum_sql_literal(&MemoryStatus::Active)?;
 
@@ -718,7 +751,10 @@ impl MemoryDb {
     pub fn build_context(&self, input: BuildContextInput) -> Result<Vec<MemoryItem>, String> {
         let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
-        let limit = input.limit.unwrap_or(15).min(100);
+        let limit = input
+            .limit
+            .unwrap_or(super::tuning::CONTEXT_MEMORY_DEFAULT_LIMIT)
+            .min(super::tuning::CONTEXT_MEMORY_MAX_LIMIT);
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -734,9 +770,10 @@ impl MemoryDb {
         let score = if terms.is_empty() {
             "0".into()
         } else {
-            (1..=terms.len()).map(|index| format!("(CASE WHEN title LIKE ?{index} ESCAPE '\\' THEN 2 ELSE 0 END + CASE WHEN content LIKE ?{index} ESCAPE '\\' THEN 1 ELSE 0 END)")).collect::<Vec<_>>().join(" + ")
+            (1..=terms.len()).map(|index| format!("(CASE WHEN title LIKE ?{index} ESCAPE '\\' THEN {CONTEXT_LIKE_TITLE_WEIGHT} ELSE 0 END + CASE WHEN content LIKE ?{index} ESCAPE '\\' THEN {CONTEXT_LIKE_CONTENT_WEIGHT} ELSE 0 END)")).collect::<Vec<_>>().join(" + ")
         };
-        let sql = format!("{SELECT_COLS}, ({score}) AS context_match FROM memory_items WHERE status = {active_status} AND privacy_level = {public_privacy} ORDER BY context_match DESC, is_pinned DESC, CASE WHEN memory_type = {profile_type} THEN 1 ELSE 0 END DESC, (confidence * recency_score * importance) DESC LIMIT {}", (limit * 8).clamp(64, 800));
+        let sql = format!("{SELECT_COLS}, ({score}) AS context_match FROM memory_items WHERE status = {active_status} AND privacy_level = {public_privacy} ORDER BY context_match DESC, is_pinned DESC, CASE WHEN memory_type = {profile_type} THEN 1 ELSE 0 END DESC, (confidence * recency_score * importance) DESC LIMIT {}", (limit * super::tuning::CONTEXT_CANDIDATE_FACTOR)
+                .clamp(super::tuning::CONTEXT_CANDIDATE_MIN, super::tuning::CONTEXT_CANDIDATE_MAX));
         let patterns: Vec<String> = terms
             .iter()
             .map(|term| {
@@ -764,7 +801,7 @@ impl MemoryDb {
         let profile_budget = if terms.is_empty() {
             0
         } else {
-            (limit / 4).min(2)
+            (limit / 4).min(super::tuning::CONTEXT_PROFILE_BUDGET_CAP)
         };
         for (item, relevance) in &candidates {
             if *relevance > 0 && results.len() < limit - profile_budget {
@@ -846,7 +883,8 @@ impl MemoryDb {
     // === Phase 2: Feedback ===
 
     pub fn add_feedback(&self, input: &FeedbackInput) -> Result<(), String> {
-        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let mut db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let tx = db.transaction().map_err(|e| e.to_string())?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -855,7 +893,7 @@ impl MemoryDb {
 
         let feedback_id = format!("feedback-{}", now * 1000 + std::process::id() as u64);
 
-        db.execute(
+        tx.execute(
             "INSERT INTO memory_feedback (id, memory_id, feedback_type, value, comment, created_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -871,15 +909,15 @@ impl MemoryDb {
 
         // Adjust memory confidence based on feedback
         let confidence_delta = match input.feedback_type.as_str() {
-            "correct" => 0.05,
-            "incorrect" => -0.1,
-            "useful" => 0.03,
-            "useless" => -0.05,
+            "correct" => super::tuning::CONFIDENCE_DELTA_CORRECT,
+            "incorrect" => super::tuning::CONFIDENCE_DELTA_INCORRECT,
+            "useful" => super::tuning::CONFIDENCE_DELTA_USEFUL,
+            "useless" => super::tuning::CONFIDENCE_DELTA_USELESS,
             _ => 0.0,
         };
 
         if confidence_delta != 0.0 {
-            db.execute(
+            tx.execute(
                 "UPDATE memory_items SET confidence = MIN(1.0, MAX(0.0, confidence + ?1)), \
                  updated_at = ?2 WHERE id = ?3",
                 params![confidence_delta, now, input.memory_id,],
@@ -887,6 +925,7 @@ impl MemoryDb {
             .map_err(|e| e.to_string())?;
         }
 
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -1098,7 +1137,7 @@ impl MemoryDb {
             .execute(
                 &format!(
                     "UPDATE memory_items SET \
-             recency_score = MAX(0.1, 1.0 / (1.0 + 0.02 * ((?1 - updated_at) / 86400.0))) \
+             recency_score = MAX({RECENCY_FLOOR}, 1.0 / (1.0 + {RECENCY_DECAY_PER_DAY} * ((?1 - updated_at) / 86400.0))) \
              WHERE status = {active_status}"
                 ),
                 params![now],
@@ -1150,14 +1189,15 @@ impl MemoryDb {
         relations: &[MemoryRelation],
         mode: &str,
     ) -> Result<usize, String> {
-        let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let mut db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
+        let tx = db.transaction().map_err(|e| e.to_string())?;
 
         let mut count = 0;
 
         for item in memories {
             if mode == "replace" {
                 // Delete existing and insert new
-                let _ = db.execute("DELETE FROM memory_items WHERE id = ?1", params![item.id]);
+                let _ = tx.execute("DELETE FROM memory_items WHERE id = ?1", params![item.id]);
                 let tags_json = serde_json::to_string(&item.tags).map_err(|e| e.to_string())?;
                 let memory_type_str =
                     serde_json::to_string(&item.memory_type).map_err(|e| e.to_string())?;
@@ -1166,7 +1206,7 @@ impl MemoryDb {
                     serde_json::to_string(&item.privacy_level).map_err(|e| e.to_string())?;
                 let status_str = serde_json::to_string(&item.status).map_err(|e| e.to_string())?;
 
-                db.execute(
+                tx.execute(
                     "INSERT INTO memory_items \
                      (id, memory_type, title, content, source, importance, \
                       confidence, recency_score, privacy_level, status, \
@@ -1182,7 +1222,7 @@ impl MemoryDb {
                 count += 1;
             } else {
                 // merge: only insert if not exists
-                let exists: bool = db
+                let exists: bool = tx
                     .query_row(
                         "SELECT 1 FROM memory_items WHERE id = ?1",
                         params![item.id],
@@ -1203,7 +1243,7 @@ impl MemoryDb {
                     let status_str =
                         serde_json::to_string(&item.status).map_err(|e| e.to_string())?;
 
-                    db.execute(
+                    tx.execute(
                         "INSERT OR IGNORE INTO memory_items \
                          (id, memory_type, title, content, source, importance, \
                           confidence, recency_score, privacy_level, status, \
@@ -1223,12 +1263,13 @@ impl MemoryDb {
 
         // Import relations
         for rel in relations {
-            let _ = db.execute(
+            let _ = tx.execute(
                 "INSERT OR IGNORE INTO memory_relations (from_id, to_id, relation_type) VALUES (?1, ?2, ?3)",
                 params![rel.from_id, rel.to_id, rel.relation_type],
             );
         }
 
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(count)
     }
 
@@ -1392,7 +1433,14 @@ mod tests {
             ],
         )
         .expect("legacy row should insert");
+        // 旧版数据库没有 schema 版本（user_version = 0）；数据重写只在升级时执行一次。
+        conn.pragma_update(None, "user_version", 0)
+            .expect("legacy database has no schema version");
         run_migrations(&conn).expect("normalizing migration should run");
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("schema version should be readable");
+        assert_eq!(version, SCHEMA_VERSION);
 
         let db = MemoryDb(crate::data_gate::DataMutex::new(conn));
         let recent = db.get_recent(10).expect("legacy memory should deserialize");

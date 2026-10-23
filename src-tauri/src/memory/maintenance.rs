@@ -1,4 +1,5 @@
 //! Local, bounded upkeep of knowledge accumulated from user conversation evidence.
+use super::store::sql_literal::{STATUS_ACTIVE, TYPE_OPERATIONAL, TYPE_SEMANTIC};
 use super::{model::*, store::MemoryDb};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -52,9 +53,11 @@ pub fn status(db: &MemoryDb) -> Result<MaintenanceStatus, String> {
         .map_err(|e| e.to_string())?;
     let count = conn
         .query_row(
-            "SELECT COUNT(*) FROM memory_items WHERE status='\"active\"'
-        AND memory_type IN ('\"semantic\"','\"operational\"')
-        AND (expires_at IS NULL OR expires_at>?1)",
+            &format!(
+                "SELECT COUNT(*) FROM memory_items WHERE status={STATUS_ACTIVE}
+        AND memory_type IN ({TYPE_SEMANTIC},{TYPE_OPERATIONAL})
+        AND (expires_at IS NULL OR expires_at>?1)"
+            ),
             [now()],
             |r| r.get(0),
         )
@@ -78,37 +81,16 @@ pub fn status(db: &MemoryDb) -> Result<MaintenanceStatus, String> {
 }
 fn eligible(candidate: &MemoryCandidate) -> bool {
     let text = format!("{} {}", candidate.title, candidate.content).to_lowercase();
-    candidate.confidence >= 0.8
+    candidate.confidence >= super::tuning::MAINTENANCE_MIN_CONFIDENCE
         && matches!(
             candidate.memory_type,
             MemoryType::Semantic | MemoryType::Profile
         )
         && matches!(candidate.source, MemorySource::Conversation)
         && !super::policy::contains_sensitive_content(&text)
-        && ![
-            "?",
-            "？",
-            "请帮",
-            "帮我",
-            "改为",
-            "不再",
-            "纠正",
-            "身份证",
-            "银行卡",
-            "住址",
-            "病历",
-            "诊断",
-            "收入",
-            "工资",
-            "电话",
-            "邮箱",
-            "instead",
-            "address",
-            "salary",
-            "medical",
-        ]
-        .iter()
-        .any(|word| text.contains(word))
+        && !super::tuning::MAINTENANCE_BLOCKLIST
+            .iter()
+            .any(|word| text.contains(word))
 }
 
 enum Collection {
@@ -159,8 +141,8 @@ fn collect_candidate(db: &MemoryDb, candidate_id: &str) -> Result<Collection, St
             |r| r.get(0),
         )
         .map_err(|e| e.to_string())?;
-    let duplicate: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM memory_items WHERE status='\"active\"' AND content=?1 AND id<>?2)", params![candidate.content,id], |r|r.get(0)).map_err(|e|e.to_string())?;
-    let conflict: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM memory_items WHERE status='\"active\"' AND title=?1 AND content<>?2)", params![candidate.title,candidate.content], |r|r.get(0)).map_err(|e|e.to_string())?;
+    let duplicate: bool = tx.query_row(&format!("SELECT EXISTS(SELECT 1 FROM memory_items WHERE status={STATUS_ACTIVE} AND content=?1 AND id<>?2)"), params![candidate.content,id], |r|r.get(0)).map_err(|e|e.to_string())?;
+    let conflict: bool = tx.query_row(&format!("SELECT EXISTS(SELECT 1 FROM memory_items WHERE status={STATUS_ACTIVE} AND title=?1 AND content<>?2)"), params![candidate.title,candidate.content], |r|r.get(0)).map_err(|e|e.to_string())?;
     if conflict && !existing {
         return Ok(Collection::Skipped);
     }
@@ -201,7 +183,7 @@ pub fn maintain(db: &MemoryDb, force: bool) -> Result<MaintenanceReport, String>
                 Collection::Duplicate => report.duplicates += 1,
                 Collection::Skipped => {}
             }
-            if report.collected + report.duplicates >= 200 {
+            if report.collected + report.duplicates >= super::tuning::MAINTENANCE_COLLECT_CAP {
                 break;
             }
         }

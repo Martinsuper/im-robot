@@ -1,5 +1,6 @@
 import {
   CalendarCheck,
+  ChevronRight,
   MessageCircle,
   NotebookPen,
   PawPrint,
@@ -118,6 +119,11 @@ export function SettingsGroup({
             {status || description}
           </span>
         ) : null}
+        <ChevronRight
+          className="settings-group__chevron"
+          size={15}
+          aria-hidden="true"
+        />
       </summary>
       <div className="settings-group__body">{children}</div>
     </details>

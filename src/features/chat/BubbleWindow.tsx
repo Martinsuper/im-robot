@@ -32,7 +32,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { ActionConfirmationCard, getConfirmationChoices } from "./ActionConfirmationCard";
 import { getBubbleCompanionMessage } from "./bubbleMessage";
-import type { ActionDraft, ActionExecution, ChatEvent } from "./chatTypes";
+import type { ActionDraft, ChatEvent } from "./chatTypes";
 import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry, PanelTab, ScreenshotPreview } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
 import {
@@ -51,10 +51,6 @@ import { useToast } from "../../components/feedback/toastStore";
 import { toUserMessage } from "../../lib/errors";
 import { extractHtmlPreviewSource, HtmlPreviewFrame, type HtmlPreviewView } from "./HtmlPreviewFrame";
 import { findFavoriteId, useHtmlFavorites } from "./htmlFavorites";
-
-type VoiceTranscriptionOutput = {
-  text: string;
-};
 
 const WHISPER_SAMPLE_RATE = 16000;
 const PanelWindow = lazy(() => import("../panel/PanelWindow").then((module) => ({ default: module.PanelWindow })));
@@ -433,8 +429,8 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
   const refreshChatHistory = useStableEvent(() => {
     if (!isTauriRuntime) return;
     const history = tabId
-      ? runCommand<ChatHistoryEntry[]>("conversation_chat_history", { conversationId: tabId }, [])
-      : runCommand<ChatHistoryEntry[]>("get_bubble_chat_history", undefined, []);
+      ? runCommand("conversation_chat_history", { conversationId: tabId }, [])
+      : runCommand("get_bubble_chat_history", undefined, []);
     void history.then((entries) => {
       if (entries) { const current = conversationRef.current; setChatHistory((tabId || current.importHistory ? entries : entries.filter((entry) => current.turnIds.includes(entry.id))).filter((entry) => entry.id !== displayedRequestId.current)); }
     });
@@ -512,7 +508,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
     // Subscribe first, then recover a delivery emitted during WebView startup.
     // A newer event/revocation always wins over an in-flight recovery read.
     void Promise.all([unlisten, reconcile]).then(async () => {
-      const message = await runCommand<SoulProactiveMessage | null>("soul_current_message", undefined, null);
+      const message = (await runCommand("soul_current_message", undefined, null)) as SoulProactiveMessage | null;
       if (!disposed && !receivedLiveState && message && (activeIds === null || activeIds.includes(message.id))) setSoulMessage(message);
     });
     return () => {
@@ -538,7 +534,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
   useEffect(() => {
     if (!isTauriRuntime) return;
     const refreshScreenshot = () => {
-      void runCommand<ScreenshotPreview | null>("get_screen_capture_preview", undefined, null)
+      void runCommand("get_screen_capture_preview", undefined, null)
         .then((preview) => setScreenshot(preview ?? undefined));
     };
     if (!tabId) refreshScreenshot();
@@ -659,7 +655,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
     };
     const connection = connectAgentTask({
       subscribe: (onEvent) => listen<AgentEvent>("agent-event", ({ payload }) => onEvent(payload)),
-      getSnapshot: () => runCommand<AgentTaskSnapshot | null>("agent_get_task_snapshot", tabId ? { conversationId: tabId } : undefined, null),
+      getSnapshot: () => runCommand("agent_get_task_snapshot", tabId ? { conversationId: tabId } : undefined, null) as Promise<AgentTaskSnapshot | null>,
       restore: restoreSnapshot,
       onEvent: (event) => {
         if (event.requestId !== activeRequestId.current && event.conversationId && (!tabId || event.conversationId === conversationRef.current.id) && event.prompt !== undefined
@@ -759,7 +755,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
         return;
       }
 
-      void runCommand<AttachmentPreview>("prepare_text_attachment", {
+      void runCommand("prepare_text_attachment", {
         path: event.payload.paths[0],
         ...attachmentContext,
       })
@@ -852,7 +848,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
     }
 
     beginAgentTask(currentRequestId); agentBusyRef.current = true;
-    void agentReady.current.then(() => runCommand<void>("agent_start", {
+    void agentReady.current.then(() => runCommand("agent_start", {
       input: {
         requestId: currentRequestId,
         conversationId: nextConversation.id, knowledgeScope: nextConversation.knowledgeScope, cwd: nextConversation.cwd || undefined, unified: true, importHistory: nextConversation.importHistory,
@@ -995,7 +991,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
         await runCommand("agent_confirm_action", { requestId: activeRequestId.current, id: pendingAction.id, selectedIndexes: confirmationChoices.length ? selectedChoiceIndexes : undefined });
         return;
       }
-      const execution = await runCommand<ActionExecution>("confirm_chat_action", {
+      const execution = await runCommand("confirm_chat_action", {
         id: pendingAction.id,
         selectedIndexes: confirmationChoices.length ? selectedChoiceIndexes : undefined,
       });
@@ -1144,7 +1140,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
     setIsTranscribingVoice(true);
     try {
       const audioDataUrl = await blobToDataUrl(blob);
-      const result = await runCommand<VoiceTranscriptionOutput>("transcribe_voice_input", {
+      const result = await runCommand("transcribe_voice_input", {
         input: { audioDataUrl },
       });
       setPrompt((current) => appendSpeechText(current, result.text));
@@ -1208,7 +1204,7 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
     });
     if (!path) return;
     try {
-      setAttachment(await runCommand<AttachmentPreview>("prepare_text_attachment", { path, ...attachmentContext }));
+      setAttachment(await runCommand("prepare_text_attachment", { path, ...attachmentContext }));
     } catch (error) {
       toast.error(toUserMessage(error, "附件读取失败，请重试。"));
     }
@@ -1236,12 +1232,12 @@ export function BubbleWindow({ initialWorkspaceOpen = false, tabId, active = tru
   }
 
   async function updateHtmlPreviewEnabled(enabled: boolean) {
-    const settings = await runCommand<AppSettings>(
+    const settings = await runCommand(
       "update_html_preview_enabled",
       { enabled },
       { ...defaultAppSettings, htmlPreviewEnabled: enabled },
     );
-    applyServer(settings);
+    applyServer(settings as AppSettings);
   }
 
   async function saveResult() {

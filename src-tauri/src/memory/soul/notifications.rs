@@ -127,16 +127,18 @@ pub async fn request_permission() -> Result<bool, String> {
         {
             let mut pending = PERMISSION_REQUEST
                 .lock()
-                .map_err(|_| "permission_unavailable")?;
+                .map_err(|_| crate::error_codes::PERMISSION_UNAVAILABLE)?;
             if pending.is_some() {
-                return Err("permission_request_pending".into());
+                return Err(crate::error_codes::PERMISSION_REQUEST_PENDING.into());
             }
             *pending = Some(sender);
         }
         unsafe {
             piko_soul_request_notification_permission(permission_result);
         }
-        receiver.await.map_err(|_| "permission_unavailable".into())
+        receiver
+            .await
+            .map_err(|_| crate::error_codes::PERMISSION_UNAVAILABLE.into())
     }
     #[cfg(not(target_os = "macos"))]
     {

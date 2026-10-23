@@ -40,11 +40,13 @@ pub fn soul_test_desktop_speech(
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<(), String> {
     if !matches!(window.label(), "panel" | "bubble") {
-        return Err("settings_source_invalid".into());
+        return Err(crate::error_codes::SETTINGS_SOURCE_INVALID.into());
     }
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     if !enabled(&conn)? {
-        return Err("desktop_observation_disabled".into());
+        return Err(crate::error_codes::DESKTOP_OBSERVATION_DISABLED.into());
     }
     FORCE_SPEECH.store(true, std::sync::atomic::Ordering::SeqCst);
     stage("speech_test_armed");
@@ -89,19 +91,22 @@ fn read(conn: &rusqlite::Connection) -> Result<DesktopSettings, String> {
             ))
         },
     )
-    .map_err(|_| "desktop_settings_unavailable".to_string())
+    .map_err(|_| crate::error_codes::DESKTOP_SETTINGS_UNAVAILABLE.to_string())
     .and_then(|(revision, frequency, raw, model)| {
         Ok(DesktopSettings {
             revision,
             frequency,
             model,
-            excluded_apps: serde_json::from_str(&raw).map_err(|_| "desktop_settings_invalid")?,
+            excluded_apps: serde_json::from_str(&raw)
+                .map_err(|_| crate::error_codes::DESKTOP_SETTINGS_INVALID)?,
         })
     })
 }
 #[tauri::command]
 pub fn soul_get_desktop_settings(db: State<'_, Arc<MemoryDb>>) -> Result<DesktopSettings, String> {
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     read(&conn)
 }
 #[tauri::command]
@@ -112,7 +117,7 @@ pub fn soul_update_desktop_settings(
     input: DesktopSettings,
 ) -> Result<DesktopSettings, String> {
     if !matches!(window.label(), "panel" | "bubble") {
-        return Err("settings_source_invalid".into());
+        return Err(crate::error_codes::SETTINGS_SOURCE_INVALID.into());
     }
     if !["quiet", "natural", "active"].contains(&input.frequency.as_str())
         || input.model.chars().count() > 128
@@ -122,16 +127,18 @@ pub fn soul_update_desktop_settings(
             .iter()
             .any(|s| s.trim().is_empty() || s.chars().count() > 128)
     {
-        return Err("desktop_settings_invalid".into());
+        return Err(crate::error_codes::DESKTOP_SETTINGS_INVALID.into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     store::ensure_available(&conn)?;
     store::transaction(&mut conn, |tx| {
-        let changed = tx.execute("UPDATE soul_desktop_control SET revision=revision+1,frequency=?1,excluded_apps=?2,model=?4 WHERE singleton=1 AND revision=?3", params![input.frequency,serde_json::to_string(&input.excluded_apps).map_err(|_| "desktop_settings_invalid")?,input.revision,input.model.trim()]).map_err(|_| "settings_write_failed")?;
+        let changed = tx.execute("UPDATE soul_desktop_control SET revision=revision+1,frequency=?1,excluded_apps=?2,model=?4 WHERE singleton=1 AND revision=?3", params![input.frequency,serde_json::to_string(&input.excluded_apps).map_err(|_| crate::error_codes::DESKTOP_SETTINGS_INVALID)?,input.revision,input.model.trim()]).map_err(|_| crate::error_codes::SETTINGS_WRITE_FAILED)?;
         if changed != 1 {
-            return Err("settings_conflict".into());
+            return Err(crate::error_codes::SETTINGS_CONFLICT.into());
         }
-        tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='desktop_observation' AND state IN ('pending','dispatching','shown')", [now()]).map_err(|_| "ledger_write_failed")?;
+        tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?1 WHERE category='desktop_observation' AND state IN ('pending','dispatching','shown')", [now()]).map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         Ok(())
     })?;
     let result = read(&conn)?;
@@ -151,18 +158,24 @@ struct WindowIdentity {
 }
 fn identity(w: &xcap::Window) -> Result<WindowIdentity, String> {
     Ok(WindowIdentity {
-        id: w.id().map_err(|_| "window_unavailable")?,
-        pid: w.pid().map_err(|_| "window_unavailable")?,
-        app: w.app_name().map_err(|_| "window_unavailable")?,
-        title: w.title().map_err(|_| "window_unavailable")?,
+        id: w.id().map_err(|_| crate::error_codes::WINDOW_UNAVAILABLE)?,
+        pid: w
+            .pid()
+            .map_err(|_| crate::error_codes::WINDOW_UNAVAILABLE)?,
+        app: w
+            .app_name()
+            .map_err(|_| crate::error_codes::WINDOW_UNAVAILABLE)?,
+        title: w
+            .title()
+            .map_err(|_| crate::error_codes::WINDOW_UNAVAILABLE)?,
     })
 }
 fn focused() -> Result<(xcap::Window, WindowIdentity), String> {
     let window = xcap::Window::all()
-        .map_err(|_| "window_unavailable")?
+        .map_err(|_| crate::error_codes::WINDOW_UNAVAILABLE)?
         .into_iter()
         .find(|w| w.is_focused().unwrap_or(false))
-        .ok_or("window_unavailable")?;
+        .ok_or(crate::error_codes::WINDOW_UNAVAILABLE)?;
     let id = identity(&window)?;
     Ok((window, id))
 }
@@ -200,11 +213,12 @@ pub(super) fn enabled(conn: &rusqlite::Connection) -> Result<bool, String> {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
-        .map_err(|_| "ledger_unreadable")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     let Some((on, paused, raw)) = control else {
         return Ok(false);
     };
-    let categories: Vec<Value> = serde_json::from_str(&raw).map_err(|_| "ledger_unreadable")?;
+    let categories: Vec<Value> =
+        serde_json::from_str(&raw).map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     Ok(on
         && !paused
         && categories
@@ -290,7 +304,9 @@ fn settings_for(app: &AppHandle) -> Result<Option<DesktopSettings>, String> {
         return Ok(None);
     }
     let db = app.state::<Arc<MemoryDb>>();
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     if !enabled(&conn)? {
         stage("disabled");
         return Ok(None);
@@ -315,12 +331,12 @@ fn permission() -> bool {
 fn capture(window: &xcap::Window) -> Result<Capture, String> {
     // Background observation never opens a permission dialog.
     if !permission() {
-        return Err("desktop_capture_permission_required".into());
+        return Err(crate::error_codes::DESKTOP_CAPTURE_PERMISSION_REQUIRED.into());
     }
     let image = DynamicImage::ImageRgba8(
         window
             .capture_image()
-            .map_err(|_| "desktop_capture_unavailable")?,
+            .map_err(|_| crate::error_codes::DESKTOP_CAPTURE_UNAVAILABLE)?,
     );
     let fingerprint = image
         .resize_exact(16, 16, FilterType::Triangle)
@@ -330,7 +346,7 @@ fn capture(window: &xcap::Window) -> Result<Capture, String> {
     let mut png = std::io::Cursor::new(Vec::new());
     image
         .write_to(&mut png, ImageFormat::Png)
-        .map_err(|_| "desktop_capture_failed")?;
+        .map_err(|_| crate::error_codes::DESKTOP_CAPTURE_FAILED)?;
     Ok(Capture {
         png: png.into_inner(),
         fingerprint,
@@ -385,7 +401,7 @@ pub fn reconcile(app: &AppHandle) -> Result<(), String> {
     };
     let pending = OPENERS
         .lock()
-        .map_err(|_| "desktop_state_unavailable")?
+        .map_err(|_| crate::error_codes::DESKTOP_STATE_UNAVAILABLE)?
         .iter()
         .filter(|m| m.expires > now())
         .cloned()
@@ -403,20 +419,22 @@ pub fn reconcile(app: &AppHandle) -> Result<(), String> {
         }
     }
     let db = app.state::<Arc<MemoryDb>>();
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
-    let mut statement = conn.prepare("SELECT id FROM soul_proactive_ledger WHERE category='desktop_observation' AND state IN ('pending','dispatching','shown')").map_err(|_| "ledger_unreadable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
+    let mut statement = conn.prepare("SELECT id FROM soul_proactive_ledger WHERE category='desktop_observation' AND state IN ('pending','dispatching','shown')").map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     let ids = statement
         .query_map([], |r| r.get::<_, String>(0))
-        .map_err(|_| "ledger_unreadable")?
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "ledger_unreadable")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     for id in ids {
         if !valid.contains(&id) {
             conn.execute(
                 "UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE id=?1",
                 params![id, now()],
             )
-            .map_err(|_| "ledger_write_failed")?;
+            .map_err(|_| crate::error_codes::LEDGER_WRITE_FAILED)?;
         }
     }
     Ok(())
@@ -431,26 +449,28 @@ enum Decision {
 }
 fn parse(raw: &str) -> Result<Decision, String> {
     let value: Value = serde_json::from_str(crate::chat::extract_json_fragment(raw).unwrap_or(raw))
-        .map_err(|_| "desktop_decision_invalid")?;
-    let object = value.as_object().ok_or("desktop_decision_invalid")?;
+        .map_err(|_| crate::error_codes::DESKTOP_DECISION_INVALID)?;
+    let object = value
+        .as_object()
+        .ok_or(crate::error_codes::DESKTOP_DECISION_INVALID)?;
     let allowed: &[&str] = match value["action"].as_str() {
         Some("silent" | "gesture") => &["action"],
         Some("speak") => &["action", "message", "topic"],
-        _ => return Err("desktop_decision_invalid".into()),
+        _ => return Err(crate::error_codes::DESKTOP_DECISION_INVALID.into()),
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
-        return Err("desktop_decision_invalid".into());
+        return Err(crate::error_codes::DESKTOP_DECISION_INVALID.into());
     }
     let decision: Decision =
         serde_json::from_str(crate::chat::extract_json_fragment(raw).unwrap_or(raw))
-            .map_err(|_| "desktop_decision_invalid")?;
+            .map_err(|_| crate::error_codes::DESKTOP_DECISION_INVALID)?;
     if let Decision::Speak { message, topic } = &decision {
         if message.trim().is_empty()
             || message.chars().count() > 120
             || topic.trim().is_empty()
             || topic.chars().count() > 80
         {
-            return Err("desktop_decision_invalid".into());
+            return Err(crate::error_codes::DESKTOP_DECISION_INVALID.into());
         }
     }
     Ok(decision)
@@ -481,7 +501,9 @@ fn reserve_evaluation(
     forced: bool,
 ) -> Result<bool, String> {
     let db = app.state::<Arc<MemoryDb>>();
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     reserve_budget_inner(
         &mut conn,
         settings,
@@ -519,7 +541,7 @@ fn reserve_budget_inner(
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
-            .map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         if quota.is_some_and(|(used, last)| {
             last.is_some_and(|last_at| {
                 at - last_at < COOLDOWN_SECONDS
@@ -528,13 +550,13 @@ fn reserve_budget_inner(
         }) {
             return Ok(false);
         }
-        let backoff: Option<(i64,i64)> = tx.query_row("SELECT consecutive_ignored,recover_after FROM soul_backoff WHERE category='desktop_observation'",[],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|_| "ledger_unreadable")?;
+        let backoff: Option<(i64,i64)> = tx.query_row("SELECT consecutive_ignored,recover_after FROM soul_backoff WHERE category='desktop_observation'",[],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         let interval = if backoff.is_some_and(|(n, until)| n >= 3 && until > at) {
             requested_interval * 2
         } else {
             requested_interval
         };
-        let changed=tx.execute("UPDATE soul_desktop_control SET last_attempt=?1,budget_date=?2,attempts=CASE WHEN budget_date=?2 THEN attempts+1 ELSE 1 END WHERE singleton=1 AND revision=?5 AND last_attempt<=?1-?3 AND (budget_date<>?2 OR attempts<?4)",params![at,date,interval,DAILY_EVALUATIONS,settings.revision]).map_err(|_| "desktop_budget_failed")?;
+        let changed=tx.execute("UPDATE soul_desktop_control SET last_attempt=?1,budget_date=?2,attempts=CASE WHEN budget_date=?2 THEN attempts+1 ELSE 1 END WHERE singleton=1 AND revision=?5 AND last_attempt<=?1-?3 AND (budget_date<>?2 OR attempts<?4)",params![at,date,interval,DAILY_EVALUATIONS,settings.revision]).map_err(|_| crate::error_codes::DESKTOP_BUDGET_FAILED)?;
         Ok(changed == 1)
     })
 }
@@ -559,12 +581,12 @@ async fn complete(
     .json(&body)
     .send()
     .await
-    .map_err(|_| "desktop_model_unavailable")?
+    .map_err(|_| crate::error_codes::DESKTOP_MODEL_UNAVAILABLE)?
     .error_for_status()
-    .map_err(|_| "desktop_model_rejected")?
+    .map_err(|_| crate::error_codes::DESKTOP_MODEL_REJECTED)?
     .json::<Value>()
     .await
-    .map_err(|_| "desktop_model_invalid")?;
+    .map_err(|_| crate::error_codes::DESKTOP_MODEL_INVALID)?;
     let raw = crate::chat::extract_completion_text(&ai.provider, &response)
         .ok_or("desktop_model_empty")?;
     Ok(raw)
@@ -582,10 +604,16 @@ async fn evaluate(
         config.ai.model = settings.model.trim().into();
     }
     let db = app.state::<Arc<MemoryDb>>();
-    let role = super::profile::for_request(&app, &db, &config.language);
+    let role = {
+        let app = app.clone();
+        let db = Arc::clone(db.inner());
+        let language = config.language.clone();
+        crate::common::on_blocking(move || Ok(super::profile::for_request(&app, &db, &language)))
+            .await?
+    };
     let recent = OPENERS
         .lock()
-        .map_err(|_| "desktop_state_unavailable")?
+        .map_err(|_| crate::error_codes::DESKTOP_STATE_UNAVAILABLE)?
         .iter()
         .rev()
         .take(6)
@@ -598,7 +626,7 @@ async fn evaluate(
     } else {
         system.to_string()
     };
-    let prompt=serde_json::to_string(&json!({"name":config.companion_name,"language":config.language,"role":role.effective,"window":{"app":expected.app,"title":expected.title},"recent_openers":recent,"recent_dialogue":dialogue})).map_err(|_| "desktop_prompt_failed")?;
+    let prompt=serde_json::to_string(&json!({"name":config.companion_name,"language":config.language,"role":role.effective,"window":{"app":expected.app,"title":expected.title},"recent_openers":recent,"recent_dialogue":dialogue})).map_err(|_| crate::error_codes::DESKTOP_PROMPT_FAILED)?;
     // Changes while preparing the request must prevent network transmission.
     if settings_for(&app)?.as_ref() != Some(&settings)
         || focused().ok().is_none_or(|(_, id)| id != expected)
@@ -624,7 +652,7 @@ async fn evaluate(
             && same_picture(&original_fingerprint, &capture(&window)?.fingerprint))
     })
     .await
-    .map_err(|_| "desktop_worker_failed")??;
+    .map_err(|_| crate::error_codes::DESKTOP_WORKER_FAILED)??;
     if !valid {
         stage("scene_changed");
         return Ok(false);
@@ -646,60 +674,71 @@ async fn evaluate(
         Decision::Speak { message, topic } => {
             record_decision("speak");
             stage("queueing");
-            let mut cache = OPENERS.lock().map_err(|_| "desktop_state_unavailable")?;
-            if cache
-                .iter()
-                .any(|m| m.topic == topic || m.text == message.trim())
-            {
-                stage("duplicate_topic");
-                return Ok(true);
-            }
-            let id = format!(
-                "desktop-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos()
-            );
-            let expires = now() + 90;
-            cache.push_back(Opener {
-                id: id.clone(),
-                text: message.trim().into(),
-                topic,
-                window: expected,
-                fingerprint: frame.fingerprint,
-                expires,
-            });
-            while cache.len() > 32 {
-                cache.pop_front();
-            }
-            drop(cache);
-            let db = app.state::<Arc<MemoryDb>>();
-            let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
-            store::transaction(&mut conn, |tx| {
-                if !proactive::event_allowed(tx, ProactiveCategory::DesktopObservation, now())? {
+            let app = app.clone();
+            let revision = settings.revision;
+            crate::common::on_blocking(move || -> Result<(), String> {
+                let mut cache = OPENERS
+                    .lock()
+                    .map_err(|_| crate::error_codes::DESKTOP_STATE_UNAVAILABLE)?;
+                if cache
+                    .iter()
+                    .any(|m| m.topic == topic || m.text == message.trim())
+                {
+                    stage("duplicate_topic");
                     return Ok(());
                 }
-                proactive::queue(
-                    tx,
-                    ProactiveMessage {
-                        id: id.clone(),
-                        category: ProactiveCategory::DesktopObservation,
-                        source: SourceRef {
-                            kind: TEMPLATE.into(),
+                let id = format!(
+                    "desktop-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                );
+                let expires = now() + 90;
+                cache.push_back(Opener {
+                    id: id.clone(),
+                    text: message.trim().into(),
+                    topic,
+                    window: expected,
+                    fingerprint: frame.fingerprint,
+                    expires,
+                });
+                while cache.len() > 32 {
+                    cache.pop_front();
+                }
+                drop(cache);
+                let db = app.state::<Arc<MemoryDb>>();
+                let mut conn =
+                    db.0.lock()
+                        .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
+                store::transaction(&mut conn, |tx| {
+                    if !proactive::event_allowed(tx, ProactiveCategory::DesktopObservation, now())?
+                    {
+                        return Ok(());
+                    }
+                    proactive::queue(
+                        tx,
+                        ProactiveMessage {
                             id: id.clone(),
-                            revision: settings.revision,
+                            category: ProactiveCategory::DesktopObservation,
+                            source: SourceRef {
+                                kind: TEMPLATE.into(),
+                                id: id.clone(),
+                                revision,
+                            },
+                            dedupe_key: id,
+                            template_id: TEMPLATE.into(),
+                            valid_from: now(),
+                            expires_at: expires,
+                            state: DeliveryState::Pending,
                         },
-                        dedupe_key: id,
-                        template_id: TEMPLATE.into(),
-                        valid_from: now(),
-                        expires_at: expires,
-                        state: DeliveryState::Pending,
-                    },
-                    now(),
-                )
-            })?;
-            stage("queued");
+                        now(),
+                    )
+                })?;
+                stage("queued");
+                Ok(())
+            })
+            .await?;
         }
     }
     Ok(true)
@@ -833,7 +872,9 @@ pub fn soul_desktop_status(
     db: State<'_, Arc<MemoryDb>>,
 ) -> Result<DesktopStatus, String> {
     let config = crate::settings::read_settings(&app);
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let settings = read(&conn)?;
     let active = enabled(&conn)?;
     let (date, attempts): (String, i64) = conn
@@ -842,7 +883,7 @@ pub fn soul_desktop_status(
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .map_err(|_| "desktop_budget_failed")?;
+        .map_err(|_| crate::error_codes::DESKTOP_BUDGET_FAILED)?;
     drop(conn);
     let used = if date == chrono::Local::now().date_naive().to_string() {
         attempts
@@ -882,7 +923,7 @@ fn diagnostic_image(code: &str) -> Result<Vec<u8>, String> {
         [14, 17, 17, 15, 1, 2, 12],
     ];
     if code.len() != 4 || !code.bytes().all(|c| c.is_ascii_digit()) {
-        return Err("desktop_test_invalid".into());
+        return Err(crate::error_codes::DESKTOP_TEST_INVALID.into());
     }
     let mut picture =
         xcap::image::RgbImage::from_pixel(300, 110, xcap::image::Rgb([255, 255, 255]));
@@ -906,7 +947,7 @@ fn diagnostic_image(code: &str) -> Result<Vec<u8>, String> {
     let mut buffer = std::io::Cursor::new(Vec::new());
     DynamicImage::ImageRgb8(picture)
         .write_to(&mut buffer, ImageFormat::Png)
-        .map_err(|_| "desktop_test_invalid")?;
+        .map_err(|_| crate::error_codes::DESKTOP_TEST_INVALID)?;
     Ok(buffer.into_inner())
 }
 static MODEL_TEST_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -923,10 +964,10 @@ pub async fn soul_test_desktop_model(
     model: String,
 ) -> Result<(), String> {
     if !matches!(window.label(), "panel" | "bubble") {
-        return Err("settings_source_invalid".into());
+        return Err(crate::error_codes::SETTINGS_SOURCE_INVALID.into());
     }
     if model.chars().count() > 128 {
-        return Err("desktop_settings_invalid".into());
+        return Err(crate::error_codes::DESKTOP_SETTINGS_INVALID.into());
     }
     if MODEL_TEST_BUSY
         .compare_exchange(
@@ -937,7 +978,7 @@ pub async fn soul_test_desktop_model(
         )
         .is_err()
     {
-        return Err("desktop_test_busy".into());
+        return Err(crate::error_codes::DESKTOP_TEST_BUSY.into());
     }
     let _guard = ModelTestGuard;
     let mut config = crate::settings::read_settings(&app);
@@ -957,9 +998,9 @@ pub async fn soul_test_desktop_model(
     let raw=complete(&config.ai,"Read the four digits in the image. Return only JSON with one field: code, a string of exactly four digits. Preserve leading zeros. Do not guess if the image is unavailable.","Read the attached image.",&png).await?;
     let value: Value =
         serde_json::from_str(crate::chat::extract_json_fragment(&raw).unwrap_or(&raw))
-            .map_err(|_| "desktop_test_vision_failed")?;
+            .map_err(|_| crate::error_codes::DESKTOP_TEST_VISION_FAILED)?;
     if value["code"].as_str() != Some(&code) {
-        return Err("desktop_test_vision_failed".into());
+        return Err(crate::error_codes::DESKTOP_TEST_VISION_FAILED.into());
     }
     Ok(())
 }

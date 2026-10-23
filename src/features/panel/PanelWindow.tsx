@@ -13,6 +13,12 @@ import { TodayTab } from "./tabs/TodayTab";
 
 const onboardingFallback: OnboardingStatus = { required: false, completed: true, version: "" };
 
+const workspaceDescriptions: Record<PanelTab, string> = {
+  today: "安排日程，留一点时间给自己",
+  records: "灵感、对话与记忆，都在这里",
+  settings: "让 Piko 更懂你的习惯",
+};
+
 /**
  * 主面板外壳（R1）。
  *
@@ -35,7 +41,7 @@ export function PanelWindow({ activeTab, onTabChange, onClose }: {
   if (!visited.has(tab)) setVisited(new Set([...visited, tab]));
 
   const refreshOnboarding = useCallback(async () => {
-    const status = await runCommand<OnboardingStatus>(
+    const status = await runCommand(
       "get_onboarding_status",
       undefined,
       onboardingFallback,
@@ -73,7 +79,7 @@ export function PanelWindow({ activeTab, onTabChange, onClose }: {
     <section className={`panel-shell panel-shell--${settings.theme}${onClose ? " panel-shell--embedded" : ""}`} aria-label="主面板工作区">
       {onClose ? <header className="workspace-header" onPointerDown={(event) => {
         if (isTauriRuntime && event.button === 0 && !(event.target as HTMLElement).closest("button")) void getCurrentWindow().startDragging();
-      }}><strong>工作区</strong><button type="button" onClick={onClose} aria-label="收起工作区" title="收起面板"><PanelRightClose size={16} /><span className="workspace-header__collapse">收起面板</span><span className="workspace-header__return">返回聊天</span></button></header> : <PanelHeader tab={tab} companionName={settings.companionName} />}
+      }}><div className="workspace-header__heading"><strong>工作区</strong><span>{workspaceDescriptions[tab]}</span></div><button type="button" onClick={onClose} aria-label="收起工作区" title="收起面板"><PanelRightClose size={16} /><span className="workspace-header__collapse">收起面板</span><span className="workspace-header__return">返回聊天</span></button></header> : <PanelHeader tab={tab} companionName={settings.companionName} />}
       <PanelNavigation tab={tab} onChange={setTab} />
       {(["today", "records", "settings"] as const).map((value) => <div key={value} className="panel-workspace" hidden={tab !== value}>
         {(visited.has(value) || tab === value) && (value === "today" ? <TodayTab /> : value === "records" ? <RecordsTab /> : <SettingsTab />)}

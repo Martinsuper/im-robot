@@ -41,7 +41,7 @@ fn select(scores: &Scores, current: Mood) -> Mood {
         .unwrap_or(Mood::Calm)
 }
 fn load(conn: &Connection, now: i64) -> Result<State, String> {
-    let row:Option<(String,String,i64,i64)>=conn.query_row("SELECT scores,current_mood,last_decay_at,rule_version FROM soul_mood_snapshot WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|_| "mood_unreadable")?;
+    let row:Option<(String,String,i64,i64)>=conn.query_row("SELECT scores,current_mood,last_decay_at,rule_version FROM soul_mood_snapshot WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|_| crate::error_codes::MOOD_UNREADABLE)?;
     let mut state = match row {
         None => State {
             mood: Mood::Calm,
@@ -50,15 +50,16 @@ fn load(conn: &Connection, now: i64) -> Result<State, String> {
         },
         Some((scores, mood, last_decay, version)) => {
             if version != RULE_VERSION {
-                return Err("mood_rule_mismatch".into());
+                return Err(crate::error_codes::MOOD_RULE_MISMATCH.into());
             }
-            let scores: Scores = serde_json::from_str(&scores).map_err(|_| "mood_unreadable")?;
+            let scores: Scores =
+                serde_json::from_str(&scores).map_err(|_| crate::error_codes::MOOD_UNREADABLE)?;
             if scores.values.values().any(|score| *score > 3) {
-                return Err("mood_unreadable".into());
+                return Err(crate::error_codes::MOOD_UNREADABLE.into());
             }
             State {
                 mood: serde_json::from_value(serde_json::Value::String(mood))
-                    .map_err(|_| "mood_unreadable")?,
+                    .map_err(|_| crate::error_codes::MOOD_UNREADABLE)?,
                 scores,
                 last_decay,
             }
@@ -75,8 +76,9 @@ fn load(conn: &Connection, now: i64) -> Result<State, String> {
     Ok(state)
 }
 fn save(conn: &Connection, state: &State) -> Result<(), String> {
-    let name = serde_json::to_value(state.mood).map_err(|_| "mood_write_failed")?;
-    conn.execute("INSERT INTO soul_mood_snapshot VALUES(1,?1,?2,?3,?4) ON CONFLICT(singleton) DO UPDATE SET rule_version=excluded.rule_version,scores=excluded.scores,current_mood=excluded.current_mood,last_decay_at=excluded.last_decay_at",params![RULE_VERSION,serde_json::to_string(&state.scores).map_err(|_| "mood_write_failed")?,name.as_str(),state.last_decay]).map_err(|_| "mood_write_failed")?;
+    let name =
+        serde_json::to_value(state.mood).map_err(|_| crate::error_codes::MOOD_WRITE_FAILED)?;
+    conn.execute("INSERT INTO soul_mood_snapshot VALUES(1,?1,?2,?3,?4) ON CONFLICT(singleton) DO UPDATE SET rule_version=excluded.rule_version,scores=excluded.scores,current_mood=excluded.current_mood,last_decay_at=excluded.last_decay_at",params![RULE_VERSION,serde_json::to_string(&state.scores).map_err(|_| crate::error_codes::MOOD_WRITE_FAILED)?,name.as_str(),state.last_decay]).map_err(|_| crate::error_codes::MOOD_WRITE_FAILED)?;
     Ok(())
 }
 fn enabled(conn: &Connection) -> Result<bool, String> {
@@ -86,7 +88,7 @@ fn enabled(conn: &Connection) -> Result<bool, String> {
         |r| r.get(0),
     )
     .optional()
-    .map_err(|_| "mood_unreadable".to_string())
+    .map_err(|_| crate::error_codes::MOOD_UNREADABLE.to_string())
     .map(|value| value.unwrap_or(false))
 }
 pub fn snapshot(conn: &mut Connection, now: i64) -> Result<Mood, String> {
@@ -125,7 +127,7 @@ pub(crate) fn event(
                 |r| r.get::<_, i64>(0),
             )
             .optional()
-            .map_err(|_| "mood_unreadable")?
+            .map_err(|_| crate::error_codes::MOOD_UNREADABLE)?
             .unwrap_or(0);
         if occurred_at <= baseline
             || occurred_at < now - 86400
@@ -141,8 +143,8 @@ pub(crate) fn event(
                 [format!("mood:{kind}")],
                 |r| r.get::<_, Option<i64>>(0),
             )
-            .map_err(|_| "mood_unreadable")?;
-        let fresh=tx.execute("INSERT INTO soul_events(dedupe_key,kind,source_ref,occurred_at) VALUES(?1,?2,?3,?4) ON CONFLICT(dedupe_key) DO NOTHING",params![key,format!("mood:{kind}"),serde_json::to_string(source).map_err(|_| "mood_write_failed")?,occurred_at]).map_err(|_| "mood_write_failed")?;
+            .map_err(|_| crate::error_codes::MOOD_UNREADABLE)?;
+        let fresh=tx.execute("INSERT INTO soul_events(dedupe_key,kind,source_ref,occurred_at) VALUES(?1,?2,?3,?4) ON CONFLICT(dedupe_key) DO NOTHING",params![key,format!("mood:{kind}"),serde_json::to_string(source).map_err(|_| crate::error_codes::MOOD_WRITE_FAILED)?,occurred_at]).map_err(|_| crate::error_codes::MOOD_WRITE_FAILED)?;
         if fresh == 1 && last.is_none_or(|last| occurred_at >= last + 60) {
             let score = state.scores.values.entry(target).or_insert(0);
             *score = (*score + 1).min(3);
@@ -154,7 +156,7 @@ pub(crate) fn event(
             "DELETE FROM soul_events WHERE kind LIKE 'mood:%' AND occurred_at<?1",
             [now - 86400],
         )
-        .map_err(|_| "mood_write_failed")?;
+        .map_err(|_| crate::error_codes::MOOD_WRITE_FAILED)?;
         Ok(state.mood)
     })
 }

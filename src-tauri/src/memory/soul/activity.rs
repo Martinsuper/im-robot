@@ -61,9 +61,12 @@ impl ActivityState {
         wall_now: i64,
     ) -> Result<(), &'static str> {
         if snapshot.observed_at > wall_now + OBSERVED_AT_TOLERANCE {
-            return Err("activity_observed_in_future");
+            return Err(crate::error_codes::ACTIVITY_OBSERVED_IN_FUTURE);
         }
-        let mut inner = self.inner.lock().map_err(|_| "state_unavailable")?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| crate::error_codes::STATE_UNAVAILABLE)?;
         let now = Instant::now();
         inner.sources.insert(source.into(), (snapshot.clone(), now));
         inner.reported = Some((snapshot, now));
@@ -473,7 +476,7 @@ mod tests {
         future.observed_at = 1_100;
         assert_eq!(
             state.report(future, 1_000).unwrap_err(),
-            "activity_observed_in_future"
+            crate::error_codes::ACTIVITY_OBSERVED_IN_FUTURE
         );
         let (_, age) = state.read().unwrap();
         assert!(age < Duration::from_secs(1));

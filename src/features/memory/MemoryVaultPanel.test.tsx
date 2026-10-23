@@ -107,7 +107,7 @@ describe("Markdown memory vault", () => {
     await screen.findByText("/notes/piko");
     fireEvent.click(screen.getByRole("button", { name: "打开文件夹" }));
     await waitFor(() =>
-      expect(invokeMock).toHaveBeenCalledWith("memory_vault_open_directory"),
+      expect(invokeMock).toHaveBeenCalledWith("memory_vault_open_directory", {}),
     );
     await waitFor(() =>
       expect(

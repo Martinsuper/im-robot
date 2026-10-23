@@ -7,15 +7,20 @@
  */
 
 :root {
-  /* --- 品牌与纸张（值沿用原 design-system.css:2-8，未改动） --- */
-  --piko-paper: #f7f7f2;
-  --piko-ink: #293b34;
-  --piko-muted: #68756e;
-  --piko-accent: #356951;
-  --piko-soft: #e9f0e7;
-  --piko-line: #dfe5dc;
+  /* --- 品牌与纸张（中性底色与低饱和品牌色） --- */
+  --piko-paper: #f5f7f8;
+  --piko-ink: #202b32;
+  --piko-muted: #69757e;
+  --piko-accent: #28745c;
+  --piko-soft: #eaf3ee;
+  --piko-line: #e3e8eb;
   /* 新增：卡片 / Toast 的实底填充色（feedback.css 已引用，此前只能走字面量兜底） */
-  --piko-fill: #fffefa;
+  --piko-fill: #ffffff;
+
+  --piko-surface-hover: #f7f9fa;
+  --piko-shadow-sm: 0 1px 2px rgb(20 34 45 / 4%);
+  --piko-shadow-md: 0 4px 18px rgb(20 34 45 / 5%);
+  --piko-focus-ring: 0 0 0 3px rgb(40 116 92 / 14%);
 
   /* --- 间距（够 R1 用的最小集） --- */
   --space-1: 4px;
@@ -28,15 +33,15 @@
   /* --- 圆角 --- */
   --radius-sm: 8px;
   --radius-md: 10px;
-  --radius-lg: 13px;
+  --radius-lg: 14px;
   --radius-xl: 16px;
 
   /* --- 字号 --- */
-  --text-xs: 9px;
-  --text-sm: 11px;
-  --text-md: 12px;
-  --text-base: 13px;
-  --text-lg: 15px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
 
   /* --- 层级（现有实际取值，避免各窗口继续各写各的） --- */
   --z-base: 1;
@@ -49,24 +54,39 @@
 /*
  * 面板语义令牌：集中到这一处唯一定义。
  *
- * 值取 design-system.css 现行生效值（绿色系），不取 App.css 里那份已被覆盖的 iOS 蓝。
+ * 语义色继承品牌令牌，确保主窗口与嵌入工作区保持一致。
  * 选择器写成 `:root, .panel-shell` 而非只写 `:root`，是为了保住主题覆盖：
  * `var()` 在「声明所在的那个元素」上求值 —— 若只挂在 :root，`.panel-shell--blue`
  * 覆盖的 `--piko-accent` 就传不进 `--panel-accent`，蓝 / 桃主题会退回绿色。
  * 挂在 .panel-shell 上时，会拿该元素上（含主题覆盖后）的 --piko-* 重新求值，
- * 渲染结果与迁移前逐值一致。
+ * 各主题共享中性底色，仅切换强调色与浅色背景。
  */
 :root,
 .panel-shell {
   --panel-text: var(--piko-ink);
   --panel-muted: var(--piko-muted);
-  --panel-subtle: #6d796f;
+  --panel-subtle: #75818a;
   --panel-accent: var(--piko-accent);
   --panel-accent-soft: var(--piko-soft);
   --panel-line: var(--piko-line);
-  --panel-fill: #fffefa;
-  --panel-fill-strong: #fffefa;
-  /* 面板底纹用的淡色底。design-system.css 从未覆盖它，所以现行生效值就是
-     App.css 原来的 #f4f7f4，这里照搬以保证渐变背景逐像素不变。 */
-  --panel-tint: #f4f7f4;
+  --panel-fill: #ffffff;
+  --panel-fill-strong: #ffffff;
+  /* 页面底色与卡片底色分开，建立清晰层级。 */
+  --panel-tint: #f0f4f5;
+}
+
+/* Theme accents live alongside the shared tokens, not in component styles. */
+.panel-shell--blue,
+.bubble-shell--blue {
+  --piko-paper: #f5f7fa;
+  --piko-soft: #eaf1f8;
+  --piko-accent: #346c9b;
+  --piko-focus-ring: 0 0 0 3px rgb(52 108 155 / 14%);
+}
+.panel-shell--peach,
+.bubble-shell--peach {
+  --piko-paper: #f9f7f5;
+  --piko-soft: #f8eee7;
+  --piko-accent: #a65f3c;
+  --piko-focus-ring: 0 0 0 3px rgb(166 95 60 / 14%);
 }

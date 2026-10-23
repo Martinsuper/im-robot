@@ -125,18 +125,20 @@ pub fn clear_memories(
         .try_state::<super::soul::model::SoulBootStatus>()
         .is_some_and(|status| status.0)
     {
-        let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+        let mut conn =
+            db.0.lock()
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
         let sources = {
             let mut statement = conn
                 .prepare("SELECT id FROM memory_items WHERE ?1 IS NULL OR memory_type=?1")
-                .map_err(|_| "storage_unavailable")?;
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
             let sources = statement
                 .query_map(rusqlite::params![memory_type.as_ref()], |row| {
                     row.get::<_, String>(0)
                 })
-                .map_err(|_| "storage_unavailable")?
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| "storage_unavailable")?;
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
             sources
         };
         super::soul::lifecycle::delete_sources(
@@ -404,7 +406,7 @@ fn titles_similar(a: &str, b: &str) -> bool {
         }
     }
     let min_len = a_chars.len().min(b_chars.len());
-    (shared as f32 / min_len as f32) > 0.7
+    (shared as f32 / min_len as f32) > super::tuning::TITLE_SIMILARITY_THRESHOLD
 }
 
 #[tauri::command]

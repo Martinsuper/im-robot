@@ -7,6 +7,18 @@ use serde_json::Value;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+/// 在阻塞线程池上执行数据库等同步阻塞工作，避免慢查询/大扫描卡住 async 运行时线程。
+/// 数据库 guard 不得跨 await 持有（见 memory/extraction.rs 的约定）。
+pub(crate) async fn on_blocking<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| crate::error_codes::BACKGROUND_TASK_FAILED.to_string())?
+}
+
 pub(crate) fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -10,6 +10,7 @@ import "./styles/base.css";
 import "./App.css";
 import "./features/app/design-system.css";
 import "./features/chat/bubble.css";
+import "./styles/modern.css";
 
 type WindowLabel = "pet" | "bubble" | "panel" | "capture" | "html-preview";
 

@@ -14,8 +14,9 @@ TypingStatsToday,
 WorkRhythmState,
 } from "../../types/appTypes";
 import { disposeAsyncSubscriptions } from "../pet/hooks/eventSubscription";
+import { isTauriRuntime } from "./appRuntime";
 
-export const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+export { isTauriRuntime };
 
 export const petSpriteStates = {
   idle: { row: 0, frames: 6, duration: 5500 },
@@ -269,6 +270,8 @@ export const defaultAppSettings: AppSettings = {
   htmlPreviewEnabled: false,
   agentAutoApproveCommands: false,
   globalShortcut: "CmdOrCtrl+Shift+Space",
+  onboardingCompleted: false,
+  onboardingVersion: "",
 };
 
 

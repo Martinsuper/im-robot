@@ -25,7 +25,7 @@ export function TaskHistory({ busy, onInspect, onResume }: { busy: boolean; onIn
   useEffect(() => {
     if (!isTauriRuntime) return;
     let disposed = false;
-    void runCommand<TaskRecord[]>("agent_list_tasks").then((items) => {
+    void runCommand("agent_list_tasks").then((items) => {
       if (!disposed) { setRecords(Array.isArray(items) ? items : []); setError(""); }
     }).catch((cause) => {
       if (!disposed) setError(toUserMessage(cause, "任务记录读取失败，请重试"));

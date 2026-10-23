@@ -138,12 +138,12 @@ export function TodayTab() {
 
   const loadItems = useCallback(async () => {
     try {
-      const next = await runCommand<ScheduleItem[]>(
+      const next = await runCommand(
         "list_schedule_items",
         undefined,
         isTauriRuntime ? undefined : previewScheduleItems(),
       );
-      setItems(next ?? []);
+      setItems((next ?? []) as ScheduleItem[]);
       setLoadError("");
     } catch (error) {
       setLoadError(toUserMessage(error, "今天的安排加载失败，请重试。"));
@@ -151,14 +151,14 @@ export function TodayTab() {
   }, []);
 
   const loadCalendarSyncStatus = useCallback(async () => {
-    const status = await runCommand<CalendarSyncStatus>(
+    const status = await runCommand(
       "get_calendar_sync_status",
       undefined,
       // 预览环境没有后端。这里的 fallback 模拟 macOS（目标平台支持直连），
       // 好让浏览器预览与 e2e 能看到「与系统日历同步」这个入口。
       { platform: "macos", available: true, lastSync: null, mappingCount: 0 },
     );
-    setCalendarSync(status ?? null);
+    setCalendarSync((status ?? null) as CalendarSyncStatus | null);
   }, []);
 
   /**
@@ -170,16 +170,16 @@ export function TodayTab() {
   async function syncWithSystemCalendar() {
     setIsSyncing(true);
     try {
-      const pushed = await runCommand<{ pushed: number }>(
+      const pushed = (await runCommand(
         "sync_calendar_to_system",
         undefined,
         { pushed: 0 },
-      );
-      const pulled = await runCommand<{ imported: number }>(
+      )) as { pushed: number } | null;
+      const pulled = (await runCommand(
         "sync_calendar_from_system",
         undefined,
         { imported: 0 },
-      );
+      )) as { imported: number } | null;
       const parts = [
         pushed?.pushed ? `推出 ${pushed.pushed} 条` : "",
         pulled?.imported ? `导入 ${pulled.imported} 条` : "",
@@ -220,12 +220,12 @@ export function TodayTab() {
   }
 
   const loadFocus = useCallback(async () => {
-    const snapshot = await runCommand<FocusSnapshot>(
+    const snapshot = await runCommand(
       "get_focus_state",
       undefined,
       defaultFocusSnapshot,
     );
-    setFocus(snapshot ?? defaultFocusSnapshot);
+    setFocus((snapshot ?? defaultFocusSnapshot) as FocusSnapshot);
   }, []);
 
   useEffect(() => {

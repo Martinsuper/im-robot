@@ -7,6 +7,7 @@ pub mod policy;
 pub mod reflection;
 pub mod soul;
 pub mod store;
+pub(crate) mod tuning;
 pub mod vault;
 pub mod writer;
 

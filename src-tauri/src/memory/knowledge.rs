@@ -1,5 +1,11 @@
 //! Persistent, source-grounded retrieval shared by chat and the agent runtime.
 //! Network calls never hold the database lock. Embeddings are optional and opt-in.
+use super::store::sql_literal::{PRIVACY_PUBLIC, STATUS_ACTIVE, STATUS_DELETED, STATUS_SUPERSEDED};
+use super::tuning::{
+    CHUNK_BOUNDARY_FROM, CHUNK_OVERLAP, CHUNK_SIZE, CONTEXT_CHAR_BUDGET, CONTEXT_DOC_CHAR_CAP,
+    CONTEXT_HIT_LIMIT, CONTEXT_MEMORY_CHAR_CAP, COSINE_THRESHOLD, LEXICAL_CONTENT_WEIGHT,
+    LEXICAL_TITLE_WEIGHT, RETRIEVAL_RESULT_CAP, RRF_K, RRF_LIST_CAP,
+};
 use super::{BuildContextInput, MemoryDb};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -217,9 +223,9 @@ fn chunk_text(text: &str, page: Option<u32>) -> Vec<(String, String)> {
     let mut start = 0;
     let mut line = 1;
     while start < chars.len() {
-        let mut end = (start + 1000).min(chars.len());
+        let mut end = (start + CHUNK_SIZE).min(chars.len());
         if end < chars.len() {
-            if let Some(boundary) = (start + 600..end)
+            if let Some(boundary) = (start + CHUNK_BOUNDARY_FROM..end)
                 .rev()
                 .find(|&i| matches!(chars[i], '\n' | '。' | '！' | '？'))
             {
@@ -236,7 +242,7 @@ fn chunk_text(text: &str, page: Option<u32>) -> Vec<(String, String)> {
         if end == chars.len() {
             break;
         }
-        let next = end.saturating_sub(120).max(start + 1);
+        let next = end.saturating_sub(CHUNK_OVERLAP).max(start + 1);
         line += chars[start..next].iter().filter(|&&c| c == '\n').count();
         start = next;
     }
@@ -419,7 +425,7 @@ fn entries(db: &MemoryDb, signature: &str, scope: Option<&str>) -> Result<Vec<En
         }
     }
     // Sensitive/expired/superseded memories never enter embedding requests or retrieval.
-    let mut stmt = conn.prepare("SELECT m.id,m.title,m.content,v.fingerprint,v.signature,v.vector FROM memory_items m LEFT JOIN retrieval_vectors v ON v.id=m.id WHERE m.status='\"active\"' AND m.privacy_level='\"publicToUser\"' AND (m.expires_at IS NULL OR m.expires_at>?1)").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(&format!("SELECT m.id,m.title,m.content,v.fingerprint,v.signature,v.vector FROM memory_items m LEFT JOIN retrieval_vectors v ON v.id=m.id WHERE m.status={STATUS_ACTIVE} AND m.privacy_level={PRIVACY_PUBLIC} AND (m.expires_at IS NULL OR m.expires_at>?1)")).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([now()], |r| {
             let title: String = r.get(1)?;
@@ -566,7 +572,7 @@ fn rank(
     };
     let mut lexical: Vec<(usize,f64)> = all.iter().enumerate().filter_map(|(i,e)| {
         let title = e.hit.title.to_lowercase(); let content = e.hit.content.to_lowercase();
-        let score = terms.iter().map(|t| if title.contains(t) { 3.0 } else { 0.0 } + if content.contains(t) { 1.0 } else { 0.0 }).sum::<f64>();
+        let score = terms.iter().map(|t| if title.contains(t) { LEXICAL_TITLE_WEIGHT } else { 0.0 } + if content.contains(t) { LEXICAL_CONTENT_WEIGHT } else { 0.0 }).sum::<f64>();
         (score > 0.0).then_some((i,score))
     }).collect();
     lexical.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| stable_order(a.0, b.0)));
@@ -575,14 +581,14 @@ fn rank(
         .enumerate()
         .filter_map(|(i, e)| {
             let score = cosine(vector?, e.vector.as_deref()?)?;
-            (score > 0.35).then_some((i, score))
+            (score > COSINE_THRESHOLD).then_some((i, score))
         })
         .collect();
     semantic.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| stable_order(a.0, b.0)));
     let mut scores: HashMap<usize, f64> = HashMap::new();
     for list in [&lexical, &semantic] {
-        for (rank, (i, _)) in list.iter().take(60).enumerate() {
-            *scores.entry(*i).or_default() += 1.0 / (60.0 + rank as f64 + 1.0);
+        for (rank, (i, _)) in list.iter().take(RRF_LIST_CAP).enumerate() {
+            *scores.entry(*i).or_default() += 1.0 / (RRF_K + rank as f64 + 1.0);
         }
     }
     let ids: HashMap<&str, usize> = all
@@ -590,16 +596,16 @@ fn rank(
         .enumerate()
         .map(|(i, e)| (e.hit.id.as_str(), i))
         .collect();
-    for (rank, id) in fts.iter().take(60).enumerate() {
+    for (rank, id) in fts.iter().take(RRF_LIST_CAP).enumerate() {
         if let Some(i) = ids.get(id.as_str()) {
-            *scores.entry(*i).or_default() += 1.0 / (61.0 + rank as f64);
+            *scores.entry(*i).or_default() += 1.0 / (RRF_K + 1.0 + rank as f64);
         }
     }
     let mut scores: Vec<_> = scores.into_iter().collect();
     scores.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| stable_order(a.0, b.0)));
     scores
         .into_iter()
-        .take(limit.min(30))
+        .take(limit.min(RETRIEVAL_RESULT_CAP))
         .map(|(i, score)| {
             let mut hit = all[i].hit.clone();
             hit.score = score;
@@ -631,7 +637,7 @@ fn scoped_fts_hits(db: &MemoryDb, query: &str, scope: Option<&str>) -> Result<Ve
         .map_err(|e| e.to_string())
 }
 async fn retrieve(
-    db: &MemoryDb,
+    db: &Arc<MemoryDb>,
     query: &str,
     scope: Option<&str>,
     limit: usize,
@@ -639,12 +645,22 @@ async fn retrieve(
     if query.chars().count() > 10_000 {
         return Err("搜索内容过长".into());
     }
-    let config = settings(db)?;
-    let signature = config.signature();
-    let all = entries(db, &signature, scope)?;
+    let query = query.to_string();
+    let scope = scope.map(str::to_string);
+    let (config, signature, all) = {
+        let db = Arc::clone(db);
+        let scope = scope.clone();
+        crate::common::on_blocking(move || {
+            let config = settings(&db)?;
+            let signature = config.signature();
+            let all = entries(&db, &signature, scope.as_deref())?;
+            Ok((config, signature, all))
+        })
+        .await?
+    };
     let mut warning = None;
     let vector = if config.enabled && all.iter().any(|e| e.vector.is_some()) {
-        match embed(&config, &[query.into()]).await {
+        match embed(&config, std::slice::from_ref(&query)).await {
             Ok(v) => v.into_iter().next(),
             Err(e) => {
                 warning = Some(format!("{e}；本次使用关键词检索"));
@@ -655,12 +671,21 @@ async fn retrieve(
         None
     };
     // Re-read after the network call: deleted/changed sources must not return from a stale snapshot.
-    if settings(db)?.signature() != signature {
-        return Err("检索配置已变化，请重新搜索".into());
-    }
-    let all = entries(db, &signature, scope)?;
-    let fts = scoped_fts_hits(db, query, scope)?;
-    Ok((rank(&all, query, vector.as_deref(), &fts, limit), warning))
+    let (all, fts) = {
+        let db = Arc::clone(db);
+        let query = query.clone();
+        let scope = scope.clone();
+        crate::common::on_blocking(move || {
+            if settings(&db)?.signature() != signature {
+                return Err("检索配置已变化，请重新搜索".into());
+            }
+            let all = entries(&db, &signature, scope.as_deref())?;
+            let fts = scoped_fts_hits(&db, &query, scope.as_deref())?;
+            Ok((all, fts))
+        })
+        .await?
+    };
+    Ok((rank(&all, &query, vector.as_deref(), &fts, limit), warning))
 }
 
 /// A conversation keeps its first project binding across restarts and resumed tasks.
@@ -674,7 +699,9 @@ pub(crate) fn bind_conversation(
     if scope.chars().count() > 120 {
         return Err("项目名不能超过 120 字".into());
     }
-    let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let saved: Option<String> = tx
         .query_row(
@@ -703,7 +730,9 @@ pub(crate) fn bind_conversation(
 }
 
 pub(crate) fn request_scope(db: &MemoryDb, request: &str) -> Result<Option<String>, String> {
-    let conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+    let conn =
+        db.0.lock()
+            .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
     let scope: Option<String> = conn.query_row("SELECT c.scope FROM knowledge_conversations c JOIN knowledge_requests r ON r.conversation_id=c.id WHERE r.id=?1", [request], |row| row.get(0)).optional().map_err(|e| e.to_string())?;
     Ok(scope.filter(|s| !s.is_empty()))
 }
@@ -805,28 +834,43 @@ fn expand_neighbors(
 
 /// Small core profile budget plus shared hybrid retrieval, bounded by a character budget.
 /// Retrieved content is quoted evidence, never a source of system/tool instructions.
-pub async fn context(db: &MemoryDb, query: &str) -> Result<String, String> {
+pub async fn context(db: &Arc<MemoryDb>, query: &str) -> Result<String, String> {
     scoped_context(db, query, None).await
 }
 
 pub async fn scoped_context(
-    db: &MemoryDb,
+    db: &Arc<MemoryDb>,
     query: &str,
     scope: Option<&str>,
 ) -> Result<String, String> {
-    let (hits, _) = retrieve(db, query, scope, 8).await.unwrap_or_default();
-    let hits = expand_neighbors(db, hits.clone(), scope).unwrap_or(hits);
-    let core = db.build_context(BuildContextInput {
-        current_query: Some(query.into()),
-        window_type: None,
-        limit: Some(4),
-    })?;
+    let (hits, _) = retrieve(db, query, scope, CONTEXT_HIT_LIMIT)
+        .await
+        .unwrap_or_default();
+    let query = query.to_string();
+    let scope = scope.map(str::to_string);
+    let (hits, core) = {
+        let db = Arc::clone(db);
+        crate::common::on_blocking(move || {
+            let hits = expand_neighbors(&db, hits.clone(), scope.as_deref()).unwrap_or(hits);
+            let core = db.build_context(BuildContextInput {
+                current_query: Some(query),
+                window_type: None,
+                limit: Some(4),
+            })?;
+            Ok((hits, core))
+        })
+        .await?
+    };
     let mut seen = HashSet::new();
     let mut evidence = Vec::new();
-    let mut budget = 14_000usize;
+    let mut budget = CONTEXT_CHAR_BUDGET;
     for hit in hits {
         seen.insert(hit.id.clone());
-        let content: String = hit.content.chars().take(budget.min(1800)).collect();
+        let content: String = hit
+            .content
+            .chars()
+            .take(budget.min(CONTEXT_DOC_CHAR_CAP))
+            .collect();
         if content.is_empty() {
             break;
         }
@@ -840,7 +884,11 @@ pub async fn scoped_context(
         if budget == 0 || !seen.insert(item.id.clone()) {
             continue;
         }
-        let content: String = item.content.chars().take(budget.min(1200)).collect();
+        let content: String = item
+            .content
+            .chars()
+            .take(budget.min(CONTEXT_MEMORY_CHAR_CAP))
+            .collect();
         budget = budget.saturating_sub(content.chars().count());
         evidence.push(serde_json::json!({"id":item.id,"title":item.title,"source":"用户记忆","content":content}));
     }
@@ -996,20 +1044,27 @@ pub async fn knowledge_search(
 pub async fn knowledge_reindex(db: State<'_, Arc<MemoryDb>>) -> Result<IndexReport, String> {
     index_pending(&db, 128).await
 }
-async fn index_pending(db: &MemoryDb, batch_limit: usize) -> Result<IndexReport, String> {
+async fn index_pending(db: &Arc<MemoryDb>, batch_limit: usize) -> Result<IndexReport, String> {
     static INDEX_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
     let _guard = INDEX_LOCK.lock().await;
-    let config = settings(db)?;
-    if !config.enabled {
-        return Err("请先启用语义检索并保存 Embedding 配置".into());
-    }
-    let signature = config.signature();
-    let pending: Vec<_> = entries(db, &signature, None)?
-        .into_iter()
-        .filter(|e| e.vector.is_none())
-        .take(batch_limit)
-        .collect();
+    let (config, signature, pending) = {
+        let db = Arc::clone(db);
+        crate::common::on_blocking(move || {
+            let config = settings(&db)?;
+            if !config.enabled {
+                return Err("请先启用语义检索并保存 Embedding 配置".into());
+            }
+            let signature = config.signature();
+            let pending: Vec<_> = entries(&db, &signature, None)?
+                .into_iter()
+                .filter(|e| e.vector.is_none())
+                .take(batch_limit)
+                .collect();
+            Ok((config, signature, pending))
+        })
+        .await?
+    };
     let mut indexed = 0;
     for batch in pending.chunks(8) {
         let texts: Vec<_> = batch
@@ -1027,47 +1082,63 @@ async fn index_pending(db: &MemoryDb, batch_limit: usize) -> Result<IndexReport,
             })
             .collect();
         let vectors = embed(&config, &texts).await?;
-        if settings(db)?.signature() != signature {
-            return Err("配置已变更，请重新建立索引".into());
-        }
-        let mut conn = db.0.lock().map_err(lock_error)?;
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
-        let current_config: String = tx
-            .query_row("SELECT value FROM retrieval_settings WHERE id=1", [], |r| {
-                r.get(0)
+        let batch = batch.to_vec();
+        let signature = signature.clone();
+        indexed += {
+            let db = Arc::clone(db);
+            crate::common::on_blocking(move || {
+                if settings(&db)?.signature() != signature {
+                    return Err("配置已变更，请重新建立索引".into());
+                }
+                let mut conn = db.0.lock().map_err(lock_error)?;
+                let tx = conn.transaction().map_err(|e| e.to_string())?;
+                let mut added = 0usize;
+                let current_config: String = tx
+                    .query_row("SELECT value FROM retrieval_settings WHERE id=1", [], |r| {
+                        r.get(0)
+                    })
+                    .map_err(|e| e.to_string())?;
+                if serde_json::from_str::<RetrievalSettings>(&current_config)
+                    .map_err(|e| e.to_string())?
+                    .signature()
+                    != signature
+                {
+                    return Err("配置已变更，请重新建立索引".into());
+                }
+                for (entry, vector) in batch.iter().zip(vectors) {
+                    let current = if entry.hit.source_type == "document" {
+                        tx.query_row(
+                            "SELECT fingerprint FROM knowledge_chunks WHERE id=?1",
+                            [&entry.hit.id],
+                            |r| r.get::<_, String>(0),
+                        )
+                        .optional()
+                        .map_err(|e| e.to_string())?
+                    } else {
+                        tx.query_row(&format!("SELECT title,content FROM memory_items WHERE id=?1 AND status={STATUS_ACTIVE} AND privacy_level={PRIVACY_PUBLIC} AND (expires_at IS NULL OR expires_at>?2)"), params![entry.hit.id,now()], |r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional().map_err(|e|e.to_string())?.map(|(title,content)|hash(&format!("{title}\n{content}")))
+                    };
+                    if current.as_ref() != Some(&entry.fingerprint) {
+                        continue;
+                    }
+                    tx.execute("INSERT INTO retrieval_vectors VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,signature=excluded.signature,vector=excluded.vector",params![entry.hit.id,entry.fingerprint,signature,serde_json::to_string(&vector).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
+                    added += 1;
+                }
+                tx.commit().map_err(|e| e.to_string())?;
+                Ok(added)
             })
-            .map_err(|e| e.to_string())?;
-        if serde_json::from_str::<RetrievalSettings>(&current_config)
-            .map_err(|e| e.to_string())?
-            .signature()
-            != signature
-        {
-            return Err("配置已变更，请重新建立索引".into());
-        }
-        for (entry, vector) in batch.iter().zip(vectors) {
-            let current = if entry.hit.source_type == "document" {
-                tx.query_row(
-                    "SELECT fingerprint FROM knowledge_chunks WHERE id=?1",
-                    [&entry.hit.id],
-                    |r| r.get::<_, String>(0),
-                )
-                .optional()
-                .map_err(|e| e.to_string())?
-            } else {
-                tx.query_row("SELECT title,content FROM memory_items WHERE id=?1 AND status='\"active\"' AND privacy_level='\"publicToUser\"' AND (expires_at IS NULL OR expires_at>?2)", params![entry.hit.id,now()], |r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional().map_err(|e|e.to_string())?.map(|(title,content)|hash(&format!("{title}\n{content}")))
-            };
-            if current.as_ref() != Some(&entry.fingerprint) {
-                continue;
-            }
-            tx.execute("INSERT INTO retrieval_vectors VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,signature=excluded.signature,vector=excluded.vector",params![entry.hit.id,entry.fingerprint,signature,serde_json::to_string(&vector).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
-            indexed += 1;
-        }
-        tx.commit().map_err(|e| e.to_string())?;
+            .await?
+        };
     }
-    let remaining = entries(db, &signature, None)?
-        .iter()
-        .filter(|e| e.vector.is_none())
-        .count();
+    let remaining = {
+        let db = Arc::clone(db);
+        crate::common::on_blocking(move || {
+            Ok(entries(&db, &signature, None)?
+                .iter()
+                .filter(|e| e.vector.is_none())
+                .count())
+        })
+        .await?
+    };
     Ok(IndexReport { indexed, remaining })
 }
 
@@ -1133,7 +1204,9 @@ fn replace_memory(db: &MemoryDb, old_id: &str, new_id: &str) -> Result<(), Strin
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let count: usize = tx
         .query_row(
-            "SELECT COUNT(*) FROM memory_items WHERE id IN (?1,?2) AND status='\"active\"'",
+            &format!(
+                "SELECT COUNT(*) FROM memory_items WHERE id IN (?1,?2) AND status={STATUS_ACTIVE}"
+            ),
             params![old_id, new_id],
             |r| r.get(0),
         )
@@ -1142,7 +1215,7 @@ fn replace_memory(db: &MemoryDb, old_id: &str, new_id: &str) -> Result<(), Strin
         return Err("两条记忆必须都有效".into());
     }
     tx.execute(
-        "UPDATE memory_items SET status='\"superseded\"',updated_at=?1 WHERE id=?2",
+        &format!("UPDATE memory_items SET status={STATUS_SUPERSEDED},updated_at=?1 WHERE id=?2"),
         params![now(), old_id],
     )
     .map_err(|e| e.to_string())?;
@@ -1316,7 +1389,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "UPDATE memory_items SET status='\"superseded\"' WHERE id='superseded'",
+            &format!("UPDATE memory_items SET status={STATUS_SUPERSEDED} WHERE id='superseded'"),
             [],
         )
         .unwrap();
@@ -1486,54 +1559,73 @@ pub fn memory_get_provenance(
     id: String,
 ) -> Result<Option<MemoryProvenance>, String> {
     let conn = db.0.lock().map_err(lock_error)?;
-    conn.query_row("SELECT p.source_id,p.captured_at FROM memory_provenance p JOIN memory_items m ON m.id=p.memory_id WHERE p.memory_id=?1 AND m.status<>'\"deleted\"'",[id],|r|Ok(MemoryProvenance{source_id:r.get(0)?,captured_at:r.get(1)?})).optional().map_err(|e|e.to_string())
+    conn.query_row(&format!("SELECT p.source_id,p.captured_at FROM memory_provenance p JOIN memory_items m ON m.id=p.memory_id WHERE p.memory_id=?1 AND m.status<>{STATUS_DELETED}"),[id],|r|Ok(MemoryProvenance{source_id:r.get(0)?,captured_at:r.get(1)?})).optional().map_err(|e|e.to_string())
 }
 
 pub async fn search_memory(
-    db: &MemoryDb,
+    db: &Arc<MemoryDb>,
     input: super::SearchMemoriesInput,
 ) -> Result<Vec<super::MemoryItem>, String> {
     if input.query.chars().count() > 10_000 {
         return Err("搜索内容过长".into());
     }
-    let config = settings(db)?;
-    let signature = config.signature();
-    let all: Vec<_> = entries(db, &signature, None)?
-        .into_iter()
-        .filter(|e| e.hit.source_type == "memory")
-        .collect();
+    let super::SearchMemoriesInput {
+        query,
+        memory_type,
+        limit,
+    } = input;
+    let (config, signature, all) = {
+        let db = Arc::clone(db);
+        crate::common::on_blocking(move || {
+            let config = settings(&db)?;
+            let signature = config.signature();
+            let all: Vec<_> = entries(&db, &signature, None)?
+                .into_iter()
+                .filter(|e| e.hit.source_type == "memory")
+                .collect();
+            Ok((config, signature, all))
+        })
+        .await?
+    };
     let vector = if config.enabled && all.iter().any(|e| e.vector.is_some()) {
-        embed(&config, std::slice::from_ref(&input.query))
+        embed(&config, std::slice::from_ref(&query))
             .await
             .ok()
             .and_then(|v| v.into_iter().next())
     } else {
         None
     };
-    let all: Vec<_> = entries(db, &signature, None)?
-        .into_iter()
-        .filter(|e| e.hit.source_type == "memory")
-        .collect();
-    let mut items = HashMap::new();
-    let mut filtered = Vec::new();
-    for entry in all {
-        if let Some(item) = db.get(&entry.hit.id)? {
-            if input
-                .memory_type
-                .as_ref()
-                .is_none_or(|kind| kind == &item.memory_type)
-            {
-                items.insert(item.id.clone(), item);
-                filtered.push(entry);
+    let (mut items, filtered) = {
+        let db = Arc::clone(db);
+        crate::common::on_blocking(move || {
+            // Re-read after the network call: deleted/changed sources must not return from a stale snapshot.
+            let all: Vec<_> = entries(&db, &signature, None)?
+                .into_iter()
+                .filter(|e| e.hit.source_type == "memory")
+                .collect();
+            let mut items = HashMap::new();
+            let mut filtered = Vec::new();
+            for entry in all {
+                if let Some(item) = db.get(&entry.hit.id)? {
+                    if memory_type
+                        .as_ref()
+                        .is_none_or(|kind| kind == &item.memory_type)
+                    {
+                        items.insert(item.id.clone(), item);
+                        filtered.push(entry);
+                    }
+                }
             }
-        }
-    }
+            Ok((items, filtered))
+        })
+        .await?
+    };
     let hits = rank(
         &filtered,
-        &input.query,
+        &query,
         vector.as_deref(),
         &[],
-        input.limit.unwrap_or(20),
+        limit.unwrap_or(20),
     );
     Ok(hits
         .into_iter()
@@ -1743,9 +1835,9 @@ mod conversation_tests {
         let path = dir.path().join("memory.db");
         db.0.lock().unwrap().backup("main", &path, None).unwrap();
         drop(db);
-        let db = MemoryDb(crate::data_gate::DataMutex::new(
+        let db = Arc::new(MemoryDb(crate::data_gate::DataMutex::new(
             Connection::open(path).unwrap(),
-        ));
+        )));
         let scope = bind_conversation(&db, "chat", "r2", None).unwrap();
         let context = scoped_context(&db, "知识库", scope.as_deref())
             .await

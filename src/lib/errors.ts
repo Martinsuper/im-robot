@@ -15,6 +15,50 @@ const TECHNICAL_PREFIXES: RegExp[] = [
   /^ipc error:\s*/i,
 ];
 
+/**
+ * IPC 机器码 → 用户文案。与 Rust 侧 `src-tauri/src/error_codes.rs` 注册表一一对应。
+ * 机器码是稳定契约，精确匹配优先于下面的正则降级；只收「语境无关」的码——
+ * 语境化的码（soul / candidate / desktop 等）继续走调用点的本地化 fallback。
+ */
+const CODE_MESSAGES: Record<string, string> = {
+  // 数据层可用性
+  storage_unavailable: "本地数据暂时不可用，请稍后重试。",
+  storage_write_failed: "本地数据保存失败，请稍后重试。",
+  ledger_unreadable: "本地数据暂时无法读取，请重启应用后重试。",
+  ledger_write_failed: "本地数据保存失败，请稍后重试。",
+  quota_unreadable: "本地数据暂时无法读取，请重启应用后重试。",
+  state_unavailable: "本地数据暂时不可用，请稍后重试。",
+  mood_unreadable: "本地数据暂时无法读取，请重启应用后重试。",
+  mood_write_failed: "本地数据保存失败，请稍后重试。",
+  data_gate_unavailable: "本地数据正在备份或恢复，请稍后重试。",
+  // 并发冲突
+  revision_conflict: "内容已在其他窗口被修改，请刷新后重试。",
+  loop_revision_conflict: "内容已在其他窗口被修改，请刷新后重试。",
+  settings_conflict: "设置已在其他窗口被修改，请刷新后重试。",
+  // 能力与窗口
+  capability_unavailable: "当前环境不支持该功能。",
+  window_unavailable: "目标窗口已关闭。",
+  permission_unavailable: "缺少必要的系统权限，请在「设置 → 系统与隐私」中授权。",
+  permission_request_pending: "正在等待系统授权，请在系统弹窗中确认。",
+  // 后台任务
+  background_task_failed: "后台任务异常终止，请重试。",
+  worker_panicked: "后台任务异常终止，请重试。",
+  data_worker_panicked: "后台任务异常终止，请重试。",
+  // 插件
+  wasm_module_path_invalid: "插件文件无效，无法加载。",
+  wasm_module_outside_plugin: "插件文件无效，无法加载。",
+  wasm_module_too_large: "插件文件过大，无法加载。",
+  wasm_input_too_large: "插件输入过大，无法执行。",
+  wasm_runtime_stopped: "插件服务已停止，请重启应用后重试。",
+  wasm_execution_timeout: "插件执行超时，请重试。",
+  // 宠物状态持久化
+  pet_state_key_invalid: "宠物状态保存失败，请重试。",
+  pet_state_too_large: "宠物状态保存失败，请重试。",
+  pet_state_invalid_json: "宠物状态保存失败，请重试。",
+  pet_state_invalid_shape: "宠物状态保存失败，请重试。",
+  pet_state_revision_overflow: "宠物状态保存失败，请重试。",
+};
+
 /** 常见失败 → 可行动的中文提示。顺序敏感：先具体后笼统。 */
 const KNOWN_FAILURES: Array<{ test: RegExp; message: string }> = [
   { test: /state not managed|state.*not.*managed|must call.*manage\(\)/i, message: "应用内部服务未正确初始化，请更新应用或重启后重试。" },
@@ -93,6 +137,10 @@ function truncate(text: string): string {
 export function toUserMessage(error: unknown, fallback = "操作失败，请重试。"): string {
   const cleaned = stripNoise(extractRaw(error));
   if (NON_HUMAN_RESULTS.has(cleaned.toLowerCase())) return fallback;
+
+  // 机器码精确匹配优先（IpcFailure 的 message 就是码本身）。
+  const codeMessage = CODE_MESSAGES[cleaned];
+  if (codeMessage) return codeMessage;
 
   for (const { test, message } of KNOWN_FAILURES) {
     if (test.test(cleaned)) return message;

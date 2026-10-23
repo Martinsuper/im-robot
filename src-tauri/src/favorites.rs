@@ -182,7 +182,7 @@ pub(crate) fn delete_html_favorite(app: AppHandle, id: String) -> Result<(), Str
     if let Some(db) = app.try_state::<Arc<memory::MemoryDb>>() {
         if let Ok(mut conn) = db.0.lock() {
             let _ = memory::soul::store::transaction(&mut conn, |tx| {
-                tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE id=?1 AND state IN ('pending','dispatching','shown')",rusqlite::params![format!("output-{id}"),unix_timestamp() as i64]).map_err(|_|"ledger_write_failed")?;
+                tx.execute("UPDATE soul_proactive_ledger SET state='revoked',receipt_at=?2 WHERE id=?1 AND state IN ('pending','dispatching','shown')",rusqlite::params![format!("output-{id}"),unix_timestamp() as i64]).map_err(|_|crate::error_codes::LEDGER_WRITE_FAILED)?;
                 Ok(())
             });
         }

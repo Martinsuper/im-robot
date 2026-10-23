@@ -26,8 +26,10 @@ pub fn default_role(locale: &str) -> RoleContent {
 }
 
 pub fn validate_overrides(value: &RoleOverrides) -> Result<(), String> {
-    let encoded = serde_json::to_value(value).map_err(|_| "invalid_role")?;
-    let fields = encoded.as_object().ok_or("invalid_role")?;
+    let encoded = serde_json::to_value(value).map_err(|_| crate::error_codes::INVALID_ROLE)?;
+    let fields = encoded
+        .as_object()
+        .ok_or(crate::error_codes::INVALID_ROLE)?;
     let valid_text = |text: &str| {
         text.chars().count() <= 2000
             && !text
@@ -42,22 +44,22 @@ pub fn validate_overrides(value: &RoleOverrides) -> Result<(), String> {
                     && items
                         .iter()
                         .all(|item| item.as_str().is_some_and(valid_text)) => {}
-            _ => return Err("invalid_role".into()),
+            _ => return Err(crate::error_codes::INVALID_ROLE.into()),
         }
     }
     if encoded.to_string().len() > 16_000 {
-        return Err("role_too_large".into());
+        return Err(crate::error_codes::ROLE_TOO_LARGE.into());
     }
     Ok(())
 }
 
 pub fn validated_layers(profile: &RoleProfile) -> Result<(RoleOverrides, RoleOverrides), String> {
-    let user: RoleOverrides =
-        serde_json::from_value(profile.user_overrides.clone()).map_err(|_| "profile_corrupt")?;
+    let user: RoleOverrides = serde_json::from_value(profile.user_overrides.clone())
+        .map_err(|_| crate::error_codes::PROFILE_CORRUPT)?;
     let evolution: RoleOverrides = serde_json::from_value(profile.confirmed_evolution.clone())
-        .map_err(|_| "profile_corrupt")?;
-    validate_overrides(&user).map_err(|_| "profile_corrupt")?;
-    validate_overrides(&evolution).map_err(|_| "profile_corrupt")?;
+        .map_err(|_| crate::error_codes::PROFILE_CORRUPT)?;
+    validate_overrides(&user).map_err(|_| crate::error_codes::PROFILE_CORRUPT)?;
+    validate_overrides(&evolution).map_err(|_| crate::error_codes::PROFILE_CORRUPT)?;
     Ok((user, evolution))
 }
 
@@ -143,7 +145,7 @@ pub fn load_or_create(
 }
 
 pub fn corrupt_fallback(locale: &str, revision: i64) -> RoleSnapshot {
-    let mut result = fallback(locale, "profile_corrupt");
+    let mut result = fallback(locale, crate::error_codes::PROFILE_CORRUPT);
     // Keep the actual revision so an explicit reset can recover the record.
     result.revision = revision;
     result
@@ -157,7 +159,7 @@ pub fn raw_revision(conn: &Connection) -> Result<Option<i64>, String> {
         |row| row.get(0),
     )
     .optional()
-    .map_err(|_| "storage_unavailable".into())
+    .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE.into())
 }
 
 pub fn update(
@@ -166,10 +168,11 @@ pub fn update(
     now: i64,
 ) -> Result<RoleSnapshot, String> {
     validate_overrides(&input.user_overrides)?;
-    let mut profile = store::read_profile(conn, PROFILE_ID)?.ok_or("profile_missing")?;
+    let mut profile =
+        store::read_profile(conn, PROFILE_ID)?.ok_or(crate::error_codes::PROFILE_MISSING)?;
     validated_layers(&profile)?;
     profile.user_overrides =
-        serde_json::to_value(input.user_overrides).map_err(|_| "invalid_role")?;
+        serde_json::to_value(input.user_overrides).map_err(|_| crate::error_codes::INVALID_ROLE)?;
     profile.default_resource_version = RESOURCE_VERSION.into();
     profile.updated_at = now;
     profile.revision = store::save_profile(conn, &profile, input.expected_revision)?;
@@ -192,23 +195,23 @@ pub fn reset(
         .ok_or("invalid_revision")?;
     store::transaction(conn, |tx| {
         let changed = tx.execute("UPDATE soul_profiles SET revision=?2,default_resource_version=?3,user_overrides='{}',confirmed_evolution=?4,updated_at=?5 WHERE profile_id=?1 AND revision=?6",
-            params![PROFILE_ID,next,RESOURCE_VERSION,evolution.to_string(),now,input.expected_revision]).map_err(|_| "storage_write_failed")?;
+            params![PROFILE_ID,next,RESOURCE_VERSION,evolution.to_string(),now,input.expected_revision]).map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED)?;
         if changed != 1 {
-            return Err("revision_conflict".into());
+            return Err(crate::error_codes::REVISION_CONFLICT.into());
         }
-        tx.execute("INSERT OR IGNORE INTO soul_candidate_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_candidates WHERE kind='evolution'",[now]).map_err(|_|"storage_write_failed")?;
-        tx.execute("UPDATE soul_candidates SET status='rejected',reviewed_at=?1 WHERE kind='evolution' AND status='pending_review'",[now]).map_err(|_|"storage_write_failed")?;
+        tx.execute("INSERT OR IGNORE INTO soul_candidate_tombstones SELECT dedupe_key,source_ref,?1 FROM soul_candidates WHERE kind='evolution'",[now]).map_err(|_|crate::error_codes::STORAGE_WRITE_FAILED)?;
+        tx.execute("UPDATE soul_candidates SET status='rejected',reviewed_at=?1 WHERE kind='evolution' AND status='pending_review'",[now]).map_err(|_|crate::error_codes::STORAGE_WRITE_FAILED)?;
         tx.execute("DELETE FROM soul_evidence", [])
-            .map_err(|_| "storage_write_failed")?;
-        tx.execute("INSERT INTO soul_domain_baselines VALUES('evolution',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_|"storage_write_failed")?;
+            .map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED)?;
+        tx.execute("INSERT INTO soul_domain_baselines VALUES('evolution',?1) ON CONFLICT(domain) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)",[now]).map_err(|_|crate::error_codes::STORAGE_WRITE_FAILED)?;
         if input.clear_evolution_history {
             tx.execute(
                 "DELETE FROM soul_role_versions WHERE profile_id=?1",
                 [PROFILE_ID],
             )
-            .map_err(|_| "storage_write_failed")?;
+            .map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED)?;
             // Clear historical proposals with the explicit history option.
-            tx.execute("DELETE FROM soul_candidates WHERE kind='evolution' OR (kind='role_evolution' AND json_extract(payload,'$.profile_id')=?1)", [PROFILE_ID]).map_err(|_| "storage_write_failed")?;
+            tx.execute("DELETE FROM soul_candidates WHERE kind='evolution' OR (kind='role_evolution' AND json_extract(payload,'$.profile_id')=?1)", [PROFILE_ID]).map_err(|_| crate::error_codes::STORAGE_WRITE_FAILED)?;
         }
         Ok(())
     })?;
@@ -226,10 +229,10 @@ pub fn for_request(
         .try_state::<SoulBootStatus>()
         .is_some_and(|state| state.0)
     {
-        return fallback(locale, "storage_unavailable");
+        return fallback(locale, crate::error_codes::STORAGE_UNAVAILABLE);
     }
     let Ok(mut conn) = db.0.lock() else {
-        return fallback(locale, "storage_unavailable");
+        return fallback(locale, crate::error_codes::STORAGE_UNAVAILABLE);
     };
     match load_or_create(&mut conn, locale, chrono::Utc::now().timestamp()) {
         Ok(mut snapshot) => {
@@ -248,7 +251,7 @@ pub fn for_request(
         }
         Err(_) => match raw_revision(&conn) {
             Ok(Some(revision)) => corrupt_fallback(locale, revision),
-            _ => fallback(locale, "storage_unavailable"),
+            _ => fallback(locale, crate::error_codes::STORAGE_UNAVAILABLE),
         },
     }
 }
@@ -441,7 +444,10 @@ mod tests {
         )
         .unwrap();
         let fallback = load_or_create(&mut conn, "en-US", 101).unwrap();
-        assert_eq!(fallback.fallback_reason.as_deref(), Some("profile_corrupt"));
+        assert_eq!(
+            fallback.fallback_reason.as_deref(),
+            Some(crate::error_codes::PROFILE_CORRUPT)
+        );
         assert!(!fallback.writable);
         assert_eq!(fallback.revision, 1);
         let repaired = reset(

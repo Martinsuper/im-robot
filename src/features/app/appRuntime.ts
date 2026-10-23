@@ -3,7 +3,6 @@ import {
   commandNames,
   IpcFailure,
   invokeCommand,
-  type CommandInvoker,
   type CommandName,
   type CommandMap,
 } from "../../generated/ipc";
@@ -12,25 +11,27 @@ import { invoke } from "@tauri-apps/api/core";
 export const isTauriRuntime =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-export const runCommand: CommandInvoker = async <T>(
-  command: string,
-  args?: Record<string, unknown>,
-  fallback?: T,
-): Promise<T> => {
+export async function runCommand<K extends CommandName>(
+  command: K,
+  ...rest: {} extends CommandMap[K]["args"]
+    ? [args?: CommandMap[K]["args"], fallback?: unknown]
+    : [args: CommandMap[K]["args"], fallback?: unknown]
+): Promise<CommandMap[K]["result"]> {
+  const [args, fallback] = rest;
   if (!(commandNames as readonly string[]).includes(command))
     return Promise.reject(new Error(`Unknown IPC command: ${command}`));
   if (["export_data", "import_data", "clear_my_data"].includes(command))
     await flushPersistentState();
   return isTauriRuntime
-    ? invoke<T>(command, args).catch((error: unknown) => {
+    ? invoke<CommandMap[K]["result"]>(command, args as Record<string, unknown> | undefined).catch((error: unknown) => {
         throw new IpcFailure(
           command,
           "backend_error",
           error instanceof Error ? error.message : String(error),
         );
       })
-    : (fallback as T);
-};
+    : (fallback as CommandMap[K]["result"]);
+}
 
 /**
  * Fire-and-forget 调用：失败时上报到 console 而不是产生 unhandled rejection。

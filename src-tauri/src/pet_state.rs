@@ -107,15 +107,16 @@ pub(crate) fn save_pet_state(
 }
 fn validate(key: &str, value: Option<&str>) -> Result<(), String> {
     if !KEYS.contains(&key) {
-        return Err("pet_state_key_invalid".into());
+        return Err(crate::error_codes::PET_STATE_KEY_INVALID.into());
     }
     if let Some(text) = value {
         if text.len() > 1024 * 1024 {
-            return Err("pet_state_too_large".into());
+            return Err(crate::error_codes::PET_STATE_TOO_LARGE.into());
         }
-        let value: Value = serde_json::from_str(text).map_err(|_| "pet_state_invalid_json")?;
+        let value: Value =
+            serde_json::from_str(text).map_err(|_| crate::error_codes::PET_STATE_INVALID_JSON)?;
         if !value.is_object() {
-            return Err("pet_state_invalid_shape".into());
+            return Err(crate::error_codes::PET_STATE_INVALID_SHAPE.into());
         }
     }
     Ok(())

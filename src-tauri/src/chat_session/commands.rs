@@ -31,7 +31,9 @@ pub(crate) fn delete_chat_session(app: AppHandle, id: String) -> Result<(), Stri
     sources.extend(removed.iter().map(|session| session.id.clone()));
     if !sources.is_empty() {
         let db = app.state::<Arc<memory::MemoryDb>>();
-        let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+        let mut conn =
+            db.0.lock()
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
         memory::soul::lifecycle::delete_sources(
             &mut conn,
             &sources,
@@ -72,7 +74,9 @@ pub(crate) fn clear_chat_history(
     sources.extend(sessions.iter().map(|session| session.id.clone()));
     if !sources.is_empty() {
         let db = app.state::<Arc<memory::MemoryDb>>();
-        let mut conn = db.0.lock().map_err(|_| "storage_unavailable")?;
+        let mut conn =
+            db.0.lock()
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
         memory::soul::lifecycle::delete_sources(
             &mut conn,
             &sources,

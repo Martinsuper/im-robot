@@ -11,6 +11,9 @@ mod data_commands;
 mod data_gate;
 mod data_snapshot;
 mod desktop;
+// 注册表跨平台/feature 门控的生产方共用：某些码只在特定配置的模块里用到。
+#[allow(dead_code)]
+mod error_codes;
 mod favorites;
 mod html_preview;
 mod memos;

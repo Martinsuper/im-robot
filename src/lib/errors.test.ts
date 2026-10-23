@@ -14,6 +14,14 @@ describe("toUserMessage", () => {
     expect(toUserMessage(new Error("401 Unauthorized"))).toContain("API Key 无效");
   });
 
+  it("把 IPC 机器码映射成具体提示，优先于正则降级", () => {
+    expect(toUserMessage("storage_unavailable", "操作失败，请重试。")).toBe("本地数据暂时不可用，请稍后重试。");
+    expect(toUserMessage("revision_conflict", "保存失败")).toBe("内容已在其他窗口被修改，请刷新后重试。");
+    expect(toUserMessage(new Error("worker_panicked"))).toBe("后台任务异常终止，请重试。");
+    // 未登记的码继续走调用点 fallback
+    expect(toUserMessage("some_future_code", "保存失败，请重试")).toBe("保存失败，请重试");
+  });
+
   it("保留后端已经写好的中文文案", () => {
     expect(toUserMessage(new Error("目标文件已存在"))).toBe("目标已存在。");
     expect(toUserMessage("提醒时间不能早于当前时间")).toBe("提醒时间不能早于当前时间");

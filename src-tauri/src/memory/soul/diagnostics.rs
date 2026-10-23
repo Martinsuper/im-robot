@@ -6,21 +6,28 @@ use rusqlite::{Connection, OptionalExtension};
 pub fn check_ledger(conn: &Connection) -> Result<(), String> {
     store::ensure_available(conn)?;
     let mut statement = conn.prepare("SELECT id,category,source_ref,dedupe_key,template_id,valid_from,expires_at,state,visible_seconds,dispatching_at FROM soul_proactive_ledger")
-        .map_err(|_| "ledger_unreadable")?;
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
     let mut requires_quota = false;
-    let mut rows = statement.query([]).map_err(|_| "ledger_unreadable")?;
-    while let Some(row) = rows.next().map_err(|_| "ledger_unreadable")? {
+    let mut rows = statement
+        .query([])
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?
+    {
         let text = |index| {
             row.get::<_, String>(index)
-                .map_err(|_| "ledger_unreadable".to_string())
+                .map_err(|_| crate::error_codes::LEDGER_UNREADABLE.to_string())
         };
         let category = text(1)?;
         let state = text(7)?;
         serde_json::from_value::<ProactiveCategory>(serde_json::Value::String(category))
-            .map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         let state = serde_json::from_value::<DeliveryState>(serde_json::Value::String(state))
-            .map_err(|_| "ledger_unreadable")?;
-        let dispatched: Option<i64> = row.get(9).map_err(|_| "ledger_unreadable")?;
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
+        let dispatched: Option<i64> = row
+            .get(9)
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         requires_quota |= dispatched.is_some()
             || matches!(
                 state,
@@ -31,10 +38,17 @@ pub fn check_ledger(conn: &Connection) -> Result<(), String> {
                     | DeliveryState::Ignored
                     | DeliveryState::Uncertain
             );
-        let source: SourceRef = serde_json::from_str(&text(2)?).map_err(|_| "ledger_unreadable")?;
-        let starts: i64 = row.get(5).map_err(|_| "ledger_unreadable")?;
-        let expires: i64 = row.get(6).map_err(|_| "ledger_unreadable")?;
-        let visible: i64 = row.get(8).map_err(|_| "ledger_unreadable")?;
+        let source: SourceRef =
+            serde_json::from_str(&text(2)?).map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
+        let starts: i64 = row
+            .get(5)
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
+        let expires: i64 = row
+            .get(6)
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
+        let visible: i64 = row
+            .get(8)
+            .map_err(|_| crate::error_codes::LEDGER_UNREADABLE)?;
         if text(0)?.is_empty()
             || text(3)?.is_empty()
             || text(4)?.is_empty()
@@ -44,19 +58,19 @@ pub fn check_ledger(conn: &Connection) -> Result<(), String> {
             || expires <= starts
             || visible < 0
         {
-            return Err("ledger_unreadable".into());
+            return Err(crate::error_codes::LEDGER_UNREADABLE.into());
         }
     }
     let quota: Option<(i64, String, i64, i64, String)> = conn.query_row(
         "SELECT total_used,category_used,high_water_at,reset_not_before,local_date FROM soul_quota WHERE singleton=1", [],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))
-        .optional().map_err(|_| "quota_unreadable")?;
+        .optional().map_err(|_| crate::error_codes::QUOTA_UNREADABLE)?;
     if requires_quota && quota.is_none() {
-        return Err("quota_unreadable".into());
+        return Err(crate::error_codes::QUOTA_UNREADABLE.into());
     }
     if let Some((used, categories, high_water, reset_after, date)) = quota {
         let counts: std::collections::HashMap<ProactiveCategory, u32> =
-            serde_json::from_str(&categories).map_err(|_| "quota_unreadable")?;
+            serde_json::from_str(&categories).map_err(|_| crate::error_codes::QUOTA_UNREADABLE)?;
         let sum = counts.values().map(|v| u64::from(*v)).sum::<u64>();
         if used < 0
             || sum != used as u64
@@ -64,7 +78,7 @@ pub fn check_ledger(conn: &Connection) -> Result<(), String> {
             || high_water < 0
             || chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err()
         {
-            return Err("quota_unreadable".into());
+            return Err(crate::error_codes::QUOTA_UNREADABLE.into());
         }
     }
     Ok(())
@@ -98,13 +112,13 @@ pub fn inspect(conn: &Connection, boot_ok: bool) -> SoulDiagnostics {
         issues.push("volatile_storage".into());
     }
     if !boot_ok || !storage_ok {
-        issues.push("storage_unavailable".into());
+        issues.push(crate::error_codes::STORAGE_UNAVAILABLE.into());
     }
     if storage_ok && !profile_ok {
-        issues.push("profile_corrupt".into());
+        issues.push(crate::error_codes::PROFILE_CORRUPT.into());
     }
     if storage_ok && !ledger_ok {
-        issues.push("ledger_unreadable".into());
+        issues.push(crate::error_codes::LEDGER_UNREADABLE.into());
     }
     SoulDiagnostics {
         storage: if !persistent {
@@ -197,7 +211,7 @@ mod tests {
         assert!(!result.profile_valid);
         assert!(result.ledger_readable);
         let output = serde_json::to_string(&result).unwrap();
-        assert!(output.contains("profile_corrupt"));
+        assert!(output.contains(crate::error_codes::PROFILE_CORRUPT));
         assert!(!output.contains("private-body"));
         assert!(!output.contains("secret-value"));
     }

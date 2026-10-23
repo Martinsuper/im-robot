@@ -138,8 +138,8 @@ pub(super) fn candidate_memory(candidate: MemoryCandidate) -> MemoryItem {
         updated_at: now,
         last_used_at: None,
         expires_at: match candidate.memory_type {
-            MemoryType::Event => Some(now + 90 * 86400), // events expire after 90 days
-            MemoryType::Operational => Some(now + 60 * 86400),
+            MemoryType::Event => Some(now + super::tuning::EVENT_EXPIRY_DAYS * 86400),
+            MemoryType::Operational => Some(now + super::tuning::OPERATIONAL_EXPIRY_DAYS * 86400),
             _ => None, // profiles and semantic memories persist
         },
         tags: candidate.tags,
@@ -184,8 +184,10 @@ pub fn auto_capture_from_chat(
                 updated_at: now,
                 last_used_at: None,
                 expires_at: match candidate.memory_type {
-                    MemoryType::Event => Some(now + 90 * 86400),
-                    MemoryType::Operational => Some(now + 60 * 86400),
+                    MemoryType::Event => Some(now + super::tuning::EVENT_EXPIRY_DAYS * 86400),
+                    MemoryType::Operational => {
+                        Some(now + super::tuning::OPERATIONAL_EXPIRY_DAYS * 86400)
+                    }
                     _ => None,
                 },
                 tags: candidate.tags,
