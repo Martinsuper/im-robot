@@ -17,6 +17,7 @@ const predicted = new Map<string, number>();
 const generations = new Map<string, number>();
 const subscribers = new Set<() => void>();
 let subscription: Promise<unknown> | undefined;
+let initialization: Promise<void> | undefined;
 const queuedEvents: Array<{ key: string; entry: Entry; origin: string }> = [];
 const notify = () => {
   for (const callback of subscribers) callback();
@@ -45,8 +46,15 @@ function cache(key: string, value: string | null) {
 function refreshConsumers(key: string, value: string | null) {
   window.dispatchEvent(new StorageEvent("storage", { key, newValue: value }));
 }
-export async function initializePersistentState(): Promise<void> {
-  if (!native || store) return;
+export function initializePersistentState(): Promise<void> {
+  if (!native || store) return Promise.resolve();
+  // All callers share one load/migration and one event reconciliation buffer.
+  initialization ??= loadPersistentState().finally(() => {
+    initialization = undefined;
+  });
+  return initialization;
+}
+async function loadPersistentState(): Promise<void> {
   try {
     // Install the observer before loading; events are reconciled by revision after initialization.
     queuedEvents.length = 0;
@@ -69,7 +77,11 @@ export async function initializePersistentState(): Promise<void> {
           refreshConsumers(payload.key, payload.entry.value);
         }
       },
-    );
+    ).catch((error: unknown) => {
+      // A rejected registration must not poison future retries.
+      subscription = undefined;
+      throw error;
+    });
     await subscription;
     let loaded = await invokeCommand("get_pet_state", {});
     if (!loaded || loaded.schemaVersion !== 1)
@@ -87,6 +99,7 @@ export async function initializePersistentState(): Promise<void> {
       if ((store.entries[event.key]?.revision ?? 0) < event.entry.revision)
         store.entries[event.key] = event.entry;
     }
+    queuedEvents.length = 0;
     for (const key of keys) {
       cache(key, store.entries[key]?.value ?? null);
       predicted.set(key, store.entries[key]?.revision ?? 0);

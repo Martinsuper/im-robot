@@ -1,6 +1,35 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import ts from 'typescript';
+
+// Shared infrastructure may depend on generated contracts, never on UI/domain features.
+const frontend = new URL('../src/', import.meta.url);
+const shared = new URL('lib/', frontend);
+for (const file of await readdir(shared)) {
+  if (!file.endsWith('.ts') || file.endsWith('.test.ts')) continue;
+  const url = new URL(file, shared);
+  const contents = await readFile(url, 'utf8');
+  const ast = ts.createSourceFile(file, contents, ts.ScriptTarget.Latest);
+  function checkImports(node) {
+    let specifier;
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      specifier = node.moduleSpecifier;
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      specifier = node.arguments[0];
+    }
+    if (specifier && ts.isStringLiteral(specifier) && specifier.text.startsWith('.')) {
+      const dependency = path.relative(fileURLToPath(frontend),
+        path.resolve(path.dirname(fileURLToPath(url)), specifier.text));
+      assert(!/^(features|components|hooks)(?:[/\\]|$)/.test(dependency),
+        `src/lib/${file} must not depend on UI/domain modules: ${specifier.text}`);
+    }
+    ts.forEachChild(node, checkImports);
+  }
+  checkImports(ast);
+}
+console.log('Frontend shared infrastructure boundaries OK.');
 
 const source = new URL('../src-tauri/src/', import.meta.url);
 const root = await readFile(new URL('lib.rs', source), 'utf8');

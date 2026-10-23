@@ -5,7 +5,7 @@
   --piko-paper: #f5f8f8;
   --piko-fill: #fff;
   --piko-ink: #17232e;
-  --piko-muted: #7a8794;
+  --piko-muted: #647480;
   --piko-line: #e1e8eb;
   display: grid;
   grid-template-columns: 236px minmax(0, 1fr);
@@ -138,3 +138,69 @@
 @media (max-width: 879px) { .conversation-tabs--studio .conversation-workspace--open { grid-template-columns: minmax(0, 1fr); } }
 
 .conversation-tabs--studio .workspace-header button { min-height: 36px; font-size: 13px; }
+
+/* Keep the navigation rail inside its grid track, including long conversations. */
+.conversation-tabs--studio > .conversation-tabs__bar {
+  min-width: 0;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+.conversation-tabs--studio .conversation-tabs__item:focus-within .conversation-tabs__close {
+  opacity: 1;
+}
+.conversation-tabs--studio .today-agenda .timeline__actions {
+  opacity: 1;
+}
+.conversation-tabs--studio .today-agenda .timeline__actions button {
+  width: 32px;
+  height: 32px;
+}
+.schedule-calendar__heading button {
+  width: 36px;
+  height: 36px;
+}
+.schedule-calendar button:focus-visible,
+.studio-navigation button:focus-visible {
+  outline: 2px solid var(--piko-accent);
+  outline-offset: 2px;
+}
+@media (max-width: 1000px) {
+  .conversation-tabs--studio .conversation-tabs__item {
+    position: relative;
+    min-width: 0;
+  }
+  .conversation-tabs--studio .conversation-tabs__item > [role="tab"] {
+    width: 100%;
+    padding: 12px 4px;
+    justify-content: center;
+    font-size: 11px;
+  }
+  .conversation-tabs--studio .conversation-tabs__title {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .conversation-tabs--studio .conversation-tabs__close {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 20px;
+    min-height: 20px;
+    background: var(--piko-fill);
+  }
+  .conversation-tabs--studio .conversation-tabs__count {
+    align-self: center;
+    margin: 8px 0 0;
+  }
+}
+/* Short windows should show the day's agenda without a full screen of calendar. */
+@media (max-height: 800px), (max-width: 760px) {
+  .schedule-calendar__date { padding-bottom: 12px; }
+  .schedule-calendar__heading { margin-bottom: 12px; }
+  .schedule-calendar__days { gap: 2px 0; }
+  .schedule-calendar__legend { margin-top: 10px; }
+}
+@media (max-width: 480px) {
+  .conversation-tabs--studio .conversation-workspace .panel-shell--embedded {
+    padding: 16px 12px;
+  }
+}

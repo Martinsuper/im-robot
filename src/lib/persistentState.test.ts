@@ -128,3 +128,37 @@ it("a failed load never overwrites durable native data", async () => {
   );
   expect(invoke.mock.calls.some((c) => c[0] === "save_pet_state")).toBe(false);
 });
+
+it("shares concurrent initialization and preserves events received while loading", async () => {
+  let release!: (value: typeof backend) => void;
+  const pending = new Promise<typeof backend>((resolve) => { release = resolve; });
+  invoke.mockImplementationOnce(() => pending);
+  const state = await import("./persistentState");
+  const first = state.initializePersistentState();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+  const onEvent = listen.mock.calls[0][1];
+  onEvent({ payload: { key, entry: { revision: 2, value: '{"xp":20}' }, origin: "other-window" } });
+  const second = state.initializePersistentState();
+  expect(second).toBe(first);
+  release(structuredClone(backend));
+  await Promise.all([first, second]);
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(listen).toHaveBeenCalledTimes(1);
+  expect(state.readPersistentState(key)).toBe('{"xp":20}');
+  expect(window.localStorage.getItem(key)).toBe('{"xp":20}');
+});
+
+it("retries a failed event registration before loading native state", async () => {
+  listen.mockRejectedValueOnce(new Error("event registration failed"));
+  const state = await import("./persistentState");
+  await state.initializePersistentState();
+  expect(state.persistenceHealth.getSnapshot()).toBe("event registration failed");
+  expect(invoke).not.toHaveBeenCalled();
+  await state.retryPersistentState();
+  expect(listen).toHaveBeenCalledTimes(2);
+  expect(invoke).toHaveBeenCalledWith("get_pet_state", {});
+  expect(state.persistenceHealth.getSnapshot()).toBeUndefined();
+  state.writePersistentState(key, '{"xp":3}');
+  await state.flushPersistentState();
+  expect(backend.entries[key].value).toBe('{"xp":3}');
+});

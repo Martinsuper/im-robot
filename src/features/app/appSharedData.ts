@@ -13,7 +13,7 @@ ReminderRepeat,
 TypingStatsToday,
 WorkRhythmState,
 } from "../../types/appTypes";
-import { disposeAsyncSubscriptions } from "../pet/hooks/eventSubscription";
+import { disposeAsyncSubscriptions } from "../../lib/eventSubscription";
 import { isTauriRuntime } from "./appRuntime";
 
 export { isTauriRuntime };

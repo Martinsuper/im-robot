@@ -314,7 +314,7 @@ while IFS= read -r -d '' app_path; do
       > "${OUTPUT_DIR}/${ZIP_NAME}.sha256"
   fi
   COPIED=$((COPIED + 1))
-done < <(find "${BUNDLE_DIR}/macos" -maxdepth 1 -name "*.app" -print0 2>/dev/null)
+done < <(find "${BUNDLE_DIR}/macos" -maxdepth 1 -name "${PRODUCT_NAME}.app" -print0 2>/dev/null)
 
 # Linux 安装包
 collect_by_find "${BUNDLE_DIR}/appimage" "*.AppImage" ".AppImage"

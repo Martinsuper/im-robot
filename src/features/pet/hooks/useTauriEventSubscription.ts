@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "../../app/appRuntime";
-import { disposeAsyncSubscriptions } from "./eventSubscription";
+import { disposeAsyncSubscriptions } from "../../../lib/eventSubscription";
 
 export type EventHandler<T> = (payload: T) => void;
 export type EventSubscription<T> = { eventName: string; handler: EventHandler<T> };

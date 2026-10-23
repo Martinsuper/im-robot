@@ -198,8 +198,8 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
       {!detachedId && <>
         <div className="studio-brand"><img src="/pets/piko-app-icon.png" alt="" /><div><strong>{settings.companionName}</strong><span>随时聊聊，一起做事</span></div></div>
         <nav className="studio-navigation" aria-label="主导航">
-          <button type="button" className="studio-navigation__new" onClick={newTab}><MessageCircle size={20} />新对话</button>
-          {([{ tab: "today", label: "今天", icon: CalendarDays }, { tab: "records", label: "记录", icon: NotebookPen }, { tab: "settings", label: "设置", icon: Settings2 }] as const).map(({ tab, label, icon: Icon }) => <button key={tab} type="button" className={activePanel === tab ? "is-active" : ""} aria-current={activePanel === tab ? "page" : undefined} onClick={() => setNavigation({ tab, id: Date.now(), conversationId: workspace.selected })}><Icon size={20} />{label}</button>)}
+          <button type="button" className="studio-navigation__new" title="新对话" onClick={newTab}><MessageCircle size={20} />新对话</button>
+          {([{ tab: "today", label: "今天", icon: CalendarDays }, { tab: "records", label: "记录", icon: NotebookPen }, { tab: "settings", label: "设置", icon: Settings2 }] as const).map(({ tab, label, icon: Icon }) => <button key={tab} type="button" title={label} className={activePanel === tab ? "is-active" : ""} aria-current={activePanel === tab ? "page" : undefined} onClick={() => setNavigation({ tab, id: Date.now(), conversationId: workspace.selected })}><Icon size={20} />{label}</button>)}
         </nav>
         <p className="studio-recent-label">最近对话</p>
       </>}
