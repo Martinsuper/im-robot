@@ -279,6 +279,7 @@ pub fn apply_memory_candidates(
     cache: State<'_, CandidateCache>,
     input: ApplyCandidateInput,
 ) -> Result<Option<MemoryItem>, String> {
+    let _guard = super::maintenance::GATE.lock().map_err(|e| e.to_string())?;
     let mut pending = super::extraction::pending(&db)?;
     let item = if pending.iter().any(|c| c.id == input.candidate_id) {
         // A previous approval may have saved successfully before cleanup failed.
@@ -304,6 +305,7 @@ pub fn reject_memory_candidate(
     cache: State<'_, CandidateCache>,
     candidate_id: String,
 ) -> Result<(), String> {
+    let _guard = super::maintenance::GATE.lock().map_err(|e| e.to_string())?;
     super::extraction::remove_candidate(&db, &candidate_id)?;
     cache.lock()?.retain(|c| c.id != candidate_id);
     let _ = app.emit("memories-updated", ());

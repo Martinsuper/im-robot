@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { isTauriRuntime, reportCommandError, runCommand } from "../../app/appRuntime";
+import {
+  isTauriRuntime,
+  reportCommandError,
+  runCommand,
+} from "../../app/appRuntime";
 
 const DRAG_THRESHOLD_PX = 4;
 const STROKE_DISTANCE_PX = 24;
 const STROKE_DISPLACEMENT_PX = 16;
 const LONG_PRESS_MS = 520;
 
-function distanceBetween(a: { x: number; y: number }, b: { x: number; y: number }) {
+function distanceBetween(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+) {
   return Math.hypot(b.x - a.x, b.y - a.y);
 }
 
@@ -45,11 +52,20 @@ export interface UsePetDragReturn {
 }
 
 export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
-  const { onDragEnd, onStroke, onClick, onLongPress, onLongPressStart, onLongPressEnd } = options;
+  const {
+    onDragEnd,
+    onStroke,
+    onClick,
+    onLongPress,
+    onLongPressStart,
+    onLongPressEnd,
+  } = options;
 
   const [isDragging, setIsDragging] = useState(false);
   const [isLongPressing, setIsLongPressing] = useState(false);
-  const [dragOrigin, setDragOrigin] = useState<{ x: number; y: number } | null>(null);
+  const [dragOrigin, setDragOrigin] = useState<{ x: number; y: number } | null>(
+    null,
+  );
   const dragOffset = useRef({ x: 0, y: 0 });
   const didDrag = useRef(false);
   const dragSamples = useRef<Array<{ x: number; y: number; t: number }>>([]);
@@ -60,12 +76,53 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
   const isPrimaryPointerDown = useRef(false);
   const petPos = useRef({ x: 0, y: 0 });
 
+  const gesture = useRef(0);
+  const moveVersion = useRef(0);
+  const positionReady = useRef(false);
+  const latestPointer = useRef({ x: 0, y: 0 });
+  const settleWhenReady = useRef(false);
+  const moveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const visualInsets = useRef<[number, number, number, number]>([0, 0, 0, 0]);
+
+  function snapToEdge() {
+    const activeGesture = gesture.current;
+    moveQueue.current = moveQueue.current
+      .then(async () => {
+        if (gesture.current !== activeGesture) return;
+        const [x, y] = await runCommand<[number, number]>("move_pet", {
+          ...petPos.current,
+          snapInsets: visualInsets.current,
+        });
+        if (gesture.current === activeGesture) petPos.current = { x, y };
+      })
+      .catch(reportCommandError("move_pet"));
+  }
+
   function movePet(x: number, y: number) {
     const requested = { x: Math.round(x), y: Math.round(y) };
+    const activeGesture = gesture.current;
+    const version = ++moveVersion.current;
     petPos.current = requested;
-    void runCommand<[number, number]>("move_pet", requested).then(([actualX, actualY]) => {
-      petPos.current = { x: actualX, y: actualY };
-    }).catch(reportCommandError("move_pet"));
+    moveQueue.current = moveQueue.current
+      .then(async () => {
+        // Keep only the most recent pointer position when native IPC falls behind.
+        if (
+          gesture.current !== activeGesture ||
+          moveVersion.current !== version
+        )
+          return;
+        const [actualX, actualY] = await runCommand<[number, number]>(
+          "move_pet",
+          requested,
+        );
+        if (
+          gesture.current === activeGesture &&
+          moveVersion.current === version
+        ) {
+          petPos.current = { x: actualX, y: actualY };
+        }
+      })
+      .catch(reportCommandError("move_pet"));
   }
 
   function movePetBy(dx: number, dy: number) {
@@ -80,14 +137,25 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
   }
 
   function startInertia() {
-    if (!isTauriRuntime || dragSamples.current.length < 2) return;
+    if (!isTauriRuntime) return;
+    if (!positionReady.current) {
+      settleWhenReady.current = true;
+      return;
+    }
+    if (dragSamples.current.length < 2) {
+      snapToEdge();
+      return;
+    }
     const samples = dragSamples.current;
     const first = samples[0];
     const last = samples[samples.length - 1];
     const dt = Math.max(16, last.t - first.t);
     let vx = ((last.x - first.x) / dt) * 16;
     let vy = ((last.y - first.y) / dt) * 16;
-    if (Math.hypot(vx, vy) < 1.4) return;
+    if (Math.hypot(vx, vy) < 1.4) {
+      snapToEdge();
+      return;
+    }
 
     stopInertia();
     const coast = () => {
@@ -95,6 +163,7 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
       vy *= 0.88;
       if (Math.hypot(vx, vy) < 0.45) {
         inertiaFrame.current = 0;
+        snapToEdge();
         return;
       }
       movePetBy(vx, vy);
@@ -104,18 +173,35 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
   }
 
   function rememberDragPoint(x: number, y: number) {
-    dragSamples.current = [...dragSamples.current.slice(-5), { x, y, t: performance.now() }];
+    dragSamples.current = [
+      ...dragSamples.current.slice(-5),
+      { x, y, t: performance.now() },
+    ];
   }
 
   const onPointerDown = (event: React.PointerEvent) => {
     if (!isTauriRuntime || event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect?.();
+    if (rect)
+      visualInsets.current = [
+        rect.left,
+        rect.top,
+        window.innerWidth - rect.right,
+        window.innerHeight - rect.bottom,
+      ];
     event.currentTarget.setPointerCapture(event.pointerId);
     isPrimaryPointerDown.current = true;
+    const activeGesture = ++gesture.current;
+    positionReady.current = false;
+    settleWhenReady.current = false;
+    latestPointer.current = { x: event.screenX, y: event.screenY };
     stopInertia();
     didDrag.current = false;
     longPressTriggered.current = false;
     suppressClickRef.current = false;
-    dragSamples.current = [{ x: event.screenX, y: event.screenY, t: performance.now() }];
+    dragSamples.current = [
+      { x: event.screenX, y: event.screenY, t: performance.now() },
+    ];
 
     // 立即清除旧的长按定时器，避免与新的拖动冲突
     if (longPressTimer.current) {
@@ -137,13 +223,28 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
       }
     }, LONG_PRESS_MS);
 
-    void runCommand<[number, number]>("get_pet_position", undefined, [petPos.current.x, petPos.current.y])
-      .then(([x, y]) => {
+    // Read after any in-flight native move; a new gesture invalidates queued old moves.
+    moveQueue.current = moveQueue.current
+      .then(() => {
+        if (gesture.current !== activeGesture) return;
+        return runCommand<[number, number]>("get_pet_position", undefined, [
+          petPos.current.x,
+          petPos.current.y,
+        ]);
+      })
+      .then((position) => {
+        if (!position || gesture.current !== activeGesture) return;
+        const [x, y] = position;
         petPos.current = { x, y };
-        dragOffset.current = {
-          x: event.screenX - x,
-          y: event.screenY - y,
-        };
+        dragOffset.current = { x: event.screenX - x, y: event.screenY - y };
+        positionReady.current = true;
+        if (didDrag.current) {
+          movePet(
+            latestPointer.current.x - dragOffset.current.x,
+            latestPointer.current.y - dragOffset.current.y,
+          );
+        }
+        if (settleWhenReady.current) snapToEdge();
       })
       .catch(reportCommandError("get_pet_position"));
     setDragOrigin({ x: event.screenX, y: event.screenY });
@@ -171,11 +272,18 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     } else {
       const totalDistance = pathDistance(dragSamples.current);
       const totalDisplacement = displacement(dragSamples.current);
-      const durationMs = dragSamples.current.length > 1
-        ? dragSamples.current[dragSamples.current.length - 1].t - dragSamples.current[0].t
-        : 0;
+      const durationMs =
+        dragSamples.current.length > 1
+          ? dragSamples.current[dragSamples.current.length - 1].t -
+            dragSamples.current[0].t
+          : 0;
 
-      if (dragSamples.current.length > 1 && totalDistance >= STROKE_DISTANCE_PX && totalDisplacement <= STROKE_DISPLACEMENT_PX && durationMs >= 120) {
+      if (
+        dragSamples.current.length > 1 &&
+        totalDistance >= STROKE_DISTANCE_PX &&
+        totalDisplacement <= STROKE_DISPLACEMENT_PX &&
+        durationMs >= 120
+      ) {
         onStroke?.(totalDistance, durationMs);
       } else {
         onClick?.();
@@ -190,6 +298,7 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
   const onPointerMove = (event: React.PointerEvent) => {
     if ((event.buttons & 1) === 0 || !isTauriRuntime) return;
     if (!dragOrigin) return;
+    latestPointer.current = { x: event.screenX, y: event.screenY };
     rememberDragPoint(event.screenX, event.screenY);
     const dx = event.screenX - dragOrigin.x;
     const dy = event.screenY - dragOrigin.y;
@@ -204,9 +313,12 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     setIsLongPressing(false);
     onLongPressEnd?.();
     setIsDragging(true);
-    rememberDragPoint(event.screenX, event.screenY);
     event.preventDefault();
-    movePet(event.screenX - dragOffset.current.x, event.screenY - dragOffset.current.y);
+    if (positionReady.current)
+      movePet(
+        event.screenX - dragOffset.current.x,
+        event.screenY - dragOffset.current.y,
+      );
   };
 
   const handleClick = () => {
@@ -221,6 +333,7 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
     return () => {
       if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
       isPrimaryPointerDown.current = false;
+      gesture.current += 1;
       stopInertia();
     };
   }, []);
@@ -233,6 +346,8 @@ export function usePetDrag(options: UsePetDragOptions): UsePetDragReturn {
       onPointerUp,
       onPointerMove,
       onPointerCancel: () => {
+        gesture.current += 1;
+        stopInertia();
         isPrimaryPointerDown.current = false;
         if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
         setIsDragging(false);

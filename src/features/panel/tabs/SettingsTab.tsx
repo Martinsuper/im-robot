@@ -4,7 +4,6 @@ import {
   type ModelConnectionStatus,
 } from "../modelConnectionStatus";
 import "./settings.css";
-import { SoulDiagnostics } from "../../soul/SoulDiagnostics";
 import { SoulSettings } from "../../soul/SoulSettings";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -114,8 +113,7 @@ export function SettingsTab() {
     useState<NotificationStatus>();
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [notificationQueryError, setNotificationQueryError] = useState("");
-  const [screenCapturePermission, setScreenCapturePermission] =
-    useState("截图时按需申请");
+
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const [speechModelProgress, setSpeechModelProgress] = useState<
     Record<string, SpeechModelDownloadProgress>
@@ -154,16 +152,10 @@ export function SettingsTab() {
     }
   }, [settings]);
 
-  // 语音模型与系统权限信息。
+  // 语音模型、启动与通知状态。
   useEffect(() => {
     void loadSpeechModels();
-    void runCommand<string>(
-      "screen_capture_permission_status",
-      undefined,
-      "截图时按需申请",
-    )
-      .then(setScreenCapturePermission)
-      .catch(() => setScreenCapturePermission("读取失败"));
+
     if (isTauriRuntime) {
       void isEnabled()
         .then(setAutostartEnabled)
@@ -877,12 +869,79 @@ export function SettingsTab() {
             )}
           </div>
         </section>
+        <details className="settings-subgroup">
+          <summary>语音输入</summary>
+          <div className="settings-subgroup__body">
+            {speechModels.length ? (
+              <div className="speech-model-list">
+                {speechModels.map((model) => {
+                  const progress = speechModelProgress[model.id];
+                  const percent =
+                    progress?.percent === undefined
+                      ? undefined
+                      : Math.round(progress.percent * 100);
+                  const isDownloading = downloadingSpeechModelId === model.id;
+                  return (
+                    <div className="speech-model-item" key={model.id}>
+                      <div>
+                        <strong>
+                          {model.name}
+                          {model.id === "sense-voice" ? (
+                            <span className="speech-model-item__badge">
+                              中文优化
+                            </span>
+                          ) : null}
+                        </strong>
+                        <span>
+                          {model.downloaded
+                            ? `${formatBytes(model.byteSize)} · 已下载`
+                            : "未下载"}
+                          {isDownloading && percent !== undefined
+                            ? ` · ${percent}%`
+                            : ""}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={
+                          model.downloaded || Boolean(downloadingSpeechModelId)
+                        }
+                        onClick={() => void downloadSpeechModel(model.id)}
+                      >
+                        {model.downloaded
+                          ? "已下载"
+                          : isDownloading
+                            ? "下载中..."
+                            : "下载"}
+                      </button>
+                    </div>
+                  );
+                })}
+                {speechModels.some(
+                  (model) => model.id === "sense-voice" && !model.downloaded,
+                ) ? (
+                  <p className="settings-note">
+                    「SenseVoice 中文优化」—— 阿里 FunAudioLLM
+                    出品，专为中文设计，字错率比 Whisper
+                    低一半以上，且几乎不出繁体字。
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <EmptyState
+                icon={<Volume2 size={20} />}
+                title="还没有可下载的语音模型"
+                description="连接成功后这里会列出可用模型。"
+              />
+            )}
+          </div>
+        </details>
       </SettingsGroup>
       <SettingsGroup
         id="notify"
         icon={<BellRing size={15} />}
         title="提醒与陪伴"
-        description="休息提醒、免打扰和主动聊天"
+        description="休息提醒、通知和主动聊天"
         status={`${breakRemindersEnabled ? "休息提醒开启" : "休息提醒关闭"} · ${breakReminderQuietHoursEnabled ? `免打扰 ${breakReminderQuietHoursStart}–${breakReminderQuietHoursEnd}` : "免打扰关闭"}`}
       >
         <section className="panel-card">
@@ -993,33 +1052,38 @@ export function SettingsTab() {
                 去开启
               </button>
             )}
-            <div className="settings-actions">
-              <button
-                type="button"
-                disabled={notificationBusy || !isTauriRuntime}
-                onClick={() => void testNotification()}
-              >
-                发送测试通知
-              </button>
-              <button
-                type="button"
-                disabled={notificationBusy || !isTauriRuntime}
-                onClick={() => void refreshNotificationStatus()}
-              >
-                重新检查权限
-              </button>
-              <button
-                type="button"
-                disabled={!isTauriRuntime}
-                onClick={() =>
-                  void runCommand("open_notification_settings").catch((error) =>
-                    toast.error(toUserMessage(error)),
-                  )
-                }
-              >
-                打开系统通知设置
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={!isTauriRuntime}
+              onClick={() =>
+                void runCommand("open_notification_settings").catch((error) =>
+                  toast.error(toUserMessage(error)),
+                )
+              }
+            >
+              打开系统通知设置
+            </button>
+            <details className="settings-subgroup">
+              <summary>通知排查</summary>
+              <div className="settings-subgroup__body">
+                <div className="settings-actions">
+                  <button
+                    type="button"
+                    disabled={notificationBusy || !isTauriRuntime}
+                    onClick={() => void testNotification()}
+                  >
+                    发送测试通知
+                  </button>
+                  <button
+                    type="button"
+                    disabled={notificationBusy || !isTauriRuntime}
+                    onClick={() => void refreshNotificationStatus()}
+                  >
+                    重新检查权限
+                  </button>
+                </div>
+              </div>
+            </details>
             {notificationQueryError ? (
               <p role="alert" className="settings-note">
                 {notificationQueryError}
@@ -1046,8 +1110,8 @@ export function SettingsTab() {
       <SettingsGroup
         id="system"
         icon={<ShieldCheck size={15} />}
-        title="更多设置"
-        description="启动、权限、备份与关于"
+        title="系统与数据"
+        description="启动、快捷键、备份与更新"
         status={`${autostartEnabled ? "开机启动开启" : "开机启动关闭"} · 备份与权限`}
       >
         <section className="panel-card">
@@ -1157,107 +1221,8 @@ export function SettingsTab() {
           </div>
         </details>
         <details className="settings-subgroup">
-          <summary>语音输入</summary>
-          <div className="settings-subgroup__body">
-            <details className="settings-subgroup">
-              <summary>语音</summary>
-              {speechModels.length ? (
-                <div className="speech-model-list">
-                  {speechModels.map((model) => {
-                    const progress = speechModelProgress[model.id];
-                    const percent =
-                      progress?.percent === undefined
-                        ? undefined
-                        : Math.round(progress.percent * 100);
-                    const isDownloading = downloadingSpeechModelId === model.id;
-                    return (
-                      <div className="speech-model-item" key={model.id}>
-                        <div>
-                          <strong>
-                            {model.name}
-                            {model.id === "sense-voice" ? (
-                              <span className="speech-model-item__badge">
-                                中文优化
-                              </span>
-                            ) : null}
-                          </strong>
-                          <span>
-                            {model.downloaded
-                              ? `${formatBytes(model.byteSize)} · 已下载`
-                              : "未下载"}
-                            {isDownloading && percent !== undefined
-                              ? ` · ${percent}%`
-                              : ""}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={
-                            model.downloaded ||
-                            Boolean(downloadingSpeechModelId)
-                          }
-                          onClick={() => void downloadSpeechModel(model.id)}
-                        >
-                          {model.downloaded
-                            ? "已下载"
-                            : isDownloading
-                              ? "下载中..."
-                              : "下载"}
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {speechModels.some(
-                    (model) => model.id === "sense-voice" && !model.downloaded,
-                  ) ? (
-                    <p className="settings-note">
-                      「SenseVoice 中文优化」—— 阿里 FunAudioLLM
-                      出品，专为中文设计，字错率比 Whisper
-                      低一半以上，且几乎不出繁体字。
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
-                <EmptyState
-                  icon={<Volume2 size={20} />}
-                  title="还没有可下载的语音模型"
-                  description="连接成功后这里会列出可用模型。"
-                />
-              )}
-            </details>
-          </div>
-        </details>
-        <details className="settings-subgroup">
-          <summary>诊断信息</summary>
-          <div className="settings-subgroup__body">
-            <SoulDiagnostics />
-          </div>
-        </details>
-        <details className="settings-subgroup">
           <summary>关于与更新</summary>
           <div className="settings-subgroup__body">
-            <section className="panel-card">
-              <h2>权限中心</h2>
-              <div className="permission-list">
-                <div>
-                  <span>通知权限</span>
-                  <strong>{notificationPermission}</strong>
-                </div>
-                <div>
-                  <span>文件访问</span>
-                  <strong>仅主动拖入</strong>
-                </div>
-                <div>
-                  <span>屏幕录制</span>
-                  <strong>{screenCapturePermission}</strong>
-                </div>
-                <div>
-                  <span>主动感知</span>
-                  <strong>{sensingPaused ? "已暂停" : "运行中"}</strong>
-                </div>
-              </div>
-            </section>
-
             <VersionSettings />
 
             <section className="panel-card">

@@ -13,3 +13,11 @@ test("browser verification pins a Playwright-supported Ubuntu image", () => {
   assert.match(frontend, /npm run test:e2e/);
   assert.match(frontend, /node --test scripts\/ci-workflow\.test\.mjs/);
 });
+
+test("native packaged Agent tests install the SDK dependencies first", () => {
+  const rust = workflow.split(/^  rust:\s*$/m)[1]?.split(/^  [\w-]+:\s*$/m)[0];
+  assert.ok(rust, "native verification job must exist");
+  const install = rust.indexOf("npm --prefix agent ci");
+  const run = rust.indexOf("npm run test:agent:packaged");
+  assert.ok(install >= 0 && run > install, "SDK dependencies must exist before tests import the source adapter");
+});

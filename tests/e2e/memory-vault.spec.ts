@@ -26,6 +26,7 @@ test("Markdown conflicts show both versions and require an explicit decision", a
   });
   await page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "记录", exact: true }).click();
   await page.getByRole("button", { name: "Piko 记住的", exact: true }).click();
+  await page.getByText("文件同步与备份", { exact: true }).click();
   await page.locator(".memory-vault > summary").click();
   await expect(page.getByText("/Users/piko/Notes/我的记忆库")).toBeVisible();
   await page.getByRole("button", { name: "比较并处理" }).click();
@@ -48,6 +49,7 @@ test("browser preview explains that Markdown sync requires the desktop app", asy
   await page.goto("/?view=panel");
   await page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "记录", exact: true }).click();
   await page.getByRole("button", { name: "Piko 记住的", exact: true }).click();
+  await page.getByText("文件同步与备份", { exact: true }).click();
   await page.locator(".memory-vault > summary").click();
   await expect(page.getByText("请在桌面应用中使用 Markdown 同步。")).toBeVisible();
   await expect(page.getByRole("button", { name: "选择目录" })).toBeDisabled();

@@ -57,6 +57,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Install Agent SDK test dependencies
+        run: npm --prefix agent ci
       - run: npm run agent:prepare
       - run: npm run smoke:runtime
       - run: npm run test:agent:packaged

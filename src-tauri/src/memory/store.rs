@@ -364,6 +364,10 @@ impl MemoryDb {
     pub fn create(&self, item: &MemoryItem) -> Result<(), String> {
         let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
+        Self::insert_into(&db, item)
+    }
+
+    pub(super) fn insert_into(db: &Connection, item: &MemoryItem) -> Result<(), String> {
         let tags_json = serde_json::to_string(&item.tags).map_err(|e| e.to_string())?;
         let memory_type_str =
             serde_json::to_string(&item.memory_type).map_err(|e| e.to_string())?;
@@ -807,7 +811,7 @@ impl MemoryDb {
         let db = self.0.lock().map_err(|_| "数据库锁获取失败".to_string())?;
 
         db.execute(
-            "UPDATE memory_items SET is_pinned = 1, updated_at = ?1 WHERE id = ?2",
+            "UPDATE memory_items SET is_pinned = 1, expires_at = NULL, updated_at = ?1 WHERE id = ?2",
             params![
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1064,10 +1068,16 @@ impl MemoryDb {
             serde_json::to_string(&MemoryStatus::Archived).map_err(|e| e.to_string())?;
         let active_status = enum_sql_literal(&MemoryStatus::Active)?;
 
+        // Pins are retained knowledge, including older pins created before expiry was cleared.
+        db.execute(
+            &format!("UPDATE memory_items SET expires_at = NULL WHERE is_pinned = 1 AND status = {active_status}"),
+            [],
+        ).map_err(|e| e.to_string())?;
+
         db.execute(
             &format!(
                 "UPDATE memory_items SET status = ?1, updated_at = ?2 \
-             WHERE expires_at IS NOT NULL AND expires_at < ?3 AND status = {active_status}"
+             WHERE expires_at IS NOT NULL AND expires_at < ?3 AND is_pinned = 0 AND status = {active_status}"
             ),
             params![archived_str, now, now],
         )
@@ -1088,8 +1098,7 @@ impl MemoryDb {
             .execute(
                 &format!(
                     "UPDATE memory_items SET \
-             recency_score = MAX(0.1, 1.0 / (1.0 + 0.02 * ((?1 - updated_at) / 86400.0))), \
-             updated_at = ?1 \
+             recency_score = MAX(0.1, 1.0 / (1.0 + 0.02 * ((?1 - updated_at) / 86400.0))) \
              WHERE status = {active_status}"
                 ),
                 params![now],

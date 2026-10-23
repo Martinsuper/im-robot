@@ -239,8 +239,52 @@ pub(crate) fn clamp_pet_position(
     LogicalPosition::new(x, y)
 }
 
+fn distance_to_work_area(
+    point: LogicalPosition<f64>,
+    origin: LogicalPosition<f64>,
+    size: LogicalSize<f64>,
+) -> f64 {
+    let dx = point.x - point.x.clamp(origin.x, origin.x + size.width);
+    let dy = point.y - point.y.clamp(origin.y, origin.y + size.height);
+    dx * dx + dy * dy
+}
+
+// Snap the visible character, rather than the transparent window padding.
+fn snap_pet_position(
+    mut position: LogicalPosition<f64>,
+    size: LogicalSize<f64>,
+    origin: LogicalPosition<f64>,
+    area: LogicalSize<f64>,
+    insets: [f64; 4],
+) -> LogicalPosition<f64> {
+    let [left, top, right, bottom] = insets;
+    let targets_x = [
+        origin.x - left + 8.0,
+        origin.x + area.width - size.width + right - 8.0,
+    ];
+    let targets_y = [
+        origin.y - top + 8.0,
+        origin.y + area.height - size.height + bottom - 8.0,
+    ];
+    for (coordinate, targets) in [(&mut position.x, targets_x), (&mut position.y, targets_y)] {
+        let target = targets
+            .into_iter()
+            .min_by(|a, b| (*coordinate - a).abs().total_cmp(&(*coordinate - b).abs()))
+            .unwrap();
+        if (*coordinate - target).abs() <= 64.0 {
+            *coordinate = target;
+        }
+    }
+    position
+}
+
 #[tauri::command]
-pub(crate) fn move_pet(app: AppHandle, x: f64, y: f64) -> Result<(f64, f64), String> {
+pub(crate) fn move_pet(
+    app: AppHandle,
+    x: f64,
+    y: f64,
+    snap_insets: Option<[f64; 4]>,
+) -> Result<(f64, f64), String> {
     let window = app
         .get_webview_window("pet")
         .ok_or_else(|| "pet window not found".to_string())?;
@@ -248,29 +292,44 @@ pub(crate) fn move_pet(app: AppHandle, x: f64, y: f64) -> Result<(f64, f64), Str
     let size = window.outer_size().map_err(|e| e.to_string())?;
     let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
     let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    let logical_size = size.to_logical::<f64>(scale_factor);
+    let center = LogicalPosition::new(
+        requested.x + logical_size.width / 2.0,
+        requested.y + logical_size.height / 2.0,
+    );
+    // Nearest work area also handles dragging into a dock/menu-bar gap on a
+    // secondary display; falling back to the first monitor would jump screens.
+    let distance = |monitor: &tauri::Monitor| {
+        let area = monitor.work_area();
+        distance_to_work_area(
+            center,
+            area.position.to_logical::<f64>(scale_factor),
+            area.size.to_logical::<f64>(scale_factor),
+        )
+    };
     let Some(monitor) = monitors
         .iter()
-        .find(|monitor| {
-            let area = monitor.work_area();
-            let position = area.position.to_logical::<f64>(scale_factor);
-            let size = area.size.to_logical::<f64>(scale_factor);
-            requested.x >= position.x
-                && requested.y >= position.y
-                && requested.x < position.x + size.width
-                && requested.y < position.y + size.height
-        })
-        .or_else(|| monitors.first())
+        .min_by(|a, b| distance(a).total_cmp(&distance(b)))
     else {
         window.set_position(requested).map_err(|e| e.to_string())?;
         return Ok((requested.x, requested.y));
     };
     let area = monitor.work_area();
-    let position = clamp_pet_position(
+    let mut position = clamp_pet_position(
         requested,
         size.to_logical::<f64>(scale_factor),
         area.position.to_logical::<f64>(scale_factor),
         area.size.to_logical::<f64>(scale_factor),
     );
+    if let Some(insets) = snap_insets {
+        position = snap_pet_position(
+            position,
+            size.to_logical::<f64>(scale_factor),
+            area.position.to_logical::<f64>(scale_factor),
+            area.size.to_logical::<f64>(scale_factor),
+            insets,
+        );
+    }
     window.set_position(position).map_err(|e| e.to_string())?;
     Ok((position.x, position.y))
 }
@@ -283,7 +342,7 @@ pub(crate) fn move_pet_relative(app: AppHandle, dx: f64, dy: f64) -> Result<(f64
     let pos = window.outer_position().map_err(|e| e.to_string())?;
     let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
     let logical_pos: LogicalPosition<f64> = pos.to_logical::<f64>(scale_factor);
-    move_pet(app, logical_pos.x + dx, logical_pos.y + dy)
+    move_pet(app, logical_pos.x + dx, logical_pos.y + dy, None)
 }
 
 #[tauri::command]
@@ -751,4 +810,57 @@ pub(crate) fn get_global_shortcut(
         .lock()
         .map(|value| value.clone())
         .unwrap_or_else(|_| read_settings(&app).global_shortcut)
+}
+
+#[cfg(test)]
+mod pet_snap_tests {
+    use super::*;
+
+    #[test]
+    fn monitor_gaps_choose_the_nearest_display() {
+        let point = LogicalPosition::new(-720.0, 10.0);
+        let secondary = distance_to_work_area(
+            point,
+            LogicalPosition::new(-1440.0, 24.0),
+            LogicalSize::new(1440.0, 876.0),
+        );
+        let primary = distance_to_work_area(
+            point,
+            LogicalPosition::new(0.0, 24.0),
+            LogicalSize::new(1440.0, 876.0),
+        );
+        assert!(secondary < primary);
+    }
+
+    #[test]
+    fn snaps_visible_pet_on_scaled_or_offset_displays_and_leaves_center_free() {
+        let origin = LogicalPosition::new(-1440.0, 24.0);
+        let area = LogicalSize::new(1440.0, 876.0);
+        let size = LogicalSize::new(260.0, 300.0);
+        let insets = [63.0, 94.0, 63.0, 46.0];
+        let left = snap_pet_position(
+            LogicalPosition::new(-1450.0, 300.0),
+            size,
+            origin,
+            area,
+            insets,
+        );
+        assert_eq!((left.x, left.y), (-1495.0, 300.0));
+        let bottom_right = snap_pet_position(
+            LogicalPosition::new(-210.0, 625.0),
+            size,
+            origin,
+            area,
+            insets,
+        );
+        assert_eq!((bottom_right.x, bottom_right.y), (-205.0, 638.0));
+        let center = snap_pet_position(
+            LogicalPosition::new(-800.0, 300.0),
+            size,
+            origin,
+            area,
+            insets,
+        );
+        assert_eq!((center.x, center.y), (-800.0, 300.0));
+    }
 }

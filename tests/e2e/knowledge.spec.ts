@@ -6,6 +6,11 @@ test("knowledge library is readable at desktop panel width", async ({ page }) =>
   await page.getByRole("navigation", { name: "面板导航" }).getByRole("button", { name: "记录" }).click();
   await page.getByRole("button", { name: "Piko 记住的", exact: true }).click();
   await page.getByRole("button", { name: "知识库", exact: true }).click();
+  await expect(page.getByRole("region", { name: "日常知识库" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "从日常使用中积累" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "导入文件", exact: true })).toHaveCount(0);
+  await page.screenshot({ path: "artifacts/daily-knowledge-panel.png", fullPage: true });
+  await page.getByText("参考资料（可选）", { exact: true }).click();
   await expect(page.getByRole("heading", { name: "已导入文档（0）" })).toBeVisible();
   await expect(page.getByText("请在桌面应用中导入资料和配置语义检索。")).toBeVisible();
   await expect(page.getByRole("button", { name: "导入文件", exact: true })).toBeDisabled();

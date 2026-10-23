@@ -14,7 +14,7 @@ import {
   MEMORY_TYPE_OPTIONS,
 } from "./memoryTypes";
 import { MemoryVaultPanel } from "./MemoryVaultPanel";
-import { KnowledgePanel } from "./KnowledgePanel";
+import { DailyKnowledgePanel } from "./DailyKnowledgePanel";
 import { MemoryExtractionControls } from "./MemoryExtractionControls";
 import { OpenLoopReview } from "../soul/OpenLoopReview";
 import { MemoryCard } from "./MemoryCard";
@@ -308,9 +308,11 @@ export function MemoryCenter() {
         </div>
       </div>
 
+      <p className="knowledge-help">
+        记忆保存个人偏好与经历，知识库积累项目事实与方法；待确认集中处理需要你判断的内容。
+      </p>
       {/* Sub-view tabs */}
       <MemoryExtractionControls />
-      <MemoryVaultPanel />
 
       <nav className="memory-sub-tabs">
         <button
@@ -333,9 +335,22 @@ export function MemoryCenter() {
             `待确认 (${pendingCandidates.length})`,
           ).replace("{count}", String(pendingCandidates.length))}
         </button>
-        <button type="button" className={subView === "knowledge" ? "is-active" : ""} onClick={() => setSubView("knowledge")}>知识库</button>
+        <button
+          type="button"
+          className={subView === "knowledge" ? "is-active" : ""}
+          onClick={() => setSubView("knowledge")}
+        >
+          知识库
+        </button>
       </nav>
-      {subView === "knowledge" && <KnowledgePanel />}
+      {subView === "knowledge" && (
+        <DailyKnowledgePanel
+          onReview={() => {
+            setSubView("pending");
+            void loadPending();
+          }}
+        />
+      )}
 
       {subView === "memories" && (
         <>
@@ -612,6 +627,10 @@ export function MemoryCenter() {
           </button>
         </div>
         <OpenLoopReview />
+      </details>
+      <details className="memory-advanced">
+        <summary>文件同步与备份</summary>
+        <MemoryVaultPanel />
       </details>
       {selectedMemory && (
         <MemoryDetail

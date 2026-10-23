@@ -271,7 +271,7 @@ fn extract_with_candidates(
     Ok(count)
 }
 
-fn source_deleted(conn: &rusqlite::Connection, id: &str) -> Result<bool, String> {
+pub(super) fn source_deleted(conn: &rusqlite::Connection, id: &str) -> Result<bool, String> {
     let available: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='soul_source_tombstones')",
         [], |row| row.get(0),
@@ -426,9 +426,15 @@ pub fn start(app: AppHandle) {
     // One worker serializes all automatic passes; missed intervals catch up on startup.
     crate::background::SUPERVISOR.spawn_async("memory-extraction", move |worker| async move {
         while !worker.cancelled() {
-            match run(&app, false).await {
-                Ok(_) => worker.health(Ok(())),
-                result => worker.health(Err(format!("memory_extraction_failed: {result:?}"))),
+            let extraction = run(&app, false).await;
+            let maintenance = {
+                let db = app.state::<Arc<MemoryDb>>();
+                super::maintenance::maintain(&db, false)
+            };
+            let _ = app.emit("memories-updated", ());
+            match (extraction, maintenance) {
+                (Ok(_), Ok(_)) => worker.health(Ok(())),
+                result => worker.health(Err(format!("memory_knowledge_upkeep_failed: {result:?}"))),
             }
             if !worker.sleep(std::time::Duration::from_secs(60)).await {
                 break;

@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod extraction;
 pub mod knowledge;
+pub mod maintenance;
 pub mod model;
 pub mod policy;
 pub mod reflection;

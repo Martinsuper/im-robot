@@ -1,14 +1,12 @@
 import {
-  ArrowUpRight,
   CalendarCheck,
-  CalendarDays,
   MessageCircle,
   NotebookPen,
   PawPrint,
   Settings2,
 } from "lucide-react";
 import type { PanelTab } from "../../types/appTypes";
-import { panelTabOptions, PetSprite } from "../app/appShared";
+import { panelTabOptions } from "../app/appShared";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import "./settingsGroup.css";
 
@@ -83,49 +81,6 @@ export function PanelNavigation({
   );
 }
 
-/** 伙伴名片。现在住在「设置 → 伙伴」里，同时充当外观风格的预览。 */
-export function CompanionHero({
-  companionName,
-  styleLabel,
-  onAppearance,
-}: {
-  companionName: string;
-  styleLabel: string;
-  onAppearance: () => void;
-}) {
-  return (
-    <section className="companion-card companion-hero" aria-label="我的伙伴">
-      <div className="companion-card__copy">
-        <p className="eyebrow">YOUR EVERYDAY COMPANION</p>
-        <h2>我在，随时都在。</h2>
-        <p>
-          我是 {companionName}。陪你聊一聊，
-          <br />
-          也帮你照顾好今天的小事。
-        </p>
-        <div className="companion-hero__actions">
-          <button
-            type="button"
-            className="primary-action"
-            onClick={() => void runCommand("show_bubble")}
-          >
-            <MessageCircle size={16} />
-            开始对话
-            <ArrowUpRight size={15} />
-          </button>
-          <button type="button" className="text-action" onClick={onAppearance}>
-            换个样子
-          </button>
-        </div>
-      </div>
-      <div className="companion-card__portrait">
-        <PetSprite mode="idle" />
-        <span>{styleLabel}</span>
-      </div>
-    </section>
-  );
-}
-
 /** 折叠分组的统一外壳，供「设置」的四个分组使用。 */
 export function SettingsGroup({
   id,
@@ -168,6 +123,3 @@ export function SettingsGroup({
     </details>
   );
 }
-
-/** 「今天」用的空状态图标，避免每个 Tab 各自引一套。 */
-export const TodayEmptyIcon = CalendarDays;

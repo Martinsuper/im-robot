@@ -139,11 +139,8 @@ test("native permission query failures are contained and visible", async ({
   });
   await openSettings(page);
   await expect(page.getByText(/测试自启不可用/)).toBeVisible();
-  await page.locator("#settings-group-system > summary").click();
-  await page.getByText("关于与更新", { exact: true }).click();
   await expect(
-    page
-      .locator("#settings-group-system")
-      .getByText("读取失败", { exact: true }),
-  ).toHaveCount(2);
+    page.locator("#settings-group-notify").getByText(/测试通知不可用/),
+  ).toBeVisible();
+  expect(await callsFor(page, "screen_capture_permission_status")).toHaveLength(0);
 });

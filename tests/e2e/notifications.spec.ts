@@ -12,6 +12,8 @@ async function openNotifications(page: import("@playwright/test").Page) {
     .getByRole("button", { name: "设置", exact: true })
     .click();
   await page.locator("#settings-group-notify > summary").click();
+  await expect(page.getByRole("button", { name: "发送测试通知", exact: true })).toBeHidden();
+  await page.getByText("通知排查", { exact: true }).click();
 }
 for (const [authorization, label] of [
   ["denied", "系统已拒绝"],

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 /** Create or resume a draft release; only an actual HTTP 404 permits creation. */
@@ -23,7 +23,9 @@ export function prepareRelease(repository, version, run = spawnSync) {
       input: JSON.stringify({
         tag_name: `v${version}`,
         name: `Piko ${version}`,
-        body: "See the assets to download this version and install.",
+        body: existsSync(`doc/releases/v${version}.md`)
+          ? readFileSync(`doc/releases/v${version}.md`, "utf8")
+          : "See the assets to download this version and install.",
         draft: true,
         prerelease: false,
       }),

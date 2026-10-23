@@ -115,8 +115,15 @@ pub fn apply_candidate(
         return Ok(None);
     }
 
+    let item = candidate_memory(candidate);
+    db.create(&item)?;
+    candidates.retain(|c| c.id != input.candidate_id);
+    Ok(Some(item))
+}
+
+pub(super) fn candidate_memory(candidate: MemoryCandidate) -> MemoryItem {
     let now = now_unix();
-    let item = MemoryItem {
+    MemoryItem {
         id: format!("memory-{}", candidate.id),
         memory_type: candidate.memory_type.clone(),
         title: candidate.title,
@@ -138,11 +145,7 @@ pub fn apply_candidate(
         tags: candidate.tags,
         embedding_id: None,
         is_pinned: false,
-    };
-
-    db.create(&item)?;
-    candidates.retain(|c| c.id != input.candidate_id);
-    Ok(Some(item))
+    }
 }
 
 /// Auto-capture memory candidates from a completed chat exchange.

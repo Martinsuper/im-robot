@@ -19,6 +19,7 @@ const rewriteJsonVersion = async (filePath) => {
   const content = await fs.readFile(filePath, "utf8");
   const data = JSON.parse(content);
   data.version = version;
+  if (data.packages?.[""]) data.packages[""].version = version;
   await fs.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
 };
 

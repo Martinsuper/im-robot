@@ -81,3 +81,67 @@
 .knowledge-error {
   color: var(--danger, #b42318);
 }
+
+.daily-knowledge__intro h3 {
+  margin: 0;
+}
+.daily-knowledge__maintenance {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-color, #d6d6d6);
+  border-radius: 10px;
+}
+.daily-knowledge .daily-knowledge__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.daily-knowledge .knowledge-help {
+  margin: 0;
+}
+.daily-knowledge__list {
+  display: grid;
+  gap: 12px;
+}
+.daily-knowledge__item {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-color, #d6d6d6);
+  border-radius: 10px;
+}
+.daily-knowledge__open {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.daily-knowledge__open span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+.daily-knowledge__references {
+  border-top: 1px solid var(--border-color, #d6d6d6);
+  padding-top: 14px;
+}
+.daily-knowledge__references[open] > summary {
+  margin-bottom: 12px;
+}
+.daily-knowledge summary {
+  cursor: pointer;
+}
+.memory-advanced {
+  margin-block: 14px;
+}
+.memory-advanced > summary {
+  cursor: pointer;
+}
