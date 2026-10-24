@@ -2,7 +2,5 @@
 /vendor/
 /managed_components/
 /backup/
-/releases/*
-!/releases/README.md
 /sdkconfig
 /sdkconfig.old

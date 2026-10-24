@@ -1,6 +1,6 @@
 # Piko Passport 固件版本归档
 
-本目录按版本保存曾经刷入设备的固件镜像，用于回滚。**镜像文件只保留在本地，不提交到仓库**（本 README 除外）；校验和与功能说明随本 README 入库。更早版本的功能沿革见 [../README.md](../README.md) 的版本记录。
+本目录按版本保存曾经刷入设备的固件镜像，用于回滚。镜像与说明文档一并入库（单个镜像最大 3.4 MB，远低于仓库限制；`backup/` 中的原始读回副本仍仅保留在本地）。更早版本的功能沿革见 [../README.md](../README.md) 的版本记录。
 
 ## 回滚方法
 
@@ -61,6 +61,6 @@ NVS（Wi-Fi、配对凭据）不在上述写入范围内，回滚不会丢失配
 
 ## 归档规则（新增版本时）
 
-1. 构建并刷写成功、实机确认后，从 `build/` 复制 `bootloader/bootloader.bin`、`partition_table/partition-table.bin`、`Piko-Passport.bin` 三个文件到 `releases/<版本号>/`，文件名带版本号
+1. 构建并刷写成功、实机确认后，从 `build/` 复制 `bootloader/bootloader.bin`、`partition_table/partition-table.bin`、`Piko-Passport.bin` 三个文件到 `releases/<版本号>/`，文件名带版本号，并随代码一并提交
 2. 在本 README 增加版本小节：功能变化概要、镜像大小、写入偏移、SHA-256（`shasum -a 256`）
 3. 若新版回滚需覆盖旧版（例如不再兼容的分区变更），在对应小节显式标注
