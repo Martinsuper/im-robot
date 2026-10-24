@@ -1,0 +1,1 @@
+idf_component_register(SRCS "voice_input.c" "voice_input/adpcm.c" "main.c" "passport_audio.c" "piko_chinese.c" "piko_ui_title.c" "piko_ui_small.c" INCLUDE_DIRS "." REQUIRES bsp esp_wifi esp_netif esp_event nvs_flash esp_http_server esp_websocket_client json esp_timer)

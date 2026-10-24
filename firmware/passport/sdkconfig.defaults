@@ -1,0 +1,39 @@
+# --- 目标芯片 ---
+CONFIG_IDF_TARGET="esp32c3"
+# 注:ESP32-C3 无 PSRAM,故不设 CONFIG_SPIRAM。
+
+# --- Flash ---
+# FoloToy AI Passport 当前产品/固件基线使用 8MB Flash。
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# 固定 8MB 镜像头，关闭 detect，便于 idf.py merge-bin。
+CONFIG_ESPTOOLPY_HEADER_FLASHSIZE_UPDATE=n
+# Piko uses a bounded factory partition and reserves the known identity region.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# --- 控制台:USB-Serial-JTAG(C3 原生 USB,GPIO18/19)---
+# 不用 UART0:其默认 TX=GPIO21 与本板背光引脚冲突。
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# --- LVGL ---
+CONFIG_LV_COLOR_DEPTH_16=y
+# 20 ms display refresh period targets up to 50 FPS when rendering and SPI
+# transfer complete within the same budget.
+CONFIG_LV_DEF_REFR_PERIOD=20
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+# LVGL pool is in bytes: 24 KB, separate from the system heap.
+CONFIG_LV_MEM_SIZE=24576
+
+# --- 系统 ---
+CONFIG_FREERTOS_HZ=1000
+
+# Piko uses Wi-Fi only; leave internal RAM for display and networking.
+CONFIG_BT_ENABLED=n
+CONFIG_ESP_WIFI_NVS_ENABLED=n
+
+# Main loop snapshot includes bounded Chinese transcript/reply buffers.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288
+CONFIG_I2S_ISR_IRAM_SAFE=y
