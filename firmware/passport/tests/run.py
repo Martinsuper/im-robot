@@ -14,6 +14,16 @@ with tempfile.TemporaryDirectory(prefix="piko-confirm-tests-") as temp:
     subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", f"-I{ROOT / 'main'}", str(ROOT / "tests/confirmation_gate.c"), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True, timeout=10)
 
+with tempfile.TemporaryDirectory(prefix="piko-lunar-tests-") as temp:
+    binary = Path(temp) / "lunar-tests"
+    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", f"-I{ROOT / 'main'}", str(ROOT / "tests/piko_lunar_host.c"), str(ROOT / "main/piko_lunar.c"), "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True, timeout=10)
+
+with tempfile.TemporaryDirectory(prefix="piko-clock-tests-") as temp:
+    binary = Path(temp) / "clock-tests"
+    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", f"-I{ROOT / 'main'}", str(ROOT / "tests/piko_clock_host.c"), str(ROOT / "main/piko_clock.c"), "-lm", "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True, timeout=10)
+
 with tempfile.TemporaryDirectory(prefix="piko-portal-tests-") as temp:
     binary = Path(temp) / "portal-tests"
     subprocess.run(["cc", "-std=c11", f"-I{ROOT / 'main'}",
@@ -30,3 +40,23 @@ with tempfile.TemporaryDirectory(prefix="piko-ui-tests-") as temp:
     binary = Path(temp) / "ui-tests"
     subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", f"-I{ROOT / 'main'}", str(ROOT / "tests/ui_host.c"), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True, timeout=10)
+
+with tempfile.TemporaryDirectory(prefix="piko-ws-tests-") as temp:
+    binary = Path(temp) / "ws-tests"
+    subprocess.run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                    f"-I{ROOT / 'main'}", str(ROOT / "tests/ws_receive.c"),
+                    "-o", str(binary)], check=True)
+    subprocess.run([str(binary)], check=True, timeout=10)
+
+# Compile the production upload/cancel paths against deterministic network stubs.
+import sys
+subprocess.run([sys.executable, str(ROOT / "tests/voice_scheduling_run.py")], check=True)
+subprocess.run([sys.executable, str(ROOT / "tests/ui_interactions_run.py")], check=True)
+
+subprocess.run([sys.executable, str(ROOT / "tests/ui_lifecycle_run.py")], check=True)
+
+subprocess.run([sys.executable, str(ROOT / "tests/pager_hid_run.py")], check=True)
+
+subprocess.run([sys.executable, str(ROOT / "tests/pager_lifecycle_run.py")], check=True)
+
+subprocess.run([sys.executable, str(ROOT / "tests/pager_pairing_run.py")], check=True)

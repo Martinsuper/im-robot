@@ -8,7 +8,8 @@ static int64_t clock_us=1000000;
 static bool incoming, capture_on, done, fail_send;
 static uint8_t rx[512], tx[128][900];
 static size_t rx_len, tx_len[128], pcm_bytes;
-static unsigned sent, cancel_count;
+static unsigned sent, cancel_count, transient_sends, send_delays;
+void vTaskDelay(uint32_t ms){assert(ms==10);clock_us+=ms*1000;send_delays++;}
 static struct sockaddr_in source;
 int64_t esp_timer_get_time(void){return clock_us;}
 int voice_test_socket(int d,int t,int p){(void)d;(void)t;(void)p;return 9;}
@@ -17,7 +18,8 @@ int voice_test_fcntl(int f,int cmd,...){(void)f;(void)cmd;return 0;}
 int voice_test_close(int f){(void)f;return 0;}
 ssize_t voice_test_sendto(int f,const void*d,size_t n,int flags,const struct sockaddr*a,socklen_t l){
     (void)f;(void)flags;(void)a;(void)l;
-    if(fail_send)return -1;
+    if(transient_sends){transient_sends--;errno=ENOMEM;return -1;}
+    if(fail_send){errno=EIO;return -1;}
     assert(sent<128 && n<=900);memcpy(tx[sent],d,n);tx_len[sent++]=n;return (ssize_t)n;
 }
 ssize_t voice_test_recvfrom(int f,void*d,size_t n,int flags,struct sockaddr*a,socklen_t*l){
@@ -47,6 +49,10 @@ static void dispatch_up(bsp_btn_ev_t event){
     if(event==BSP_BTN_RELEASE)voice_input_release();
 }
 int main(void){
+    assert(passport_button_should_queue(BSP_BTN_OK,BSP_BTN_DOUBLE,false));
+    assert(passport_button_should_queue(BSP_BTN_OK,BSP_BTN_DOUBLE,true));
+    assert(!passport_button_should_queue(BSP_BTN_UP,BSP_BTN_DOUBLE,true));
+    assert(!passport_button_should_queue(BSP_BTN_DOWN,BSP_BTN_DOUBLE,false));
     assert(!passport_button_should_queue(BSP_BTN_UP,BSP_BTN_PRESS,false));
     assert(passport_button_should_queue(BSP_BTN_OK,BSP_BTN_PRESS,false));
     assert(passport_button_should_queue(BSP_BTN_DOWN,BSP_BTN_PRESS,true));
@@ -64,12 +70,16 @@ int main(void){
     receive(4,"","192.168.1.2");assert(!state.candidate);
     voice_input_press();assert(!capture_on && sent==0);
     beacon("192.168.1.2");assert(state.candidate && !state.selected && sent==0);
+    transient_sends=2;
     assert(voice_input_select());assert(has_event("device.hello"));
+    assert(send_delays==2 && transient_sends==0);
     beacon("192.168.1.3");assert(!strcmp(state.peer,"192.168.1.2"));
     dispatch_up(BSP_BTN_PRESS);assert(capture_on && has_event("voice.start"));
     unsigned before=sent;voice_input_press();assert(sent==before);
     voice_input_enter_key();assert(!has_event("key.action"));
+    transient_sends=3;unsigned delay_before=send_delays;
     pcm_bytes=3200;voice_input_tick(true);assert(state.blocks==1);
+    assert(send_delays==delay_before+3 && !state.error);
     unsigned audio_index=0;
     for(unsigned i=0;i<sent;i++)if(tx[i][0]==1){
         assert(tx_len[i]==807 && tx[i][1]==0 && tx[i][2]==0x80);audio_index=i;
@@ -96,5 +106,8 @@ int main(void){
     voice_input_press();clock_us+=60000001;beacon("192.168.1.3");
     assert(!capture_on && !state.recording && !state.draining); /* max duration */
     voice_input_close();voice_input_close();
+    assert(voice_input_open());beacon("192.168.1.3");assert(voice_input_select());
+    transient_sends=20;unsigned retry_before=send_delays;
+    assert(!event("{}"));assert(send_delays==retry_before+5);transient_sends=0;
     puts("PASS: explicit PC selection, peer pinning, ADPCM framing, tail flush, fresh reconnect, bounded stop, exit/offline cancellation and Enter debounce");
 }

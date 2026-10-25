@@ -15,6 +15,8 @@ typedef struct {
   int error;
 } passport_audio_status_t;
 esp_err_t passport_audio_init(void);
+// Control task only. Waits for I/O worker exit before freeing queues and DMA.
+esp_err_t passport_audio_deinit(void);
 bool passport_audio_record(void);
 void passport_audio_stop_record(void);
 bool passport_audio_capture(uint8_t *data, size_t *len);

@@ -8,6 +8,8 @@ import zipfile
 
 root = Path(__file__).resolve().parent
 build = root / "build"
+project = json.loads((build / "project_description.json").read_text())
+version = project["project_version"]
 args = json.loads((build / "flasher_args.json").read_text())
 expected = {0: "bootloader/bootloader.bin", 0x8000: "partition_table/partition-table.bin", 0x10000: "Piko-Passport.bin"}
 actual = {int(offset, 0): path for offset, path in args["flash_files"].items()}
@@ -25,14 +27,14 @@ for offset, relative in sorted(actual.items()):
             raise SystemExit("Unexpected application size or ESP32-C3 image header")
     end = offset + len(data)
     segments.append({"offset": hex(offset), "file": path.name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
-manifest = {"version": "piko-0.8.0", "chip": "esp32c3", "flashSize": "8MB", "segments": segments,
+manifest = {"version": version, "chip": "esp32c3", "flashSize": "8MB", "segments": segments,
             "preservedIdentityRange": ["0x356000", "0x35a000"], "deviceTested": False}
-archive = build / "piko-passport-0.8.0.zip"
+archive = build / f"piko-passport-{version.removeprefix('piko-')}.zip"
 with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
     for segment, relative in zip(segments, (relative for _, relative in sorted(actual.items()))):
         output.write(build / relative, segment["file"])
     output.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
-    output.writestr("README.txt", "Piko Passport 0.8.0, ESP32-C3 / 8MB. Not device-tested.\n"
+    output.writestr("README.txt", f"Piko Passport {version}, ESP32-C3 / 8MB. This exact image is not device-tested.\n"
                     "Segmented images only: use the offsets in manifest.json.\n"
                     "Do not erase flash or write a merged image. Confirm the existing partition layout,\n"
                     "back up existing firmware/data, and obtain the user's flashing approval first.\n"

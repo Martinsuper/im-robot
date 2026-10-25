@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 
+static atomic_uint queue_live;
 typedef struct {
   pthread_mutex_t lock;
   unsigned cap, count, head;
@@ -18,6 +19,7 @@ typedef struct {
 } queue_t;
 QueueHandle_t xQueueCreate(unsigned count, size_t size) {
   queue_t *q = calloc(1, sizeof(*q));
+  atomic_fetch_add(&queue_live,1);
   q->cap = count;
   q->size = size;
   q->data = calloc(count, size);
@@ -64,6 +66,7 @@ void vQueueDelete(QueueHandle_t handle) {
   pthread_mutex_destroy(&q->lock);
   free(q->data);
   free(q);
+  atomic_fetch_sub(&queue_live,1);
 }
 SemaphoreHandle_t xSemaphoreCreateMutex(void) {
   pthread_mutex_t *m = malloc(sizeof(*m));
@@ -80,6 +83,7 @@ void vSemaphoreDelete(SemaphoreHandle_t m) {
   free(m);
 }
 void vTaskDelay(uint32_t ms) { usleep(ms * 1000); }
+void vTaskDelete(void *task){assert(!task);pthread_exit(NULL);}
 typedef struct {
   void (*fn)(void *);
   void *arg;
@@ -106,14 +110,18 @@ int xTaskCreate(void (*fn)(void *), const char *name, unsigned stack, void *arg,
   pthread_detach(thread);
   return 1;
 }
-esp_err_t bsp_audio_init(void) { return ESP_OK; }
+static atomic_bool dma_live;
+esp_err_t bsp_audio_init(void) { atomic_store(&dma_live,true);return ESP_OK; }
+esp_err_t passport_bsp_audio_deinit(void){atomic_store(&dma_live,false);return ESP_OK;}
 esp_err_t bsp_audio_set_format(uint32_t hz, uint8_t bits, uint8_t channels) {
   assert(hz == 16000 && bits == 16 && channels == 1);
   return ESP_OK;
 }
 void bsp_audio_set_volume(uint8_t percent) { assert(percent <= 100); }
-static atomic_bool fail_read,fail_write;
+static atomic_bool fail_read,fail_write,block_read,read_entered;
 esp_err_t bsp_audio_read(void *pcm, size_t bytes) {
+  atomic_store(&read_entered,true);
+  while(atomic_load(&block_read))usleep(1000);
   usleep(8000);
   if(atomic_exchange(&fail_read,false))return ESP_FAIL;
   memset(pcm, 42, bytes);
@@ -131,6 +139,14 @@ esp_err_t bsp_audio_write(const void *pcm, size_t bytes) {
   output_size += bytes;
   pthread_mutex_unlock(&output_lock);
   return ESP_OK;
+}
+static atomic_bool reader_stop;
+static void *late_reader(void *unused){
+  (void)unused;uint8_t buffer[PASSPORT_CAPTURE_BYTES];size_t len;
+  while(!atomic_load(&reader_stop)){
+    passport_audio_capture(buffer,&len);passport_audio_status();usleep(100);
+  }
+  return NULL;
 }
 static passport_audio_status_t await_complete(void) {
   passport_audio_status_t status = {0};
@@ -238,6 +254,31 @@ int main(void) {
   assert(!passport_audio_end_stream(0));
   assert(!passport_audio_end_stream(16000 * 2 * 41));
   passport_audio_cancel();
+  atomic_store(&read_entered,false);atomic_store(&block_read,true);
+  assert(passport_audio_record());
+  for(unsigned wait=0;!atomic_load(&read_entered)&&wait<100;wait++)usleep(1000);
+  assert(atomic_load(&read_entered));
+  assert(passport_audio_deinit()==ESP_ERR_TIMEOUT);
+  assert(atomic_load(&queue_live)==2&&atomic_load(&dma_live));
+  assert(passport_audio_init()==ESP_ERR_INVALID_STATE);
+  atomic_store(&block_read,false);usleep(30000);
+  assert(passport_audio_init()==ESP_OK&&atomic_load(&queue_live)==2);
+  pthread_t reader;assert(!pthread_create(&reader,NULL,late_reader,NULL));
+  for(unsigned cycle=0;cycle<40;cycle++){
+    assert(passport_audio_deinit()==ESP_OK);
+    assert(!atomic_load(&dma_live)&&atomic_load(&queue_live)==0);
+    pthread_mutex_lock(&output_lock);output_size=0;pthread_mutex_unlock(&output_lock);
+    assert(!passport_audio_record()&&!passport_audio_feed(chunk,2048));
+    assert(passport_audio_deinit()==ESP_OK);
+    assert(passport_audio_init()==ESP_OK);
+    assert(passport_audio_init()==ESP_OK); // Idempotence, no duplicate worker/queues.
+    assert(atomic_load(&dma_live)&&atomic_load(&queue_live)==2);
+    assert(passport_audio_record());usleep(10000);
+    if(cycle%2){passport_audio_cancel();assert(passport_audio_play(2048));assert(passport_audio_feed(chunk,2048));}
+  }
+  assert(passport_audio_deinit()==ESP_OK&&atomic_load(&queue_live)==0);
+  atomic_store(&reader_stop,true);pthread_join(reader,NULL);
+  puts("PASS: 40 audio lifecycle cycles, stop during I/O, queue/DMA release and idempotent reinit");
   puts("PASS: capture/stop, scheduling jitter, distinct I/O errors, bounded queues, ordered playback/credits, "
        "cancel/restart, overflow recovery, incomplete audio rejection");
   return 0;

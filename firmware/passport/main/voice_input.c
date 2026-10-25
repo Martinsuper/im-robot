@@ -10,6 +10,9 @@
 #include "esp_log.h"
 #include "lwip/sockets.h"
 #include <fcntl.h>
+#include <errno.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <unistd.h>
 
@@ -26,8 +29,22 @@ static uint8_t sequence;
 static adpcm_state_t encoder;
 
 static bool send_packet(const void *data, size_t len) {
-    return fd >= 0 && state.candidate &&
-        sendto(fd, data, len, 0, (struct sockaddr *)&peer, sizeof(peer)) == (ssize_t)len;
+    if (fd < 0 || !state.candidate) return false;
+    // Wi-Fi TX buffers are bounded. Brief congestion must not end a recording.
+    // At most 50 ms, well within the 512 ms capture queue budget.
+    for (unsigned attempt = 0; attempt < 6; attempt++) {
+        ssize_t sent = sendto(fd, data, len, 0, (struct sockaddr *)&peer, sizeof(peer));
+        if (sent == (ssize_t)len) return true;
+        int reason = errno;
+        bool transient = sent < 0 && (reason == ENOMEM || reason == ENOBUFS ||
+                                      reason == EAGAIN || reason == EWOULDBLOCK);
+        if (!transient || attempt == 5) {
+            ESP_LOGI("voice_input", "send failed errno=%d bytes=%u", reason, (unsigned)len);
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return false;
 }
 static bool event(const char *json) {
     uint8_t packet[160];
@@ -155,7 +172,10 @@ void voice_input_tick(bool wifi_ready) {
     if (state.recording && now - started_at >= RECORD_LIMIT_US) voice_input_release();
     if (!state.recording && !state.draining) return;
     passport_audio_status_t audio = passport_audio_status();
-    if (audio.error) { state.error = true; finish(false); return; }
+    if (audio.error) {
+        ESP_LOGI("voice_input", "capture failed error=%d blocks=%u", audio.error, state.blocks);
+        state.error = true; finish(false); return;
+    }
     uint8_t captured[PASSPORT_CAPTURE_BYTES]; size_t bytes;
     for (unsigned block = 0; block < PASSPORT_CAPTURE_BLOCKS; block++) {
         if (!passport_audio_capture(captured, &bytes)) break;
