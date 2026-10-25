@@ -9,6 +9,7 @@ import { useToast } from "../../components/feedback/toastStore";
 
 import type { PanelTab } from "../../types/appTypes";
 import { useAppSettings } from "../panel/settingsStore";
+import { deviceConversations } from "./deviceConversations";
 
 const candidateId = new URLSearchParams(location.search).get("conversation");
 const detachedId = candidateId && /^[a-zA-Z0-9-]{1,80}$/.test(candidateId) ? candidateId : null;
@@ -122,6 +123,9 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
       listen<AgentEvent>("agent-event", ({ payload: event }) => {
         if (event.conversationId) requests.set(event.requestId, event.conversationId);
         const id = requests.get(event.requestId);
+        if (id?.startsWith("passport-") && event.conversationId) {
+          setWorkspace(value => value.tabs.some(tab => tab.id === id) ? value : { ...value, tabs: [...value.tabs, { id, title: (event.prompt || "设备对话").slice(0, 24) }] });
+        }
         if (!id || !windowsRef.current.windows.some(item => item.conversationId === id)) return;
         if (event.eventSequence !== undefined && event.eventSequence <= (sequences.get(event.requestId) ?? 0)) return;
         sequences.set(event.requestId, event.eventSequence ?? 0);
@@ -139,6 +143,16 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
       ]);
       if (disposed) return;
       applyWindows(windows);
+      const [records, history] = await Promise.all([
+        runCommand("agent_list_tasks"),
+        runCommand("list_chat_history"),
+      ]);
+      if (disposed) return;
+      const devices = deviceConversations(records, history);
+      setWorkspace(value => {
+        const missing = devices.filter(device => !value.tabs.some(tab => tab.id === device.id));
+        return missing.length ? { ...value, tabs: [...value.tabs, ...missing] } : value;
+      });
       for (const snapshot of snapshots) {
         requests.set(snapshot.requestId, snapshot.conversationId);
         if (snapshot.eventSequence < (sequences.get(snapshot.requestId) ?? 0)) continue;
