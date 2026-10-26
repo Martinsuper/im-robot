@@ -29,6 +29,7 @@ jobs:
           workspaces: tools/contracts -> target
           key: contracts
       - run: npm ci
+      - run: python3 scripts/test-keychain-migration.py
       - run: node --test scripts/prepare-release.test.mjs
       - run: node --test scripts/window-config.test.mjs
       - run: node --test scripts/ci-workflow.test.mjs

@@ -118,3 +118,46 @@ pub(crate) fn get_bubble_chat_history(
     entries.truncate(20);
     Ok(entries)
 }
+
+/// Conversation ids differ from session ids: a session may contain several conversations.
+pub(crate) fn delete_conversation_history(app: &AppHandle, id: &str) -> Result<(), String> {
+    let _transaction = storage::transaction();
+    let mut sessions = load_chat_sessions(app, false)?;
+    let mut sources: Vec<String> = chat_session::entries_view(&sessions)
+        .into_iter()
+        .filter(|entry| entry.conversation_id.as_deref() == Some(id))
+        .map(|entry| entry.id)
+        .collect();
+    sources.extend(
+        sessions
+            .iter()
+            .filter(|session| {
+                session
+                    .messages
+                    .iter()
+                    .all(|message| message.conversation_id.as_deref() == Some(id))
+            })
+            .map(|session| session.id.clone()),
+    );
+    if !sources.is_empty() {
+        let db = app.state::<Arc<memory::MemoryDb>>();
+        let mut conn =
+            db.0.lock()
+                .map_err(|_| crate::error_codes::STORAGE_UNAVAILABLE)?;
+        memory::soul::lifecycle::delete_sources(
+            &mut conn,
+            &sources,
+            chrono::Utc::now().timestamp(),
+        )?;
+    }
+    chat_session::remove_conversation(&mut sessions, id);
+    persist_chat_sessions(app, &sessions)?;
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("agent");
+    crate::agent::journal::TaskJournal::new(&directory).delete_conversation(id)?;
+    memory::soul::commands::reconcile_visible(app);
+    Ok(())
+}

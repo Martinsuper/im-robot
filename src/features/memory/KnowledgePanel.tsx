@@ -356,7 +356,7 @@ export function KnowledgePanel() {
             />
           </label>
           <label>
-            API Key（可选，保存至系统钥匙串）
+            API Key（可选，保存在本机）
             <input
               type="password"
               autoComplete="new-password"

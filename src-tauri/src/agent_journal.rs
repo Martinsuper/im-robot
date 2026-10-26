@@ -37,6 +37,13 @@ impl TaskJournal {
     pub fn all(&self) -> Result<Vec<TaskRecord>, String> {
         crate::storage::read(&self.0)
     }
+    pub fn delete_conversation(&self, id: &str) -> Result<(), String> {
+        self.update(|records| {
+            records.retain(|record| record.conversation_id != id);
+            Ok(())
+        })
+    }
+
     pub fn new(agent_dir: &Path) -> Self {
         Self(agent_dir.join("tasks.json"))
     }
@@ -198,6 +205,18 @@ impl TaskJournal {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn deleting_conversation_is_persistent_and_preserves_other_tasks() {
+        let directory = tempfile::tempdir().unwrap();
+        let journal = TaskJournal::new(directory.path());
+        journal.start("r1", "delete-me", 1).unwrap();
+        journal.start("r2", "keep-me", 2).unwrap();
+        journal.delete_conversation("delete-me").unwrap();
+        let records = TaskJournal::new(directory.path()).all().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].conversation_id, "keep-me");
+    }
 
     #[test]
     fn recovery_preserves_every_live_task_and_only_interrupts_orphans() {

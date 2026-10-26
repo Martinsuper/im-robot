@@ -36,7 +36,15 @@ test("background conversations finish independently and retain their drafts", as
   await expect(input).toHaveValue("第一项未发送草稿");
   await page.getByRole("tab").nth(1).click();
   await expect(input).toHaveValue("第二项未发送草稿");
-  await page.getByRole("button", { name: "关闭会话：第一项独立任务" }).click();
+  await page.getByRole("button", { name: "删除会话：第一项独立任务" }).click();
+  const inlineDelete = page.getByRole("button", { name: "确认删除会话：第一项独立任务", exact: true });
+  await expect(inlineDelete).toHaveText("");
+  await expect(inlineDelete.locator("svg.lucide-trash-2")).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  await page.getByRole("button", { name: "删除会话：第一项独立任务" }).click();
+  await inlineDelete.click();
   await expect(page.getByRole("tab")).toHaveCount(1);
   await expect(input).toHaveValue("第二项未发送草稿");
 });

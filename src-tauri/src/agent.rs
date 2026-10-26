@@ -52,6 +52,14 @@ pub struct AgentRuntime(
 );
 
 impl AgentRuntime {
+    pub(crate) fn forget_conversation_snapshot(&self, id: &str) -> Result<(), String> {
+        self.1
+            .lock()
+            .map_err(|_| "无法清除会话状态")?
+            .retain(|_, snapshot| snapshot.conversation_id != id);
+        Ok(())
+    }
+
     pub(crate) fn conversation_busy(&self, id: &str) -> bool {
         self.0
             .try_lock()

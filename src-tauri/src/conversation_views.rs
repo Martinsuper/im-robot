@@ -161,6 +161,44 @@ pub(crate) fn conversation_forget_view(
     }
 }
 
+/// Delete one conversation without removing nearby conversations in the same session.
+#[tauri::command]
+pub(crate) fn conversation_delete(
+    app: AppHandle,
+    views: State<'_, ConversationViews>,
+    conversation_id: String,
+) -> Result<(), String> {
+    let _lease = crate::data_gate::try_read()?;
+    let file = path(&app, &conversation_id)?;
+    if crate::conversation_windows::is_open(&app, &conversation_id)
+        || app
+            .state::<crate::agent::AgentRuntime>()
+            .conversation_busy(&conversation_id)
+    {
+        return Err("会话仍在使用，请先停止任务并收回独立窗口。".into());
+    }
+    crate::chat_session::commands::delete_conversation_history(&app, &conversation_id)?;
+    app.state::<crate::agent::AgentRuntime>()
+        .forget_conversation_snapshot(&conversation_id)?;
+    app.state::<crate::runtime_types::ChatContext>()
+        .0
+        .lock()
+        .map_err(|_| "无法清除会话上下文")?
+        .retain(|entry| entry.conversation_id.as_deref() != Some(&conversation_id));
+    views
+        .0
+        .lock()
+        .map_err(|_| "无法清除会话草稿")?
+        .remove(&conversation_id);
+    match std::fs::remove_file(file) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    let _ = app.emit("chat-history-updated", ());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

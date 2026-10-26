@@ -110,7 +110,7 @@ export function SpeechOutputSettings() {
               />
             </label>
             <p className="settings-note">
-              独立保存在系统凭据库，不影响聊天模型密钥。
+              单独保存在本机密钥文件中，不影响聊天模型密钥。
             </p>
             <label className="field-label">
               音色

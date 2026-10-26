@@ -113,7 +113,7 @@ pub(crate) fn run() {
                 desktop::set_workspace_visible(event.payload() == "true")
             });
             crate::data_snapshot::recover_before_start(app.handle())?;
-            credentials::initialize(app.path().app_data_dir()?, &app.config().identifier)?;
+            credentials::initialize(app.path().app_data_dir()?)?;
             for config in &app.config().app.windows {
                 // The panel is now embedded in bubble; keep its URL only for browser previews.
                 if config.label == "panel" {
@@ -353,6 +353,7 @@ pub(crate) fn run() {
             crate::conversation_views::conversation_save_view,
             crate::conversation_views::conversation_chat_history,
             crate::conversation_views::conversation_forget_view,
+            crate::conversation_views::conversation_delete,
             agent::agent_get_diagnostics,
             memory::vault::memory_vault_status,
             memory::vault::memory_vault_open_directory,

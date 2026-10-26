@@ -7,7 +7,7 @@ use crate::reminder_service::Reminder;
 /// Supports exporting and importing: chat history, reminders, calendar events,
 /// settings, and focus records.
 ///
-/// Security: API keys are NEVER exported (they live in keyring).
+/// Security: API keys are NEVER exported (they live in a separate local file).
 /// Temporary attachments and screenshots are NOT included.
 use crate::rhythm::{persist_focus_records, read_focus_records, FocusRecord};
 use crate::settings::{app_settings_path, persist_settings, read_persisted_settings};

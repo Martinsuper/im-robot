@@ -272,7 +272,7 @@ fn info(directory: &Path, manifest: &Manifest) -> SnapshotInfo {
         file_count: manifest.files.len(),
         bytes: manifest.files.iter().map(|f| f.bytes).sum(),
         excluded: vec![
-            "系统凭据/API Key".into(),
+            "本机密钥文件/API Key".into(),
             "下载缓存、语音模型与插件程序".into(),
             "工作目录原始文件与诊断日志".into(),
         ],

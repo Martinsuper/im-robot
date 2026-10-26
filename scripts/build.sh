@@ -198,33 +198,21 @@ info "执行 tauri build（可能需要几分钟）..."
 
 BUILD_START=$(date +%s)
 
-TAURI_EXIT=0
-if $DEBUG; then
-  tauri_cli build --debug || TAURI_EXIT=$?
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if $DEBUG; then
+    tauri_cli build --bundles app --debug
+    node scripts/package-macos.mjs --debug
+  else
+    tauri_cli build --bundles app
+    node scripts/package-macos.mjs
+  fi
 else
-  tauri_cli build || TAURI_EXIT=$?
-fi
-
-# 某些无 Finder/AppleScript 会话（例如 CI 或自动化沙箱）中，Tauri 的
-# create-dmg 美化步骤会失败，但 .app 已经成功生成。此时使用 hdiutil
-# 直接生成无美化 DMG，避免把可交付构建误判为失败。
-if [[ "$TAURI_EXIT" -ne 0 && "$(uname -s)" == "Darwin" && -x "$(command -v hdiutil 2>/dev/null || true)" ]]; then
-  APP_PATH="src-tauri/target/${BUILD_MODE}/bundle/macos/${PRODUCT_NAME}.app"
-  DMG_PATH="src-tauri/target/${BUILD_MODE}/bundle/dmg/${PRODUCT_NAME}_${VERSION}_${ARCH_LABEL}.dmg"
-  if [[ -d "$APP_PATH" && ! -f "$DMG_PATH" ]]; then
-    warn "Tauri DMG 美化步骤失败，尝试用 hdiutil 生成基础 DMG..."
-    mkdir -p "$(dirname "$DMG_PATH")"
-    if hdiutil create -volname "$PRODUCT_NAME" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_PATH" >/dev/null; then
-      TAURI_EXIT=0
-      success "已生成无 Finder 美化的 DMG：${DMG_PATH}"
-    fi
+  if $DEBUG; then
+    tauri_cli build --debug
+  else
+    tauri_cli build
   fi
 fi
-
-if [[ "$TAURI_EXIT" -ne 0 ]]; then
-  exit "$TAURI_EXIT"
-fi
-
 BUILD_END=$(date +%s)
 BUILD_DURATION=$((BUILD_END - BUILD_START))
 BUILD_MIN=$((BUILD_DURATION / 60))
@@ -293,28 +281,10 @@ collect_by_find() {
 }
 
 # macOS 安装包
-collect_by_find "${BUNDLE_DIR}/dmg"     "*.dmg"      ".dmg"
+collect_by_find "${BUNDLE_DIR}/dmg"     "${PRODUCT_NAME}_${VERSION}_${ARCH_LABEL}.dmg"      ".dmg"
 
-# macOS .app（压缩为 zip 方便分发）
-while IFS= read -r -d '' app_path; do
-  APP_NAME=$(basename "$app_path" .app)
-  ZIP_NAME="${PRODUCT_NAME}_${VERSION}_${ARCH_LABEL}.app.zip"
-  info "打包: ${APP_NAME}.app → ${ZIP_NAME}"
-  # 用 ditto 压缩 macOS .app（保留资源 fork和权限）
-  if command -v ditto &>/dev/null; then
-    ditto -c -k --keepParent "$app_path" "${OUTPUT_DIR}/${ZIP_NAME}"
-  else
-    (cd "$(dirname "$app_path")" && zip -r - "$APP_NAME.app") > "${OUTPUT_DIR}/${ZIP_NAME}"
-  fi
-  if command -v shasum &>/dev/null; then
-    shasum -a 256 "${OUTPUT_DIR}/${ZIP_NAME}" | awk '{print $1}' \
-      > "${OUTPUT_DIR}/${ZIP_NAME}.sha256"
-  elif command -v sha256sum &>/dev/null; then
-    sha256sum "${OUTPUT_DIR}/${ZIP_NAME}" | awk '{print $1}' \
-      > "${OUTPUT_DIR}/${ZIP_NAME}.sha256"
-  fi
-  COPIED=$((COPIED + 1))
-done < <(find "${BUNDLE_DIR}/macos" -maxdepth 1 -name "${PRODUCT_NAME}.app" -print0 2>/dev/null)
+# 复制共享打包脚本已经解压验签的 ZIP，避免重新归档。
+collect_by_find "${BUNDLE_DIR}/macos" "${PRODUCT_NAME}_${VERSION}_${ARCH_LABEL}.app.zip" ".app.zip"
 
 # Linux 安装包
 collect_by_find "${BUNDLE_DIR}/appimage" "*.AppImage" ".AppImage"
@@ -368,7 +338,7 @@ if [[ $COPIED -gt 0 ]]; then
     echo -e "    macOS DMG:  ${CYAN}open ${DMG_FILES[0]}${NC}"
   fi
   if [[ ${#APP_ZIPS[@]} -gt 0 ]]; then
-    echo -e "    macOS APP:  ${CYAN}unzip ${APP_ZIPS[0]} -d /Applications/${NC}"
+    echo -e "    macOS APP:  ${CYAN}ditto -x -k ${APP_ZIPS[0]} /Applications/${NC}"
   fi
   if [[ ${#DEB_FILES[@]} -gt 0 ]]; then
     echo -e "    Linux DEB:  ${CYAN}sudo dpkg -i ${DEB_FILES[0]}${NC}"

@@ -20,7 +20,6 @@ use tauri::{Emitter, State};
 const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_CHUNKS: usize = 20_000;
 const MAX_FILES: usize = 200;
-const KEY_SERVICE: &str = "piko-knowledge-embeddings";
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS knowledge_documents (
  id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
@@ -125,13 +124,7 @@ fn settings(db: &MemoryDb) -> Result<RetrievalSettings, String> {
         .unwrap_or_else(|| Ok(RetrievalSettings::default()))
 }
 fn api_key() -> Result<Option<String>, String> {
-    let entry =
-        keyring::Entry::new(KEY_SERVICE, "api-key").map_err(|_| "无法访问 Embedding 密钥")?;
-    match entry.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => Err("无法读取 Embedding 密钥，请检查系统钥匙串".into()),
-    }
+    crate::credentials::read_embedding_key()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -912,20 +905,7 @@ pub fn knowledge_save_settings(
         input.validate()?;
     }
     // Empty string explicitly clears a key; absent means preserve it.
-    if let Some(key) = api_key_update {
-        let entry =
-            keyring::Entry::new(KEY_SERVICE, "api-key").map_err(|_| "无法访问 Embedding 密钥")?;
-        if key.trim().is_empty() {
-            match entry.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => {}
-                Err(_) => return Err("无法清除 Embedding 密钥".into()),
-            }
-        } else {
-            entry
-                .set_password(key.trim())
-                .map_err(|_| "无法保存 Embedding 密钥")?;
-        }
-    }
+    crate::credentials::update_embedding_key(api_key_update)?;
     let mut conn = db.0.lock().map_err(lock_error)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let old: Option<String> = tx

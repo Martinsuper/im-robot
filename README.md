@@ -84,7 +84,7 @@ npm run tauri dev
 
 运行 `npm run verify` 检查版本、模块边界、翻译、Lint、单元测试和前端构建；运行 `npm run test:e2e` 完成浏览器交互回归。Rust 使用 `cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings` 和 `cargo test`（在 src-tauri 目录内）。CI 在 Linux、macOS、Windows 验证 Rust 与原生 Agent 运行时，macOS 额外验证通知和日历桥接。
 
-API Key 使用系统凭据存储（macOS Keychain、Windows Credential Manager、Linux Secret Service）。Linux 需要可用且已解锁的 Secret Service；开发构建需要 `libdbus-1-dev`。旧 `api-credentials.json` 会在成功写入并验证系统凭据后删除；迁移失败保留原文件，并在设置中显示错误。单元测试使用模拟凭据，不读取或修改个人钥匙串。
+API Key 单独保存在应用数据目录的 `api-credentials.json`，macOS/Linux 文件权限为 `0600`（仅当前用户读写），不使用系统钥匙串，且不包含在数据导出和快照中。该文件未加密，请勿分享。旧版 macOS 钥匙串密钥可在退出 Piko 后运行 `python3 scripts/migrate-keychain-credentials.py` 一次性迁移；只读取旧钥匙串，不删除原记录，也不覆盖已有本机密钥。
 
 发布先通过质量检查，再创建草稿、构建各平台安装包并上传 SHA-256 校验文件，全部成功后公开。应用按系统与 CPU 架构选择安装包，仅接受项目正式 Release 的 HTTPS 地址，校验摘要后才能打开文件。缺少匹配安装包或校验值时请从发布页手动下载。下载上限为 1 GiB，支持进度与取消。
 
@@ -112,3 +112,5 @@ Rust 默认启用 `speech-recognition` 与 `wasm-plugins`；可使用 `cargo che
 
 
 依赖安全修复后，默认 Rust 构建要求 Rust 1.96+；截图后端采用 xcap，Linux 还需 PipeWire/XCB 开发包及 libclang。语音 FFI 的 ZIP 构建依赖补丁和审计边界见[依赖安全修复记录](doc/review/dependency-security-remediation-2026-10-19.md)。
+
+macOS 安装包采用 ad-hoc 签名；本地构建、发布流程与下载验收见 [macOS 签名与打包说明](docs/macos-packaging.md)。

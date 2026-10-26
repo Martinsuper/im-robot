@@ -1,6 +1,6 @@
 [package]
 name = "im-robot"
-version = "1.2.25"
+version = "1.2.26"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -28,7 +28,6 @@ tungstenite = { version = "0.28", default-features = false, features = ["handsha
 getrandom = "0.3"
 sha2 = "0.10"
 lopdf = "0.42"
-keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "time", "process", "io-util", "fs"] }
 tokio-util = "0.7"
 parking_lot = "0.12"

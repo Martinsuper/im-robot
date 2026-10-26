@@ -1,265 +1,197 @@
-#[cfg(test)]
-use std::io::Write;
-// API credentials live in the OS credential store; legacy files migrate on first read.
+//! Local credentials are separate from settings and excluded from exports/snapshots.
+//! Atomic replacement keeps Unix permissions at 0600. Runtime never accesses Keychain.
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
 
-struct CredentialConfig {
-    path: PathBuf,
-    service: String,
-}
-static CONFIG: OnceLock<CredentialConfig> = OnceLock::new();
+static CONFIG: OnceLock<PathBuf> = OnceLock::new();
 static CREDENTIAL_TRANSACTION: Mutex<()> = Mutex::new(());
 
 #[derive(Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 struct Credentials {
     api_key: Option<String>,
+    mimo_tts_api_key: Option<String>,
+    embedding_api_key: Option<String>,
 }
 
-pub(crate) fn initialize(directory: PathBuf, service: &str) -> Result<(), String> {
+#[derive(Clone, Copy)]
+enum Key {
+    Model,
+    Speech,
+    Embedding,
+}
+
+impl Credentials {
+    fn key(&mut self, key: Key) -> &mut Option<String> {
+        match key {
+            Key::Model => &mut self.api_key,
+            Key::Speech => &mut self.mimo_tts_api_key,
+            Key::Embedding => &mut self.embedding_api_key,
+        }
+    }
+}
+
+pub(crate) fn initialize(directory: PathBuf) -> Result<(), String> {
     CONFIG
-        .set(CredentialConfig {
-            path: directory.join("api-credentials.json"),
-            service: service.into(),
-        })
+        .set(directory.join("api-credentials.json"))
         .map_err(|_| "密钥配置目录已初始化".to_string())
+}
+
+fn storage_error() -> String {
+    "无法读取或保存本机密钥文件，请检查应用数据目录的访问权限".into()
 }
 
 fn read_at(path: &Path) -> Result<Credentials, String> {
     match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| "密钥配置文件格式错误".to_string()),
+        Ok(bytes) => {
+            let credentials =
+                serde_json::from_slice(&bytes).map_err(|_| "密钥配置文件格式错误".to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                    .map_err(|_| storage_error())?;
+            }
+            Ok(credentials)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Credentials::default()),
-        Err(_) => Err("无法读取密钥配置文件".to_string()),
+        Err(_) => Err(storage_error()),
     }
 }
 
-#[cfg(test)]
-fn update_at(path: &Path, input: Option<Option<String>>) -> Result<(), String> {
+fn update_at(path: &Path, key: Key, input: Option<Option<String>>) -> Result<(), String> {
     let Some(input) = input else {
         return Ok(());
     };
-    let api_key = input
-        .map(|key| key.trim().to_string())
-        .filter(|key| !key.is_empty());
-    let directory = path.parent().ok_or("无法获取密钥配置目录")?;
-    fs::create_dir_all(directory).map_err(|_| "无法创建密钥配置目录")?;
-    // Unix temporary files use 0600. Atomic replacement retains this permission.
-    let mut temp =
-        tempfile::NamedTempFile::new_in(directory).map_err(|_| "无法创建密钥配置文件")?;
-    serde_json::to_writer_pretty(&mut temp, &Credentials { api_key })
-        .map_err(|_| "无法写入密钥配置文件")?;
-    temp.flush().map_err(|_| "无法写入密钥配置文件")?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|_| "无法保存密钥配置文件")?;
-    temp.persist(path).map_err(|_| "无法保存密钥配置文件")?;
+    let mut credentials = read_at(path)?;
+    *credentials.key(key) = input
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let directory = path.parent().ok_or_else(storage_error)?;
+    fs::create_dir_all(directory).map_err(|_| storage_error())?;
+    let mut temp = tempfile::NamedTempFile::new_in(directory).map_err(|_| storage_error())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temp.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|_| storage_error())?;
+    }
+    serde_json::to_writer_pretty(&mut temp, &credentials).map_err(|_| storage_error())?;
+    temp.flush().map_err(|_| storage_error())?;
+    temp.as_file().sync_all().map_err(|_| storage_error())?;
+    temp.persist(path).map_err(|_| storage_error())?;
     Ok(())
 }
 
-fn entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(
-        &CONFIG.get().ok_or("密钥配置目录尚未初始化")?.service,
-        "model-api-key",
-    )
-    .map_err(|_| "无法访问系统凭据存储，请检查钥匙串或 Secret Service 是否可用".into())
+fn read_key(key: Key) -> Result<Option<String>, String> {
+    let _guard = CREDENTIAL_TRANSACTION.lock().map_err(|_| storage_error())?;
+    let path = CONFIG.get().ok_or("密钥配置目录尚未初始化")?;
+    Ok(read_at(path)?
+        .key(key)
+        .take()
+        .filter(|value| !value.trim().is_empty()))
 }
-fn storage_error() -> String {
-    "无法读取或保存系统凭据，请解锁钥匙串或 Secret Service 后重试".into()
+
+fn update_key(key: Key, input: Option<Option<String>>) -> Result<(), String> {
+    let _guard = CREDENTIAL_TRANSACTION.lock().map_err(|_| storage_error())?;
+    update_at(CONFIG.get().ok_or("密钥配置目录尚未初始化")?, key, input)
 }
 
 pub(crate) fn read_api_key() -> Result<Option<String>, String> {
-    let _guard = CREDENTIAL_TRANSACTION.lock().map_err(|_| storage_error())?;
-    let path = &CONFIG.get().ok_or("密钥配置目录尚未初始化")?.path;
-    // Read the old file explicitly: corruption is actionable, never treated as a missing key.
-    read_with_entry(path, &entry()?)
+    read_key(Key::Model)
 }
-
-fn read_with_entry(path: &Path, entry: &keyring::Entry) -> Result<Option<String>, String> {
-    let legacy = read_at(path)?;
-    let current = match entry.get_password() {
-        Ok(value) => Some(value),
-        Err(keyring::Error::NoEntry) => None,
-        Err(_) => return Err(storage_error()),
-    };
-    let key = match (current, legacy.api_key) {
-        (Some(key), Some(legacy)) if key != legacy => {
-            return Err("系统凭据与旧密钥不一致，原文件已保留；请在设置中重新保存密钥".into());
-        }
-        (Some(key), _) => Some(key),
-        (None, Some(key)) => {
-            entry.set_password(&key).map_err(|_| storage_error())?;
-            if entry.get_password().map_err(|_| storage_error())? != key {
-                return Err("密钥迁移验证失败，原文件已保留".into());
-            }
-            Some(key)
-        }
-        (None, None) => None,
-    };
-    if path.exists() {
-        fs::remove_file(path)
-            .map_err(|_| "密钥已存入系统凭据，但无法删除旧密钥文件".to_string())?;
-    }
-    Ok(key.filter(|key| !key.trim().is_empty()))
-}
-
 pub(crate) fn update_api_key(input: Option<Option<String>>) -> Result<(), String> {
-    let _guard = CREDENTIAL_TRANSACTION.lock().map_err(|_| storage_error())?;
-    let Some(input) = input else {
-        return Ok(());
-    };
-    let path = &CONFIG.get().ok_or("密钥配置目录尚未初始化")?.path;
-    let entry = entry()?;
-    match input.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()) {
-        Some(key) => entry.set_password(&key).map_err(|_| storage_error())?,
-        None => match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => (),
-            Err(_) => return Err(storage_error()),
-        },
-    }
-    if path.exists() {
-        fs::remove_file(path).map_err(|_| "无法删除旧密钥文件".to_string())?;
-    }
-    Ok(())
+    update_key(Key::Model, input)
+}
+pub(crate) fn read_mimo_tts_key() -> Result<Option<String>, String> {
+    read_key(Key::Speech)
+}
+pub(crate) fn update_mimo_tts_key(input: Option<String>) -> Result<(), String> {
+    update_key(Key::Speech, input.map(Some))
+}
+pub(crate) fn read_embedding_key() -> Result<Option<String>, String> {
+    read_key(Key::Embedding)
+}
+pub(crate) fn update_embedding_key(input: Option<String>) -> Result<(), String> {
+    update_key(Key::Embedding, input.map(Some))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn persists_preserves_and_clears_key() {
+    fn persists_preserves_and_clears_independent_keys() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("api-credentials.json");
         assert!(read_at(&path).unwrap().api_key.is_none());
-        update_at(&path, Some(Some("  test-not-a-secret  ".into()))).unwrap();
-        assert_eq!(
-            read_at(&path).unwrap().api_key.as_deref(),
-            Some("test-not-a-secret")
-        );
-        update_at(&path, None).unwrap();
-        assert_eq!(
-            read_at(&path).unwrap().api_key.as_deref(),
-            Some("test-not-a-secret")
-        );
-        update_at(&path, Some(None)).unwrap();
-        assert!(read_at(&path).unwrap().api_key.is_none());
-        update_at(&path, Some(Some("   ".into()))).unwrap();
+        update_at(&path, Key::Model, Some(Some("  model-test  ".into()))).unwrap();
+        update_at(&path, Key::Speech, Some(Some("speech-test".into()))).unwrap();
+        update_at(&path, Key::Embedding, Some(Some("embedding-test".into()))).unwrap();
+        update_at(&path, Key::Model, None).unwrap();
+        let saved = read_at(&path).unwrap();
+        assert_eq!(saved.api_key.as_deref(), Some("model-test"));
+        assert_eq!(saved.mimo_tts_api_key.as_deref(), Some("speech-test"));
+        assert_eq!(saved.embedding_api_key.as_deref(), Some("embedding-test"));
+        update_at(&path, Key::Speech, Some(Some("   ".into()))).unwrap();
+        update_at(&path, Key::Embedding, Some(None)).unwrap();
+        let saved = read_at(&path).unwrap();
+        assert!(saved.mimo_tts_api_key.is_none());
+        assert!(saved.embedding_api_key.is_none());
+        assert_eq!(saved.api_key.as_deref(), Some("model-test"));
+        update_at(&path, Key::Model, Some(None)).unwrap();
         assert!(read_at(&path).unwrap().api_key.is_none());
     }
+
     #[test]
-    fn malformed_file_does_not_expose_contents() {
+    fn legacy_model_file_is_preserved_when_adding_other_keys() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("api-credentials.json");
-        fs::write(&path, "secret-content").unwrap();
+        fs::write(&path, r#"{"apiKey":"legacy-test"}"#).unwrap();
+        update_at(&path, Key::Speech, Some(Some("speech-test".into()))).unwrap();
+        assert_eq!(
+            read_at(&path).unwrap().api_key.as_deref(),
+            Some("legacy-test")
+        );
+    }
+
+    #[test]
+    fn corrupt_file_is_not_overwritten_and_errors_do_not_expose_contents() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("api-credentials.json");
+        fs::write(&path, "private-test-content").unwrap();
         assert_eq!(
             read_at(&path).err().as_deref(),
             Some("密钥配置文件格式错误")
         );
+        let error = update_at(&path, Key::Model, Some(Some("replacement".into()))).unwrap_err();
+        assert!(!error.contains("private-test-content"));
+        assert_eq!(fs::read_to_string(path).unwrap(), "private-test-content");
     }
+
     #[test]
     #[cfg(unix)]
-    fn replacement_is_owner_only() {
+    fn existing_and_replaced_files_are_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("api-credentials.json");
         fs::write(&path, "{}").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        update_at(&path, Some(Some("test-not-a-secret".into()))).unwrap();
+        read_at(&path).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        update_at(&path, Key::Model, Some(Some("test-key".into()))).unwrap();
         assert_eq!(
             fs::metadata(path).unwrap().permissions().mode() & 0o777,
             0o600
         );
-    }
-}
-
-#[cfg(test)]
-mod migration_tests {
-    use super::*;
-    fn mock_entry() -> keyring::Entry {
-        keyring::Entry::new_with_credential(
-            keyring::mock::default_credential_builder()
-                .build(None, "piko-tests", "key")
-                .unwrap(),
-        )
-    }
-    #[test]
-    fn migrates_and_verifies_before_removing_plaintext() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("api-credentials.json");
-        update_at(&path, Some(Some("legacy-secret".into()))).unwrap();
-        let entry = mock_entry();
-        assert_eq!(
-            read_with_entry(&path, &entry).unwrap().as_deref(),
-            Some("legacy-secret")
-        );
-        assert!(!path.exists());
-        assert_eq!(entry.get_password().unwrap(), "legacy-secret");
-        assert_eq!(
-            read_with_entry(&path, &entry).unwrap().as_deref(),
-            Some("legacy-secret")
-        );
-    }
-    #[test]
-    fn conflicting_credentials_never_silently_discard_the_legacy_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("api-credentials.json");
-        update_at(&path, Some(Some("new-legacy-key".into()))).unwrap();
-        let entry = mock_entry();
-        entry.set_password("existing-system-key").unwrap();
-        assert!(read_with_entry(&path, &entry).is_err());
-        assert_eq!(
-            read_at(&path).unwrap().api_key.as_deref(),
-            Some("new-legacy-key")
-        );
-        assert_eq!(entry.get_password().unwrap(), "existing-system-key");
-    }
-    #[test]
-    fn credential_store_errors_preserve_legacy_file_and_are_visible() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("api-credentials.json");
-        update_at(&path, Some(Some("legacy-secret".into()))).unwrap();
-        let entry = mock_entry();
-        entry
-            .get_credential()
-            .downcast_ref::<keyring::mock::MockCredential>()
-            .unwrap()
-            .set_error(keyring::Error::Invalid("locked".into(), "locked".into()));
-        let error = read_with_entry(&path, &entry).unwrap_err();
-        assert!(!error.contains("legacy-secret"));
-        assert!(path.exists());
-    }
-}
-
-fn mimo_tts_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(
-        &CONFIG.get().ok_or("密钥配置目录尚未初始化")?.service,
-        "mimo-tts-api-key",
-    )
-    .map_err(|_| storage_error())
-}
-pub(crate) fn read_mimo_tts_key() -> Result<Option<String>, String> {
-    match mimo_tts_entry()?.get_password() {
-        Ok(key) => Ok(Some(key).filter(|s| !s.trim().is_empty())),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => Err(storage_error()),
-    }
-}
-pub(crate) fn update_mimo_tts_key(key: Option<String>) -> Result<(), String> {
-    let Some(key) = key else {
-        return Ok(());
-    };
-    if key.trim().is_empty() {
-        match mimo_tts_entry()?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(_) => Err(storage_error()),
-        }
-    } else {
-        mimo_tts_entry()?
-            .set_password(key.trim())
-            .map_err(|_| storage_error())
     }
 }

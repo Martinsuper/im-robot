@@ -39,7 +39,7 @@ beforeEach(() => {
     return [];
   });
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it("paginates device history without mounting historical chat windows", async () => {
   render(<ConversationTabs />);
@@ -51,16 +51,65 @@ it("paginates device history without mounting historical chat windows", async ()
   expect(screen.getAllByTestId("chat")).toHaveLength(1);
 });
 
-it("opens history on demand and preserves closed tab state after a restart", async () => {
+it("confirms deletion and removes the saved conversation before closing its tab", async () => {
   const mounted = render(<ConversationTabs />);
   fireEvent.click(await screen.findByRole("button", { name: "设备问题 39" }));
+  fireEvent.click(screen.getByRole("button", { name: "删除会话：设备问题 39" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const confirmation = screen.getByRole("button", { name: "确认删除会话：设备问题 39" });
+  expect(confirmation.textContent).toBe("");
+  expect(confirmation.querySelector("svg.lucide-trash-2")).toBeTruthy();
+  expect(command).not.toHaveBeenCalledWith("conversation_delete", expect.anything());
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.getByRole("button", { name: "删除会话：设备问题 39" })).toBeTruthy();
   expect(screen.getAllByTestId("chat")).toHaveLength(2);
-  fireEvent.click(screen.getByRole("button", { name: "关闭会话：设备问题 39" }));
-  expect(screen.getAllByTestId("chat")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "删除会话：设备问题 39" }));
+  command.mockImplementation(async (name: string) => {
+    if (name === "conversation_list_windows") return { revision: 0, windows: [] };
+    if (name === "list_chat_history") return history.filter(entry => entry.conversationId !== id(39));
+    return [];
+  });
+  fireEvent.click(screen.getByRole("button", { name: "确认删除会话：设备问题 39" }));
+  await waitFor(() => expect(screen.getAllByTestId("chat")).toHaveLength(1));
+  expect(command).toHaveBeenCalledWith("conversation_delete", { conversationId: id(39) });
   mounted.unmount(); render(<ConversationTabs />);
-  await screen.findByRole("button", { name: "设备问题 39" });
-  expect(screen.getAllByRole("tab")).toHaveLength(1);
-  expect(screen.getAllByTestId("chat")).toHaveLength(1);
+  await screen.findByRole("button", { name: "设备问题 38" });
+  expect(screen.queryByRole("button", { name: "设备问题 39" })).toBeNull();
+});
+
+it("keeps the conversation and inline confirmation when deletion fails", async () => {
+  render(<ConversationTabs />);
+  fireEvent.click(await screen.findByRole("button", { name: "设备问题 39" }));
+  command.mockRejectedValueOnce(new Error("写入失败"));
+  fireEvent.click(screen.getByRole("button", { name: "删除会话：设备问题 39" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认删除会话：设备问题 39" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "确认删除会话：设备问题 39" }).hasAttribute("disabled")).toBe(false));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const confirmation = screen.getByRole("button", { name: "确认删除会话：设备问题 39" });
+  expect(confirmation.textContent).toBe("");
+  expect(confirmation.querySelector("svg.lucide-trash-2")).toBeTruthy();
+  expect(screen.getAllByTestId("chat")).toHaveLength(2);
+});
+
+it("can delete a closed conversation from device history", async () => {
+  render(<ConversationTabs />);
+  fireEvent.click(await screen.findByRole("button", { name: "删除会话：设备问题 39" }));
+  fireEvent.click(screen.getByRole("button", { name: "确认删除会话：设备问题 39" }));
+  await waitFor(() => expect(command).toHaveBeenCalledWith("conversation_delete", { conversationId: id(39) }));
+});
+
+it("cancels inline confirmation outside the button and only arms one conversation", async () => {
+  render(<ConversationTabs />);
+  fireEvent.click(await screen.findByRole("button", { name: "删除会话：设备问题 39" }));
+  fireEvent.pointerDown(screen.getByRole("tab", { name: "电脑对话" }));
+  expect(screen.queryByRole("button", { name: "确认删除会话：设备问题 39" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "删除会话：设备问题 39" }));
+  fireEvent.click(screen.getByRole("button", { name: "删除会话：设备问题 38" }));
+  expect(screen.getByRole("button", { name: "删除会话：设备问题 39" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "确认删除会话：设备问题 38" })).toBeTruthy();
+  fireEvent.focusIn(screen.getByRole("tab", { name: "电脑对话" }));
+  expect(screen.queryByRole("button", { name: "确认删除会话：设备问题 38" })).toBeNull();
+  expect(command).not.toHaveBeenCalledWith("conversation_delete", expect.anything());
 });
 
 it("does not exceed twelve open conversations when opening saved or live device chats", async () => {

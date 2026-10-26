@@ -370,6 +370,27 @@ pub(crate) fn legacy_projection_at(history_path: &Path) -> Result<Vec<ChatSessio
     Ok(sessions_from_entries(&entries))
 }
 
+/// Remove only messages belonging to this conversation, preserving stable entry ids.
+pub(crate) fn remove_conversation(sessions: &mut Vec<ChatSession>, id: &str) {
+    for session in sessions.iter_mut() {
+        let before = session.messages.len();
+        session
+            .messages
+            .retain(|message| message.conversation_id.as_deref() != Some(id));
+        if session.messages.len() == before {
+            continue;
+        }
+        session.title = ChatSession::title_from_messages(&session.messages);
+        if let Some(first) = session.messages.first() {
+            session.created_at = first.created_at;
+        }
+        if let Some(last) = session.messages.last() {
+            session.updated_at = last.created_at;
+        }
+    }
+    sessions.retain(|session| !session.messages.is_empty());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,6 +404,23 @@ mod tests {
             response: format!("回答：{prompt}"),
             created_at,
         }
+    }
+
+    #[test]
+    fn deleting_conversation_preserves_other_messages_in_shared_session() {
+        let mut first = entry(100, "删除的对话");
+        first.conversation_id = Some("delete-me".into());
+        let mut second = entry(101, "保留的对话");
+        second.conversation_id = Some("keep-me".into());
+        let mut sessions = sessions_from_entries(&[first, second.clone()]);
+        assert_eq!(sessions.len(), 1);
+        remove_conversation(&mut sessions, "delete-me");
+        let remaining = entries_view(&sessions);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, second.id);
+        assert_eq!(sessions[0].title, second.prompt);
+        remove_conversation(&mut sessions, "keep-me");
+        assert!(sessions.is_empty());
     }
 
     struct Fixture {

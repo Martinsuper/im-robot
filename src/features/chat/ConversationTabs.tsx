@@ -10,6 +10,7 @@ import { useToast } from "../../components/feedback/toastStore";
 import type { PanelTab } from "../../types/appTypes";
 import { useAppSettings } from "../app/settingsStore";
 import { DeviceConversationHistory } from "./DeviceConversationHistory";
+import { ConversationDeleteButton } from "./ConversationDeleteButton";
 
 const candidateId = new URLSearchParams(location.search).get("conversation");
 const detachedId = candidateId && /^[a-zA-Z0-9-]{1,80}$/.test(candidateId) ? candidateId : null;
@@ -54,6 +55,29 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
   const consumeResume = useCallback(() => setPendingResume(undefined), []);
   const previousStates = useRef<Record<string, ConversationTabState>>({});
   const toast = useToast();
+  const [deleteTarget, setDeleteTarget] = useState<Tab | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  useEffect(() => {
+    if (!deleteTarget || deleting) return;
+    const dismissOutside = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element) || target.closest("[data-conversation-delete]")?.getAttribute("data-conversation-delete") !== deleteTarget.id) {
+        setDeleteTarget(null);
+      }
+    };
+    const dismissEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDeleteTarget(null);
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("focusin", dismissOutside);
+    document.addEventListener("keydown", dismissEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("focusin", dismissOutside);
+      document.removeEventListener("keydown", dismissEscape);
+    };
+  }, [deleteTarget, deleting]);
+
   const [nativeWindows, setNativeWindows] = useState<WindowSnapshot>(() => isTauriRuntime ? { revision: -1, windows: [] } : previewWindows());
   const [windowsLoaded, setWindowsLoaded] = useState(!isTauriRuntime || Boolean(detachedId));
   const windowsRef = useRef(nativeWindows);
@@ -176,10 +200,25 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
     setWorkspace(value => ({ tabs: [...value.tabs, { id, title: "新对话" }], selected: id }));
   }, [toast]);
 
-  function closeTab(id: string) {
+  function requestDelete(tab: Tab) {
+    if (deleting) return;
+    if (deleteTarget?.id === tab.id) void deleteConversation(tab.id);
+    else setDeleteTarget(tab);
+  }
+
+  async function deleteConversation(id: string) {
     if (detachedId) { window.dispatchEvent(new Event("conversation-request-return")); return; }
     if (nativeWindows.windows.some(item => item.conversationId === id)) { toast.info("请先将独立窗口中的会话收回主窗口。"); return; }
-    if (states[id]?.busy) { toast.info("请先停止此会话的任务，再关闭标签页。"); return; }
+    if (states[id]?.busy) { toast.info("请先停止此会话的任务，再删除会话。"); return; }
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await runCommand("conversation_delete", { conversationId: id });
+    } catch (error) {
+      toast.error(`删除会话失败：${String(error)}`);
+      setDeleting(false);
+      return;
+    }
     const remaining = current.current.tabs.filter(tab => tab.id !== id);
     if (!remaining.length) {
       const nextId = crypto.randomUUID();
@@ -191,8 +230,12 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
     try { localStorage.removeItem(`${CONVERSATION_STORAGE}:${id}`); } catch { /* Optional. */ }
     if (isTauriRuntime) {
       void runCommand("clear_text_attachment", { contextId: id }).catch(() => {});
-      void runCommand("conversation_forget_view", { conversationId: id }).catch(error => toast.error(String(error)));
     }
+    for (const key of [CONVERSATION_STORAGE, "piko-agent-conversation-v1"]) {
+      try { if (JSON.parse(localStorage.getItem(key) || "null")?.id === id) localStorage.removeItem(key); } catch { /* Optional. */ }
+    }
+    setDeleteTarget(null);
+    setDeleting(false);
     delete previousStates.current[id];
     setStates(value => { const remaining = { ...value }; delete remaining[id]; return remaining; });
   }
@@ -236,11 +279,13 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
               <span className="conversation-tabs__title">{tab.title}</span>
               {status && <span className={`conversation-tabs__status${state?.busy ? " is-busy" : ""}`}>{status}</span>}
             </button>
-            <button className="conversation-tabs__close" aria-label={`关闭会话：${tab.title}`} disabled={!detachedId && (state?.busy || nativeWindows.windows.some(item => item.conversationId === tab.id))} onClick={() => closeTab(tab.id)}><X size={12} /></button>
+            {detachedId ? <button type="button" className="conversation-tabs__close" aria-label={`关闭会话：${tab.title}`} onClick={() => window.dispatchEvent(new Event("conversation-request-return"))}><X size={12} /></button>
+              : <ConversationDeleteButton id={tab.id} title={tab.title} armed={deleteTarget?.id === tab.id} busy={deleting}
+                disabled={state?.busy || nativeWindows.windows.some(item => item.conversationId === tab.id)} onClick={() => requestDelete(tab)} />}
           </div>;
         })}
       </div>
-      {!detachedId && <DeviceConversationHistory openIds={workspace.tabs.map(tab => tab.id)} onOpen={openHistory} />}
+      {!detachedId && <DeviceConversationHistory openIds={workspace.tabs.map(tab => tab.id)} onOpen={openHistory} onDelete={requestDelete} deleteTargetId={deleteTarget?.id} deleting={deleting} />}
       <button className="conversation-tabs__new" aria-label="新建会话标签页" title="新建会话" onClick={newTab}><Plus size={16} /></button>
       {running > 0 && <span className="conversation-tabs__count" aria-live="polite">{running}/2</span>}
     </div>
