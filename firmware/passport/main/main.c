@@ -106,8 +106,8 @@ static lv_obj_t *card_panel, *card_text, *card_page;
 static lv_obj_t *menu_row[2], *menu_icon[2], *menu_name[2], *menu_value[2];
 static lv_obj_t *zone_clk, *clk_lcd, *clk_menu_box, *clk_bbar, *clk_bfill;
 static lv_obj_t *clk_ghost, *clk_time_label, *clk_sec_label;
-static lv_obj_t *clk_wk[7], *clk_moon, *clk_moon_disc, *clk_batt[5];
-static lv_obj_t *clk_brand_sub, *clk_wt, *clk_lunar, *clk_date, *clk_doy, *clk_temp;
+static lv_obj_t *clk_wk[7], *clk_moon, *clk_moon_disc;
+static lv_obj_t *clk_wt, *clk_date, *clk_bright_lab;
 static lv_obj_t *clk_menu_row_obj[2], *clk_menu_val[2];
 static const uint8_t clk_bright_pct[] = {5, 25, 50, 75, 100};
 static uint8_t clk_bright = 3, clk_idle_mode = 1, clk_menu_open, clk_menu_row, clk_screen_off, clk_last_sec = 99;
@@ -1213,19 +1213,13 @@ static void clk_show_time(const model_t *m,int battery) {
       int off=1+(stage<4?(4-stage):(stage-4))*2;
       lv_obj_set_pos(clk_moon_disc,off>5?5:off,1);
     }
-    lv_label_set_text_fmt(clk_date,"%02d-%02d",tm_info.tm_mon+1,tm_info.tm_mday);
+    struct tm utc_time;gmtime_r(&nowt,&utc_time);
     int y=tm_info.tm_year+1900;
     static const int cum[12]={0,31,59,90,120,151,181,212,243,273,304,334};
     int doy=cum[tm_info.tm_mon]+tm_info.tm_mday;
     bool leap=(y%4==0&&y%100!=0)||y%400==0;
     if(tm_info.tm_mon>1&&leap)doy++;
-    int wday_iso=tm_info.tm_wday==0?7:tm_info.tm_wday;
     char week_text[4];strftime(week_text,sizeof(week_text),"%V",&tm_info);
-    int wknum=atoi(week_text);
-    (void)wday_iso;
-    lv_label_set_text_fmt(clk_doy,"WK%02d · D%d",wknum,doy);
-    struct tm utc_time;gmtime_r(&nowt,&utc_time);
-    lv_label_set_text_fmt(clk_wt,"WT UTC %02d:%02d",utc_time.tm_hour,utc_time.tm_min);
     piko_lunar_date ld;
     char strip[64];
     if(piko_lunar_from_solar(y,tm_info.tm_mon+1,tm_info.tm_mday,&ld)==0){
@@ -1235,17 +1229,17 @@ static void clk_show_time(const model_t *m,int battery) {
       else if(fest[0])snprintf(strip,sizeof(strip),"%s",fest);
       else snprintf(strip,sizeof(strip),"农历%s%s",ld.month_cn,ld.day_cn);
     }else strip[0]=0;
-    lv_label_set_text(clk_lunar,strip);
+    // 方案A盘面：日期+农历、世界时+周数各合并为一行。
+    char line[96];
+    if(strip[0])snprintf(line,sizeof(line),"%02d-%02d · %s",tm_info.tm_mon+1,tm_info.tm_mday,strip);
+    else snprintf(line,sizeof(line),"%02d-%02d",tm_info.tm_mon+1,tm_info.tm_mday);
+    lv_label_set_text(clk_date,line);
+    lv_label_set_text_fmt(clk_wt,"WT %02d:%02d · WK%s · D%d",utc_time.tm_hour,utc_time.tm_min,week_text,doy);
   }else{
-    lv_label_set_text(clk_date,"--/--");
-    lv_label_set_text(clk_doy,"");
-    lv_label_set_text(clk_wt,"WT UTC --:--");
-    lv_label_set_text(clk_lunar,"等待校时");
+    lv_label_set_text(clk_date,"--/-- · 等待校时");
+    lv_label_set_text(clk_wt,"WT --:--");
   }
-  int level=battery<0?0:((battery+19)/20);
-  if(level>5)level=5;
-  for(int k=0;k<5;k++)lv_obj_set_style_bg_opa(clk_batt[k],k<level?LV_OPA_COVER:LV_OPA_20,0);
-  (void)m;
+  (void)m;(void)battery;
 }
 static void clk_show_menu(void) {
   static const char *const mode_name[PIKO_CLK_IDLE_MODES]={"常亮","10 分钟","2 分钟"};
@@ -1350,12 +1344,14 @@ static void render(const model_t *m,int battery) {
     } else {
       show_zone(UI_CLK);
       lv_label_set_text(title, "时钟");
+      lv_label_set_text(notice, "");
       clk_show_time(m,battery);
       clk_show_menu();
       bool bright_now=esp_timer_get_time()<clk_bright_until;
       lv_obj_set_hidden(clk_bbar,!bright_now||clk_menu_open);
+      lv_obj_set_hidden(clk_bright_lab,!bright_now||clk_menu_open);
       if(bright_now&&!clk_menu_open){
-        lv_label_set_text_fmt(notice,"亮度 %d%%",clk_bright_pct[clk_bright]);
+        lv_label_set_text_fmt(clk_bright_lab,"亮度 %d%%",clk_bright_pct[clk_bright]);
         lv_obj_set_size(clk_bfill,29*(clk_bright+1),4);
       }
       lv_label_set_text(hint_label,clk_menu_open?"上下选择 · 确认改值 · 长按返回":"上下亮度 · 确认菜单 · 长按退出");
@@ -1644,20 +1640,13 @@ static void create_zone_clk(void) {
   clk_last_sec=99;
   lv_obj_t *screen=lv_screen_active();
   zone_clk=ui_zone(screen);
-  clk_lcd=lv_obj_create(zone_clk);lv_obj_set_size(clk_lcd,216,152);lv_obj_set_pos(clk_lcd,12,8);
+  lv_obj_set_size(zone_clk,240,200);lv_obj_set_pos(zone_clk,0,50);
+  clk_lcd=lv_obj_create(zone_clk);lv_obj_set_size(clk_lcd,216,194);lv_obj_set_pos(clk_lcd,12,4);
   lv_obj_set_style_radius(clk_lcd,12,0);
   lv_obj_set_style_bg_color(clk_lcd,lv_color_hex(0xa9c96b),0);lv_obj_set_style_bg_opa(clk_lcd,LV_OPA_COVER,0);
   lv_obj_set_style_border_color(clk_lcd,lv_color_hex(0x2a2a28),0);lv_obj_set_style_border_width(clk_lcd,3,0);
   lv_obj_set_style_pad_all(clk_lcd,0,0);
   lv_obj_remove_flag(clk_lcd,LV_OBJ_FLAG_SCROLLABLE);lv_obj_remove_flag(clk_lcd,LV_OBJ_FLAG_CLICKABLE);
-  {
-    lv_obj_t *brand=lv_label_create(clk_lcd);lv_label_set_text(brand,"PIKO");
-    lv_obj_set_style_text_font(brand,&piko_ui_small,0);lv_obj_set_style_text_color(brand,lv_color_hex(0x26331c),0);
-    lv_obj_align(brand,LV_ALIGN_TOP_LEFT,8,3);
-    clk_brand_sub=lv_label_create(clk_lcd);lv_label_set_text(clk_brand_sub,"ILLUMINATOR · 24H");
-    lv_obj_set_style_text_font(clk_brand_sub,&piko_ui_small,0);lv_obj_set_style_text_color(clk_brand_sub,lv_color_hex(0x26331c),0);
-    lv_obj_set_style_text_opa(clk_brand_sub,LV_OPA_70,0);lv_obj_align(clk_brand_sub,LV_ALIGN_TOP_RIGHT,-8,5);
-  }
   {
     static const char *const wk[7]={"SU","MO","TU","WE","TH","FR","SA"};
     for(int k=0;k<7;k++){
@@ -1667,14 +1656,14 @@ static void create_zone_clk(void) {
       lv_obj_set_style_pad_left(clk_wk[k],2,0);lv_obj_set_style_pad_right(clk_wk[k],2,0);
       lv_obj_set_style_bg_color(clk_wk[k],lv_color_hex(0x26331c),0);
       lv_obj_set_style_bg_opa(clk_wk[k],LV_OPA_TRANSP,0);
-      lv_obj_set_pos(clk_wk[k],8+k*20,26);
+      lv_obj_set_pos(clk_wk[k],8+k*20,20);
     }
     clk_moon=lv_obj_create(clk_lcd);lv_obj_set_size(clk_moon,14,14);
     lv_obj_set_style_radius(clk_moon,LV_RADIUS_CIRCLE,0);
     lv_obj_set_style_bg_color(clk_moon,lv_color_hex(0x26331c),0);lv_obj_set_style_bg_opa(clk_moon,LV_OPA_COVER,0);
     lv_obj_set_style_border_width(clk_moon,0,0);lv_obj_set_style_pad_all(clk_moon,0,0);
     lv_obj_remove_flag(clk_moon,LV_OBJ_FLAG_SCROLLABLE);lv_obj_remove_flag(clk_moon,LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_pos(clk_moon,196,27);
+    lv_obj_set_pos(clk_moon,194,22);
     clk_moon_disc=lv_obj_create(clk_moon);lv_obj_set_size(clk_moon_disc,12,12);
     lv_obj_set_style_radius(clk_moon_disc,LV_RADIUS_CIRCLE,0);
     lv_obj_set_style_bg_color(clk_moon_disc,lv_color_hex(0xa9c96b),0);lv_obj_set_style_bg_opa(clk_moon_disc,LV_OPA_COVER,0);
@@ -1688,44 +1677,32 @@ static void create_zone_clk(void) {
   lv_obj_set_style_text_font(clk_ghost,&piko_seg7,0);
   lv_obj_set_style_text_color(clk_ghost,lv_color_hex(0x26331c),0);
   lv_obj_set_style_text_opa(clk_ghost,LV_OPA_10,0);
-  lv_obj_set_pos(clk_ghost,12,40);
+  lv_obj_set_pos(clk_ghost,12,56);
   clk_time_label=lv_label_create(clk_lcd);
   lv_label_set_text(clk_time_label,"--:--");
   lv_obj_set_style_text_font(clk_time_label,&piko_seg7,0);
   lv_obj_set_style_text_color(clk_time_label,lv_color_hex(0x26331c),0);
-  lv_obj_set_pos(clk_time_label,12,40);
+  lv_obj_set_pos(clk_time_label,12,56);
   clk_sec_label=lv_label_create(clk_lcd);
   lv_label_set_text(clk_sec_label,"--");
   lv_obj_set_style_text_font(clk_sec_label,&piko_seg7_small,0);
   lv_obj_set_style_text_color(clk_sec_label,lv_color_hex(0x26331c),0);
   lv_obj_set_style_text_opa(clk_sec_label,LV_OPA_80,0);
-  lv_obj_set_pos(clk_sec_label,168,66);
-  clk_wt=lv_label_create(clk_lcd);lv_label_set_text(clk_wt,"WT UTC --:--");
-  lv_obj_set_style_text_font(clk_wt,&piko_ui_small,0);lv_obj_set_style_text_color(clk_wt,lv_color_hex(0x26331c),0);
-  lv_obj_align(clk_wt,LV_ALIGN_TOP_LEFT,8,88);
-  clk_lunar=lv_label_create(clk_lcd);lv_label_set_text(clk_lunar,"");
-  lv_obj_set_style_text_font(clk_lunar,&piko_ui_small,0);lv_obj_set_style_text_color(clk_lunar,lv_color_hex(0x26331c),0);
-  lv_obj_align(clk_lunar,LV_ALIGN_TOP_LEFT,8,106);
-  for(int k=0;k<5;k++){
-    clk_batt[k]=lv_obj_create(clk_lcd);lv_obj_set_size(clk_batt[k],7,10);
-    lv_obj_set_style_radius(clk_batt[k],1,0);
-    lv_obj_set_style_bg_color(clk_batt[k],lv_color_hex(0x26331c),0);lv_obj_set_style_bg_opa(clk_batt[k],LV_OPA_20,0);
-    lv_obj_set_style_border_width(clk_batt[k],0,0);lv_obj_set_style_pad_all(clk_batt[k],0,0);
-    lv_obj_remove_flag(clk_batt[k],LV_OBJ_FLAG_SCROLLABLE);lv_obj_remove_flag(clk_batt[k],LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_pos(clk_batt[k],164+k*9,96);
-  }
+  lv_obj_set_pos(clk_sec_label,170,80);
   clk_date=lv_label_create(clk_lcd);lv_label_set_text(clk_date,"--/--");
   lv_obj_set_style_text_font(clk_date,&piko_ui_small,0);lv_obj_set_style_text_color(clk_date,lv_color_hex(0x26331c),0);
-  lv_obj_align(clk_date,LV_ALIGN_BOTTOM_LEFT,8,-4);
-  clk_doy=lv_label_create(clk_lcd);lv_label_set_text(clk_doy,"");
-  lv_obj_set_style_text_font(clk_doy,&piko_ui_small,0);lv_obj_set_style_text_color(clk_doy,lv_color_hex(0x26331c),0);
-  lv_obj_set_style_text_opa(clk_doy,LV_OPA_60,0);lv_obj_align(clk_doy,LV_ALIGN_BOTTOM_MID,0,-4);
-  clk_temp=lv_label_create(clk_lcd);lv_label_set_text(clk_temp,"--°C");
-  lv_obj_set_style_text_font(clk_temp,&piko_ui_small,0);lv_obj_set_style_text_color(clk_temp,lv_color_hex(0x26331c),0);
-  lv_obj_set_style_border_color(clk_temp,lv_color_hex(0x26331c),0);lv_obj_set_style_border_width(clk_temp,2,0);
-  lv_obj_set_style_pad_left(clk_temp,3,0);lv_obj_set_style_pad_right(clk_temp,3,0);
-  lv_obj_align(clk_temp,LV_ALIGN_BOTTOM_RIGHT,-8,-4);
-  clk_menu_box=lv_obj_create(zone_clk);lv_obj_set_size(clk_menu_box,200,68);lv_obj_set_pos(clk_menu_box,20,96);
+  lv_obj_set_pos(clk_date,8,122);
+  clk_wt=lv_label_create(clk_lcd);lv_label_set_text(clk_wt,"WT --:--");
+  lv_obj_set_style_text_font(clk_wt,&piko_ui_small,0);lv_obj_set_style_text_color(clk_wt,lv_color_hex(0x26331c),0);
+  lv_obj_set_style_text_opa(clk_wt,LV_OPA_60,0);
+  lv_obj_set_pos(clk_wt,8,158);
+  clk_bright_lab=lv_label_create(clk_lcd);lv_label_set_text(clk_bright_lab,"");
+  lv_obj_set_width(clk_bright_lab,210);
+  lv_obj_set_style_text_font(clk_bright_lab,&piko_ui_small,0);lv_obj_set_style_text_color(clk_bright_lab,lv_color_hex(0x26331c),0);
+  lv_obj_set_style_text_align(clk_bright_lab,LV_TEXT_ALIGN_CENTER,0);
+  lv_obj_set_pos(clk_bright_lab,0,2);
+  lv_obj_set_hidden(clk_bright_lab,true);
+  clk_menu_box=lv_obj_create(zone_clk);lv_obj_set_size(clk_menu_box,200,68);lv_obj_set_pos(clk_menu_box,20,68);
   lv_obj_set_style_bg_opa(clk_menu_box,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(clk_menu_box,0,0);lv_obj_set_style_pad_all(clk_menu_box,0,0);
   lv_obj_remove_flag(clk_menu_box,LV_OBJ_FLAG_SCROLLABLE);lv_obj_remove_flag(clk_menu_box,LV_OBJ_FLAG_CLICKABLE);
   {
@@ -1745,7 +1722,7 @@ static void create_zone_clk(void) {
       lv_obj_align(clk_menu_val[k],LV_ALIGN_RIGHT_MID,-10,0);
     }
   }
-  clk_bbar=lv_obj_create(zone_clk);lv_obj_set_size(clk_bbar,144,4);lv_obj_set_pos(clk_bbar,48,64);
+  clk_bbar=lv_obj_create(zone_clk);lv_obj_set_size(clk_bbar,144,4);lv_obj_set_pos(clk_bbar,48,99);
   lv_obj_set_style_radius(clk_bbar,2,0);lv_obj_set_style_bg_color(clk_bbar,lv_color_hex(PIKO_CARD_BORDER),0);
   lv_obj_set_style_border_width(clk_bbar,0,0);lv_obj_set_style_pad_all(clk_bbar,0,0);
   lv_obj_remove_flag(clk_bbar,LV_OBJ_FLAG_SCROLLABLE);lv_obj_remove_flag(clk_bbar,LV_OBJ_FLAG_CLICKABLE);

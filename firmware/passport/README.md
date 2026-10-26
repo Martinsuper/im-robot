@@ -176,7 +176,7 @@ Piko 页识别完成后先显示“你说的话”，思考和执行期间保留
 
 ### 时钟布局与蓝牙初始化回归
 
-`python3 tests/clock_layout_run.py` 使用本机 CMake/C 编译器构建真实 LVGL，检查小时与秒数、UTC、农历、底部日期的边界，以及设置菜单打开时表盘隐藏、关闭时恢复，并生成 PPM 预览。首次运行需要编译 LVGL，后续复用临时构建缓存。
+`python3 tests/clock_layout_run.py` 使用本机 CMake/C 编译器构建真实 LVGL，检查加高盘面（216×194）内时间与秒数、日期+农历合并行、世界时+周数合并行的边界与互不重叠，以及设置菜单打开时表盘隐藏、关闭时恢复，并生成 PPM 预览。首次运行需要编译 LVGL，后续复用临时构建缓存。
 
 ESP-IDF 5.5.3 的 NimBLE HID 在 GATT 注册失败时会留下已初始化的全局指针，导致重试报 `HID device profile already initialized`。`cmake/nimble_hid_cleanup.cmake` 只修补构建目录内的 SDK 源码副本，补上失败清理，不修改 ESP-IDF 安装目录。若未来 SDK 改动该函数，配置会要求重新审核补丁。
 
@@ -186,7 +186,7 @@ ESP-IDF 5.5.3 的 NimBLE HID 在 GATT 注册失败时会留下已初始化的全
 
 翻页器仅有一个 HID 连接，ATT MTU 为 64，MSYS1/MSYS2 缓冲块数为 6/8，ACL 接收块数 6，HCI 事件池 8/4，控制器活动数 2。不要直接恢复默认的大池配置：实机曾在打开翻页界面后仅余约 1.6 KB，导致 Wi-Fi 资源不足；当前同场景约余 18.8 KB，广播与 Wi-Fi 获取 IP 已验证。
 
-小字号 UI 字体显式包含 °/℃，`tests/clock_layout_run.py` 同时检查温度单位字形，防止字体子集再次遗漏。
+时钟盘面不再显示温度（温度占位已移除）；小字号 UI 字体仍需包含间隔点「·」，`tests/clock_layout_run.py` 检查该字形，防止字体子集再次遗漏。
 
 ### 音频 / 蓝牙按模式分配资源
 
