@@ -15,7 +15,7 @@ use snapshot::TaskSnapshot;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::{path::PathBuf, process::Stdio, sync::Arc};
+use std::{path::Path, path::PathBuf, process::Stdio, sync::Arc};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
@@ -87,6 +87,7 @@ struct RunningTask {
     child: Arc<Mutex<Child>>,
     pending_actions: Arc<Mutex<HashMap<String, String>>>,
     workspace_call: Option<String>,
+    passport: bool,
     read_only: bool,
     resuming: bool,
     operation_root: String,
@@ -143,6 +144,28 @@ pub struct AgentStartInput {
 }
 
 fn verify_entities(tool: &str, result: &Value, current: &Value) -> bool {
+    if matches!(
+        tool,
+        "start_focus" | "start_break" | "pause_focus" | "resume_focus" | "stop_focus"
+    ) {
+        let (Some(status), Some(kind), Some(expected), Some(actual)) = (
+            result["status"].as_str(),
+            result["kind"].as_str(),
+            result["remainingSeconds"].as_u64(),
+            current["remainingSeconds"].as_u64(),
+        ) else {
+            return false;
+        };
+        if current["status"].as_str() != Some(status) || current["kind"].as_str() != Some(kind) {
+            return false;
+        }
+        return match status {
+            "running" => actual > 0 && actual <= expected,
+            "paused" => actual == expected,
+            "idle" => actual == 0,
+            _ => false,
+        };
+    }
     let expected = result
         .as_array()
         .cloned()
@@ -300,21 +323,65 @@ pub async fn agent_list_tasks(
 pub async fn agent_start(
     app: AppHandle,
     runtime: State<'_, AgentRuntime>,
-    mut input: AgentStartInput,
+    input: AgentStartInput,
 ) -> Result<(), String> {
-    if !valid_id(&input.request_id) || !valid_id(&input.conversation_id) {
-        return Err("无效的任务标识".into());
+    start_agent(app, runtime, input, false).await
+}
+
+fn passport_generated_workspace(documents: &std::path::Path) -> Result<PathBuf, String> {
+    let path = documents.join("Piko");
+    if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err("Piko 默认文件夹是符号链接，请在电脑选择保存目录".into());
     }
-    if input
-        .context_id
-        .as_ref()
-        .is_some_and(|id| id != &input.conversation_id)
-    {
-        return Err("附件与当前会话不匹配".into());
-    }
-    if input.prompt.len() > 100_000 {
-        return Err("任务描述最多 100 KB".into());
-    }
+    std::fs::create_dir_all(&path)
+        .map_err(|_| "无法创建文稿/Piko，请在电脑选择保存目录".to_string())?;
+    std::fs::canonicalize(path).map_err(|_| "无法访问 Piko 默认文件夹".to_string())
+}
+
+pub(crate) async fn start_passport_agent(
+    app: AppHandle,
+    request_id: String,
+    conversation_id: String,
+    prompt: String,
+) -> Result<(), String> {
+    let view = crate::conversation_views::conversation_get_view(
+        app.clone(),
+        app.state(),
+        conversation_id.clone(),
+    )?;
+    let input = AgentStartInput {
+        request_id,
+        conversation_id,
+        prompt,
+        unified: true,
+        import_history: false,
+        knowledge_scope: view.knowledge_scope,
+        cwd: if view.cwd.trim().is_empty() {
+            None
+        } else {
+            Some(view.cwd)
+        },
+        attachment_action: None,
+        context_id: None,
+        screenshot: None,
+        include_screenshot: None,
+        verification_of: None,
+        proactive_message_id: None,
+        resume_of: None,
+    };
+    start_agent(app.clone(), app.state(), input, true).await
+}
+
+struct WorkspaceDirs {
+    selected_workspace: Option<PathBuf>,
+    data_dir: PathBuf,
+    cwd: PathBuf,
+}
+
+fn resolve_workspace_dirs(
+    app: &AppHandle,
+    input: &AgentStartInput,
+) -> Result<WorkspaceDirs, String> {
     let selected_workspace = input
         .cwd
         .as_deref()
@@ -327,7 +394,6 @@ pub async fn agent_start(
     {
         return Err("请选择文件夹作为工作目录".into());
     }
-    let data_lease = crate::data_gate::try_read()?;
     let data_dir = app
         .path()
         .app_data_dir()
@@ -341,7 +407,19 @@ pub async fn agent_start(
     } else {
         selected_workspace.clone().ok_or("请选择工作目录")?
     };
-    crate::memory::soul::settings::apply_pause_intent(&app, &input.prompt);
+    Ok(WorkspaceDirs {
+        selected_workspace,
+        data_dir,
+        cwd,
+    })
+}
+
+fn build_model_prompt(
+    app: &AppHandle,
+    input: &mut AgentStartInput,
+    passport: bool,
+) -> Result<(String, String), String> {
+    crate::memory::soul::settings::apply_pause_intent(app, &input.prompt);
     let attachments = app.state::<crate::attachments::TextAttachmentStore>();
     let attachment = if let Some(id) = &input.context_id {
         attachments
@@ -363,6 +441,9 @@ pub async fn agent_start(
         input.attachment_action.as_deref(),
         attachment.as_ref(),
     )?;
+    if passport {
+        model_prompt.push_str("\n[可信语音通道提示] 用户正在通过 Passport 提出请求。需要操作时调用实际工具，遵循现有确认流程；日程、提醒、备忘录和专注必须使用对应业务工具，不要为这些操作选择目录或调用文件命令。生成新文件时通过 piko_select_workspace 的 generated-files 用途使用默认 Piko 文件夹，无需用户选目录；读取或修改现有文件、项目时使用 existing-files 用途在桌面选择目标。文件/命令的操作授权仍在桌面完成。不要把尚待确认的操作说成完成。最终回复使用简短自然语言，尽量不超过120个汉字，适合朗读，不要使用表格或代码块；详细结果保留在桌面任务记录中。专注和休息使用 piko.focus 工具。");
+    }
     if let Some(id) = &input.proactive_message_id {
         let db = app.state::<Arc<crate::memory::MemoryDb>>();
         let mut conn =
@@ -398,48 +479,55 @@ pub async fn agent_start(
     if model_prompt.trim().is_empty() {
         return Err("请输入消息".into());
     }
-    let images = if input.include_screenshot.unwrap_or(false) {
-        let captures = app.state::<crate::screen_capture::ScreenCaptureStore>();
-        let capture = if let Some(capture) = input.screenshot.take() {
-            crate::screen_capture::ScreenCapture {
-                data_url: capture.data_url,
-                width: capture.width,
-                height: capture.height,
-            }
-        } else if input.context_id.is_some() {
-            return Err("请先框选截图区域".into());
-        } else {
-            captures
-                .0
-                .lock()
-                .map_err(|_| "无法读取截图")?
-                .clone()
-                .ok_or("请先框选截图区域")?
-        };
-        if capture.data_url.len() > 32 * 1024 * 1024 {
-            return Err("截图过大，请缩小截图范围".into());
+    Ok((model_prompt, history_prompt))
+}
+
+fn collect_screenshot_images(
+    app: &AppHandle,
+    input: &mut AgentStartInput,
+) -> Result<Vec<Value>, String> {
+    if !input.include_screenshot.unwrap_or(false) {
+        return Ok(Vec::new());
+    }
+    let captures = app.state::<crate::screen_capture::ScreenCaptureStore>();
+    let capture = if let Some(capture) = input.screenshot.take() {
+        crate::screen_capture::ScreenCapture {
+            data_url: capture.data_url,
+            width: capture.width,
+            height: capture.height,
         }
-        let (prefix, data) = capture.data_url.split_once(',').ok_or("截图格式无效")?;
-        let mime = prefix
-            .strip_prefix("data:")
-            .and_then(|s| s.strip_suffix(";base64"))
-            .ok_or("截图格式无效")?;
-        vec![json!({"type":"image", "mimeType":mime, "data":data})]
+    } else if input.context_id.is_some() {
+        return Err("请先框选截图区域".into());
     } else {
-        Vec::new()
+        captures
+            .0
+            .lock()
+            .map_err(|_| "无法读取截图")?
+            .clone()
+            .ok_or("请先框选截图区域")?
     };
-    let slot = runtime.0.lock().await;
-    validate_task_start(
-        &slot,
-        &input.request_id,
-        &input.conversation_id,
-        selected_workspace.as_deref(),
-    )?;
-    let journal = TaskJournal::new(&data_dir);
-    let records = journal.recover_active(
-        &slot.keys().map(String::as_str).collect::<Vec<_>>(),
-        crate::common::unix_timestamp(),
-    )?;
+    if capture.data_url.len() > 32 * 1024 * 1024 {
+        return Err("截图过大，请缩小截图范围".into());
+    }
+    let (prefix, data) = capture.data_url.split_once(',').ok_or("截图格式无效")?;
+    let mime = prefix
+        .strip_prefix("data:")
+        .and_then(|s| s.strip_suffix(";base64"))
+        .ok_or("截图格式无效")?;
+    Ok(vec![json!({"type":"image", "mimeType":mime, "data":data})])
+}
+
+struct ResumptionPlan {
+    verification: Option<journal::TaskRecord>,
+    resumed: Option<journal::TaskRecord>,
+    resume_root: Option<String>,
+    conversation_id: String,
+}
+
+fn resolve_resumption(
+    input: &AgentStartInput,
+    records: &[journal::TaskRecord],
+) -> Result<ResumptionPlan, String> {
     let verification = input
         .verification_of
         .as_deref()
@@ -493,9 +581,6 @@ pub async fn agent_start(
             break;
         }
     }
-    let operation_root = resume_root
-        .clone()
-        .unwrap_or_else(|| input.request_id.clone());
     let conversation_id = resumed
         .as_ref()
         .map(|record| record.conversation_id.clone())
@@ -503,26 +588,33 @@ pub async fn agent_start(
     if !valid_id(&conversation_id) {
         return Err("续跑会话标识无效".into());
     }
-    let resuming = resumed.is_some();
-    let read_only = verification.is_some();
-    let settings = crate::settings::read_settings(&app);
-    if settings.ai.model.trim().is_empty() || settings.ai.base_url.trim().is_empty() {
-        return Err("请先在模型设置中配置模型和 API 地址".into());
-    }
-    let knowledge_db = app.state::<Arc<crate::memory::MemoryDb>>();
-    let knowledge_scope = crate::memory::knowledge::bind_conversation(
-        &knowledge_db,
-        &conversation_id,
-        &input.request_id,
-        input.knowledge_scope.as_deref(),
-    )?;
-    let (node, resources) = runtime_paths(&app)?;
+    Ok(ResumptionPlan {
+        verification,
+        resumed,
+        resume_root,
+        conversation_id,
+    })
+}
+
+type AgentChildPipes = (
+    Arc<Mutex<Child>>,
+    Arc<Mutex<ChildStdin>>,
+    tokio::process::ChildStdout,
+);
+
+fn spawn_agent_child(
+    app: &AppHandle,
+    request_id: &str,
+    cwd: &Path,
+    data_dir: &Path,
+) -> Result<AgentChildPipes, String> {
+    let (node, resources) = runtime_paths(app)?;
     if !node.is_file() || !resources.join("sidecar.mjs").is_file() {
         return Err("Agent 运行时未准备好，请运行 npm run agent:prepare 后重启 Piko".into());
     }
     let mut child = Command::new(node)
         .arg(resources.join("sidecar.mjs"))
-        .current_dir(&cwd)
+        .current_dir(cwd)
         .env_remove("NODE_OPTIONS")
         .env_remove("NODE_PATH")
         .stdin(Stdio::piped())
@@ -537,7 +629,7 @@ pub async fn agent_start(
     let stdout = child.stdout.take().ok_or("无法创建 Agent 输出管道")?;
     let stderr = child.stderr.take().ok_or("无法创建 Agent 诊断管道")?;
     let diagnostics_dir = data_dir.join("diagnostics");
-    let diagnostic_id = input.request_id.clone();
+    let diagnostic_id = request_id.to_string();
     let diagnostic_key = crate::credentials::read_api_key()?.unwrap_or_default();
     crate::background::SUPERVISOR.spawn_async_effect(
         "agent-diagnostics",
@@ -545,25 +637,94 @@ pub async fn agent_start(
             diagnostics::collect(stderr, &diagnostics_dir, &diagnostic_id, &diagnostic_key).await;
         },
     );
-    let child = Arc::new(Mutex::new(child));
+    Ok((Arc::new(Mutex::new(child)), stdin, stdout))
+}
+
+fn build_business_tools(app: &AppHandle, unified: bool, read_only: bool, resuming: bool) -> Value {
+    if !unified {
+        return json!([]);
+    }
     let registry = app.state::<crate::plugins::PluginRegistry>();
-    let business_tools = if input.unified {
-        let mut manifests = registry.manifests();
-        if read_only || resuming {
-            for manifest in &mut manifests {
-                let plugin = manifest.id.clone();
-                manifest.tools.retain(|tool| {
-                    verification_tool_allowed(&tool.risk, &tool.confirmation)
-                        || !read_only && crate::agent_operations::supported(&plugin, &tool.name)
-                });
-            }
+    let mut manifests = registry.manifests();
+    if read_only || resuming {
+        for manifest in &mut manifests {
+            let plugin = manifest.id.clone();
+            manifest.tools.retain(|tool| {
+                verification_tool_allowed(&tool.risk, &tool.confirmation)
+                    || !read_only && crate::agent_operations::supported(&plugin, &tool.name)
+            });
         }
-        crate::plugins::bridge::provider_tools("openai", &manifests)
-    } else {
-        json!([])
-    };
+    }
+    crate::plugins::bridge::provider_tools("openai", &manifests)
+}
+
+async fn start_agent(
+    app: AppHandle,
+    runtime: State<'_, AgentRuntime>,
+    mut input: AgentStartInput,
+    passport: bool,
+) -> Result<(), String> {
+    if !valid_id(&input.request_id) || !valid_id(&input.conversation_id) {
+        return Err("无效的任务标识".into());
+    }
+    if input
+        .context_id
+        .as_ref()
+        .is_some_and(|id| id != &input.conversation_id)
+    {
+        return Err("附件与当前会话不匹配".into());
+    }
+    if input.prompt.len() > 100_000 {
+        return Err("任务描述最多 100 KB".into());
+    }
+    let data_lease = crate::data_gate::try_read()?;
+    let WorkspaceDirs {
+        selected_workspace,
+        data_dir,
+        cwd,
+    } = resolve_workspace_dirs(&app, &input)?;
+    let (model_prompt, history_prompt) = build_model_prompt(&app, &mut input, passport)?;
+    let images = collect_screenshot_images(&app, &mut input)?;
+    let slot = runtime.0.lock().await;
+    validate_task_start(
+        &slot,
+        &input.request_id,
+        &input.conversation_id,
+        selected_workspace.as_deref(),
+    )?;
+    let journal = TaskJournal::new(&data_dir);
+    let records = journal.recover_active(
+        &slot.keys().map(String::as_str).collect::<Vec<_>>(),
+        crate::common::unix_timestamp(),
+    )?;
+    let ResumptionPlan {
+        verification,
+        resumed,
+        resume_root,
+        conversation_id,
+    } = resolve_resumption(&input, &records)?;
+    let operation_root = resume_root
+        .clone()
+        .unwrap_or_else(|| input.request_id.clone());
+    let resuming = resumed.is_some();
+    let read_only = verification.is_some();
+    let settings = crate::settings::read_settings(&app);
+    if settings.ai.model.trim().is_empty() || settings.ai.base_url.trim().is_empty() {
+        return Err("请先在模型设置中配置模型和 API 地址".into());
+    }
+    let knowledge_db = app.state::<Arc<crate::memory::MemoryDb>>();
+    let knowledge_scope = crate::memory::knowledge::bind_conversation(
+        &knowledge_db,
+        &conversation_id,
+        &input.request_id,
+        input.knowledge_scope.as_deref(),
+    )?;
+    // Backfill conversation links before the task journal can evict old records.
+    let saved_history = crate::chat_session::repository::try_read_chat_history(&app)?;
+    let (child, stdin, stdout) = spawn_agent_child(&app, &input.request_id, &cwd, &data_dir)?;
+    let business_tools = build_business_tools(&app, input.unified, read_only, resuming);
     let history = if input.import_history && knowledge_scope.is_none() {
-        crate::chat_session::repository::read_chat_history(&app)
+        saved_history
             .into_iter()
             .rev()
             .take(10)
@@ -643,10 +804,10 @@ pub async fn agent_start(
         "requestId": input.request_id, "resumeRoot":resume_root, "dataDir": data_dir,
         "provider": settings.ai.provider, "baseUrl": settings.ai.base_url,
         "model": settings.ai.model, "apiKey": crate::credentials::read_api_key()?.unwrap_or_default(),
-        "autoApproveCommands":settings.agent_auto_approve_commands,
+        "autoApproveCommands":!passport && settings.agent_auto_approve_commands,
         "readOnly":read_only,
         "contextWindow":settings.ai.context_window,"maxOutputTokens":settings.ai.max_output_tokens,"timeoutSeconds":settings.ai.timeout_seconds,
-        "unified":input.unified, "workspace":selected_workspace, "businessTools":business_tools, "serializeSystemTools":true,
+        "unified":input.unified, "passport":passport, "workspace":selected_workspace, "businessTools":business_tools, "serializeSystemTools":true,
         "systemPrompt":system_prompt, "history":history, "images":images });
     journal.start_linked(
         &input.request_id,
@@ -699,6 +860,7 @@ pub async fn agent_start(
             child: child.clone(),
             pending_actions: pending_actions.clone(),
             workspace_call: None,
+            passport,
             read_only,
             resuming,
             operation_root,
@@ -754,6 +916,7 @@ pub async fn agent_start(
                     emit(&app, &request_id, json!({"type":"delta", "text":note}));
                 }
                 let entry = crate::chat_session::ChatHistoryEntry {
+                    conversation_id: Some(conversation_id.clone()),
                     id: request_id.clone(),
                     prompt: history_prompt.lock().await.clone(),
                     response: response.clone(),
@@ -965,10 +1128,49 @@ async fn handle_app_tool(
     }
     if name == "piko_select_workspace" {
         let runtime = app.state::<AgentRuntime>();
-        let mut slot = runtime.0.lock().await;
-        if let Some(task) = slot.get_mut(request_id) {
-            task.workspace_call = Some(call_id);
-            emit(app, request_id, json!({"type":"workspace-required"}));
+        let auto_default = {
+            let slot = runtime.0.lock().await;
+            slot.get(request_id).is_some_and(|task| task.passport)
+                && event["arguments"]["purpose"]
+                    .as_str()
+                    .unwrap_or("generated-files")
+                    == "generated-files"
+        };
+        if auto_default {
+            let result = app
+                .path()
+                .document_dir()
+                .map_err(|e| e.to_string())
+                .and_then(|documents| passport_generated_workspace(&documents));
+            let reply = {
+                let mut slot = runtime.0.lock().await;
+                match result.and_then(|path| {
+                    ensure_workspace_available(&slot, request_id, &path)?;
+                    Ok(path)
+                }) {
+                    Ok(path) => {
+                        if let Some(task) = slot.get_mut(request_id) {
+                            task.workspace = Some(path.clone());
+                        }
+                        json!({"type":"app-result","callId":call_id,"result":{"path":path,"default":true}})
+                    }
+                    Err(error) => json!({"type":"app-result","callId":call_id,"error":error}),
+                }
+            };
+            let _ = write_command(stdin, reply.clone()).await;
+            if reply.get("error").is_none() {
+                emit(
+                    app,
+                    request_id,
+                    json!({"type":"workspace-resolved","cwd":reply["result"]["path"]}),
+                );
+            }
+        } else {
+            let mut slot = runtime.0.lock().await;
+            if let Some(task) = slot.get_mut(request_id) {
+                task.workspace_call = Some(call_id);
+                emit(app, request_id, json!({"type":"workspace-required"}));
+            }
         }
         return;
     }
@@ -1361,5 +1563,63 @@ mod tests {
             assert!(!valid_id(id));
         }
         assert!(!valid_id(&"a".repeat(81)));
+    }
+}
+
+#[cfg(test)]
+mod passport_focus_verification_tests {
+    use super::*;
+    #[test]
+    fn verifies_actual_focus_state_without_requiring_a_record_id() {
+        let expected = json!({"status":"running","kind":"focus","remainingSeconds":1500});
+        assert!(verify_entities(
+            "start_focus",
+            &expected,
+            &json!({"status":"running","kind":"focus","remainingSeconds":1499})
+        ));
+        assert!(!verify_entities(
+            "start_focus",
+            &expected,
+            &json!({"status":"paused","kind":"focus","remainingSeconds":1499})
+        ));
+        assert!(!verify_entities(
+            "start_focus",
+            &expected,
+            &json!({"status":"running","kind":"break","remainingSeconds":300})
+        ));
+        assert!(!verify_entities(
+            "start_focus",
+            &expected,
+            &json!({"status":"running","kind":"focus","remainingSeconds":2000})
+        ));
+        assert!(!verify_entities("start_focus", &json!({}), &json!({})));
+    }
+}
+
+#[cfg(test)]
+mod passport_workspace_tests {
+    use super::*;
+    #[test]
+    fn generated_content_uses_a_dedicated_stable_directory() {
+        let documents = tempfile::tempdir().unwrap();
+        let first = passport_generated_workspace(documents.path()).unwrap();
+        assert_eq!(first, documents.path().join("Piko").canonicalize().unwrap());
+        std::fs::write(first.join("keep.txt"), "existing content").unwrap();
+        assert_eq!(
+            first,
+            passport_generated_workspace(documents.path()).unwrap()
+        );
+        assert_eq!(
+            std::fs::read_to_string(first.join("keep.txt")).unwrap(),
+            "existing content"
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn default_workspace_does_not_follow_an_unexpected_symlink() {
+        let documents = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), documents.path().join("Piko")).unwrap();
+        assert!(passport_generated_workspace(documents.path()).is_err());
     }
 }

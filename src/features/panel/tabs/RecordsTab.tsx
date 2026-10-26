@@ -666,20 +666,15 @@ export function RecordsTab() {
 
           {section === "memory" ? <MemoryCenter /> : null}
 
-          {section === "chat" ? (
-            chatError ? (
-              <ErrorState
-                message={chatError}
-                onRetry={() => void loadChatHistory()}
-                onDismiss={() => setChatError("")}
-              />
-            ) : (
-              <PanelHistory
-                chatHistory={chatHistory}
-                onClear={clearChatHistory}
-              />
-            )
-          ) : null}
+          {section === "chat" && <>
+            {chatError && <ErrorState
+              message={chatError}
+              onRetry={() => void loadChatHistory()}
+              onDismiss={() => setChatError("")}
+            />}
+            {(!chatError || chatHistory.length > 0) && <PanelHistory chatHistory={chatHistory} onClear={clearChatHistory} />}
+          </>}
+
         </>
       )}
     </div>

@@ -97,7 +97,20 @@ export async function installPanelBackend(page: Page, options: BackendOptions = 
           case 'get_onboarding_status': result = { required: state.onboarding, completed: !state.onboarding, version: '1.0' }; break;
           case 'complete_onboarding': state.onboarding = false; state.settings.companionName = args.companionName; result = state.settings; break;
           case 'skip_onboarding': state.onboarding = false; result = state.settings; break;
-          case 'get_focus_state': result = state.focus; break;
+          case 'speak_local_text': case 'stop_local_speech': result = null; break;
+        case 'get_speech_output_settings': result = state.speechOutput ??= {provider:'system',voice:'冰糖',style:'自然温暖地交流，避免播音腔。',hasApiKey:false}; break;
+        case 'update_speech_output_settings': {
+          state.speechOutput = {...state.speechOutput, provider:args.input.provider,voice:args.input.voice,style:args.input.style,hasApiKey:args.input.apiKey == null ? state.speechOutput.hasApiKey : Boolean(args.input.apiKey)};
+          result=state.speechOutput;break;
+        }
+        case 'get_device_status':
+          result = state.device ??= { running: false, port: 19388, pairingCode: null, pairingSeconds: 0, deviceId: null, deviceName: null, connected: false, battery: null, firmware: null, error: null, pendingDevice: null, pendingRequest: null }; break;
+        case 'start_device_bridge': state.device.running = true; result = state.device; break;
+        case 'stop_device_bridge': state.device.running = false; state.device.connected = false; state.device.pairingCode = null; result = state.device; break;
+        case 'begin_device_pairing': state.device.pairingCode = '1234abcd'; state.device.pairingSeconds = 300; result = state.device; break;
+        case 'forget_device': state.device.deviceId = null; state.device.deviceName = null; state.device.connected = false; result = state.device; break;
+        case 'publish_device_pet': result = null; break;
+        case 'get_focus_state': result = state.focus; break;
           case 'start_focus': case 'start_break': state.focus = { ...state.focus, status: 'running', kind: command === 'start_focus' ? 'focus' : 'break', remainingSeconds: args.minutes * 60 }; result = state.focus; break;
           case 'pause_focus': state.focus.status = 'paused'; result = state.focus; break;
           case 'resume_focus': state.focus.status = 'running'; result = state.focus; break;

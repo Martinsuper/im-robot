@@ -7,7 +7,7 @@ import { ChatModelMenu } from "./ChatModelMenu";
 const { command, applyServer } = vi.hoisted(() => ({ command: vi.fn(), applyServer: vi.fn() }));
 const settings = { ...defaultAppSettings, hasApiKey: true, ai: { ...defaultAppSettings.ai, model: "first", baseUrl: "https://example.test/v1" } };
 vi.mock("../app/appRuntime", () => ({ runCommand: command }));
-vi.mock("../panel/settingsStore", () => ({ useAppSettings: () => ({ settings, applyServer }) }));
+vi.mock("../app/settingsStore", () => ({ useAppSettings: () => ({ settings, applyServer }), parseAppSettings: (raw: unknown) => raw }));
 
 beforeEach(() => {
   Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: () => '["first","second"]' } });

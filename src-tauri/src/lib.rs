@@ -11,6 +11,9 @@ mod data_commands;
 mod data_gate;
 mod data_snapshot;
 mod desktop;
+mod device_agent;
+mod device_voice;
+mod devices;
 // 注册表跨平台/feature 门控的生产方共用：某些码只在特定配置的模块里用到。
 #[allow(dead_code)]
 mod error_codes;
@@ -23,6 +26,8 @@ mod reminder_service;
 mod runtime_types;
 mod screen_capture;
 mod speech;
+mod tts;
+mod tts_stream;
 
 mod actions;
 mod agent;

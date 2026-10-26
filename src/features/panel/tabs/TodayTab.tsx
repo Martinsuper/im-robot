@@ -269,7 +269,13 @@ export function TodayTab() {
     focus.remainingSeconds - (focus.status === "running" ? tick : 0),
   );
 
-  const reference = nowSeconds();
+  // Upcoming filtering only needs minute precision; reading the clock inline
+  // would recompute the item memos on every render, including each focus tick.
+  const [reference, setReference] = useState(nowSeconds);
+  useEffect(() => {
+    const timer = window.setInterval(() => setReference(nowSeconds()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const todayItems = useMemo(
     () =>
       itemsForDay(items, selectedDate)

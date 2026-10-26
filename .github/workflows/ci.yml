@@ -32,6 +32,7 @@ jobs:
       - run: node --test scripts/prepare-release.test.mjs
       - run: node --test scripts/window-config.test.mjs
       - run: node --test scripts/ci-workflow.test.mjs
+      - run: node --test scripts/sherpa-cache.test.mjs
       - run: npm audit
       - run: cargo test --manifest-path tools/contracts/Cargo.toml
       - run: npm run check
@@ -66,7 +67,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-          key: verify-${{ matrix.os }}
+          key: verify-native-cache-v2-${{ matrix.os }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -82,6 +83,7 @@ jobs:
         run: |
           npm run test:calendar
           npm run test:notifications-native
+          cargo test --manifest-path src-tauri/vendor/xcap/Cargo.toml --lib --target-dir src-tauri/target
       - name: Install Tauri Linux dependencies
         if: runner.os == 'Linux'
         run: bash scripts/install-linux-build-deps.sh

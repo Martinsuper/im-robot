@@ -23,6 +23,7 @@ const CONFIG_FILES: &[&str] = &[
     "html-favorites.json",
     "chat-history.json",
     "chat-sessions.json",
+    "chat-sessions.conversation-links-v1.json",
     "chat-migration.json",
     "focus-records.json",
     "typing-stats.json",
@@ -200,7 +201,10 @@ fn owner(name: &str) -> &str {
         "pet-state.json" => "pet",
         "app-settings.json" => "settings",
         "memory.db" => "memory",
-        "chat-history.json" | "chat-sessions.json" | "chat-migration.json" => "chat",
+        "chat-history.json"
+        | "chat-sessions.json"
+        | "chat-migration.json"
+        | "chat-sessions.conversation-links-v1.json" => "chat",
         "memos.json" => "memos",
         "html-favorites.json" => "favorites",
         "focus-records.json" | "typing-stats.json" => "activity",
@@ -756,6 +760,10 @@ mod tests {
         let snapshot = capture(&roots, &db, &freeze).unwrap();
         drop(freeze);
         fs::write(roots.config.join("memos.json"), "[1]").unwrap();
+        let links_marker = roots
+            .config
+            .join("chat-sessions.conversation-links-v1.json");
+        fs::write(&links_marker, r#"{"version":1}"#).unwrap();
         atomic_bytes(
             &recovery_path(&roots),
             &serde_json::to_vec(&Recovery {
@@ -767,6 +775,10 @@ mod tests {
         )
         .unwrap();
         recover(&roots).unwrap();
+        assert!(
+            !links_marker.exists(),
+            "restoring pre-migration data must allow link migration again"
+        );
         assert_eq!(
             fs::read_to_string(roots.config.join("memos.json")).unwrap(),
             "[]"

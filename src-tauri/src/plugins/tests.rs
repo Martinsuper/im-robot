@@ -10,28 +10,29 @@ use crate::providers::{
 #[test]
 fn registers_the_builtin_business_plugins() {
     let manifests = PluginRegistry::with_builtin_plugins().manifests();
-    assert_eq!(manifests.len(), 4);
+    assert_eq!(manifests.len(), 5);
     assert_eq!(manifests[0].id, "piko.calendar");
-    assert_eq!(manifests[2].id, "piko.memos");
-    assert_eq!(manifests[3].id, "piko.reminders");
+    assert_eq!(manifests[1].id, "piko.focus");
+    assert_eq!(manifests[3].id, "piko.memos");
+    assert_eq!(manifests[4].id, "piko.reminders");
     assert_eq!(manifests[0].tools[0].name, "list_events");
     assert_eq!(manifests[0].tools[4].name, "delete_event");
     assert_eq!(manifests[0].tools[5].name, "delete_event_batch");
     assert_eq!(manifests[0].tools[5].risk, "sensitive");
     assert_eq!(manifests[0].tools[5].confirmation, "always");
-    assert_eq!(manifests[2].tools[0].name, "list_memos");
-    assert_eq!(manifests[2].tools[1].name, "create_memo");
-    assert_eq!(manifests[2].tools[1].risk, "write");
-    assert_eq!(manifests[2].tools[1].confirmation, "always");
-    assert_eq!(manifests[3].tools[0].name, "list_reminders");
-    assert_eq!(manifests[3].tools[2].name, "delete_reminder");
+    assert_eq!(manifests[3].tools[0].name, "list_memos");
+    assert_eq!(manifests[3].tools[1].name, "create_memo");
     assert_eq!(manifests[3].tools[1].risk, "write");
-    assert_eq!(manifests[3].tools[2].risk, "sensitive");
-    assert_eq!(manifests[3].tools[2].confirmation, "always");
-    assert_eq!(manifests[1].id, "piko.knowledge");
-    assert_eq!(manifests[1].tools[0].name, "search_knowledge");
-    assert_eq!(manifests[1].tools[0].risk, "read");
-    assert_eq!(manifests[1].tools[0].confirmation, "never");
+    assert_eq!(manifests[3].tools[1].confirmation, "always");
+    assert_eq!(manifests[4].tools[0].name, "list_reminders");
+    assert_eq!(manifests[4].tools[2].name, "delete_reminder");
+    assert_eq!(manifests[4].tools[1].risk, "write");
+    assert_eq!(manifests[4].tools[2].risk, "sensitive");
+    assert_eq!(manifests[4].tools[2].confirmation, "always");
+    assert_eq!(manifests[2].id, "piko.knowledge");
+    assert_eq!(manifests[2].tools[0].name, "search_knowledge");
+    assert_eq!(manifests[2].tools[0].risk, "read");
+    assert_eq!(manifests[2].tools[0].confirmation, "never");
 }
 
 #[test]

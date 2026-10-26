@@ -41,3 +41,7 @@ playwright-report
 /src-tauri/binaries/piko-agent-node-*
 
 /tools/contracts/target/
+
+# Local build and validation output
+/src-tauri/vendor/*/target/
+/output/

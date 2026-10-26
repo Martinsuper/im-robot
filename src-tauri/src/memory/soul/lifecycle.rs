@@ -76,6 +76,7 @@ mod tests {
     }
     fn entry() -> crate::chat_session::ChatHistoryEntry {
         crate::chat_session::ChatHistoryEntry {
+            conversation_id: None,
             id: "source".into(),
             prompt: "我打算下周去爬山".into(),
             response: "".into(),

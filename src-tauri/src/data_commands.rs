@@ -126,7 +126,7 @@ fn clear_my_data_inner(app: AppHandle) -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub(crate) fn export_data(app: AppHandle) -> Result<serde_json::Value, String> {
-    let export = crate::sync::import_export::build_export_data(&app);
+    let export = crate::sync::import_export::build_export_data(&app)?;
     serde_json::to_value(export).map_err(|e| e.to_string())
 }
 

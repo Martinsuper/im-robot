@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppSettings } from "../../types/appTypes";
-import { defaultAppSettings } from "../app/appShared";
-import { isTauriRuntime, runCommand } from "../app/appRuntime";
+import type { AppSettings, QuietMode, Theme } from "../../types/appTypes";
+import { defaultAppSettings } from "./appShared";
+import { isTauriRuntime, runCommand } from "./appRuntime";
 
 /**
  * 面板的单一 settings 存储（对齐 00 §5.8「单一数据源原则」）。
@@ -45,7 +45,7 @@ async function ensureLoaded(): Promise<void> {
     )
       .then((next) => {
         if (generation === loadGeneration && revision === startedAt)
-          publish(next as AppSettings);
+          publish(parseAppSettings(next));
       })
       .catch((error: unknown) => {
         if (generation === loadGeneration) loadPromise = undefined;
@@ -56,8 +56,8 @@ async function ensureLoaded(): Promise<void> {
 }
 
 function ensureEventSubscription(): Promise<UnlistenFn> {
-  eventSubscription ??= listen<AppSettings>("settings-updated", (event) =>
-    publish(event.payload),
+  eventSubscription ??= listen<unknown>("settings-updated", (event) =>
+    publish(parseAppSettings(event.payload)),
   ).catch((error: unknown) => {
     eventSubscription = undefined;
     throw error;
@@ -72,6 +72,29 @@ function subscribe(listener: () => void) {
   });
   return () => {
     listeners.delete(listener);
+  };
+}
+
+const quietModes: readonly QuietMode[] = ["active", "balanced", "minimal"];
+const themes: readonly Theme[] = ["sage", "blue", "peach"];
+
+/**
+ * IPC 返回的设置是生成的宽类型（字面量联合退化为 string 等），进入缓存前统一
+ * 收窄：非法或缺失字段回落默认值，消费方拿到的始终是合法 AppSettings。
+ */
+export function parseAppSettings(raw: unknown): AppSettings {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const ai = source.ai && typeof source.ai === "object" ? (source.ai as Record<string, unknown>) : {};
+  return {
+    ...defaultAppSettings,
+    ...source,
+    quietMode: quietModes.includes(source.quietMode as QuietMode)
+      ? (source.quietMode as QuietMode)
+      : defaultAppSettings.quietMode,
+    theme: themes.includes(source.theme as Theme)
+      ? (source.theme as Theme)
+      : defaultAppSettings.theme,
+    ai: { ...defaultAppSettings.ai, ...ai },
   };
 }
 

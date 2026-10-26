@@ -136,6 +136,7 @@ mod tests {
     use super::*;
     fn entry(prompt: &str) -> ChatHistoryEntry {
         ChatHistoryEntry {
+            conversation_id: None,
             id: "source".into(),
             prompt: prompt.into(),
             response: "助手声称付款成功".into(),

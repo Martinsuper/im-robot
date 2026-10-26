@@ -22,6 +22,11 @@ test("native packaged Agent tests install the SDK dependencies first", () => {
   assert.ok(install >= 0 && run > install, "SDK dependencies must exist before tests import the source adapter");
 });
 
+test("native cache regression tests run and stale caches use a new namespace", () => {
+  assert.match(frontend, /node --test scripts\/sherpa-cache\.test\.mjs/);
+  assert.match(workflow, /key: verify-native-cache-v2-\$\{\{ matrix\.os \}\}/);
+});
+
 test("parallel release builds cannot publish before verification succeeds", () => {
   const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   const prepare = release.split(/^  prepare:\s*$/m)[1]?.split(/^  [\w-]+:\s*$/m)[0];

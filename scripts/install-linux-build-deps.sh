@@ -16,4 +16,4 @@ sudo apt-get -o Acquire::Retries=3 update
 sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
   libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
   libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libxtst-dev libxi-dev \
-  libxcb-randr0-dev
+  libxcb-randr0-dev libasound2-dev

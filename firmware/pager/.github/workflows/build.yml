@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write  # 打 v* 标签时创建 Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build firmware
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . "$IDF_PATH/export.sh"
+          idf.py build
+          idf.py merge-bin -o merged.bin
+          mkdir -p dist
+          cp build/passport_pager.bin dist/passport-pager-app.bin
+          cp build/merged.bin dist/passport-pager-merged.bin
+          (cd dist && sha256sum *.bin > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: passport-pager-firmware
+          path: dist/
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/passport-pager-merged.bin
+            dist/passport-pager-app.bin
+            dist/SHA256SUMS
+          body: |
+            - `passport-pager-merged.bin`：整片镜像，从 `0x0` 写入（会覆盖出厂小智，先备份）。Full-flash image, write at `0x0` (overwrites the factory XiaoZhi firmware; back up first).
+            - `passport-pager-app.bin`：应用镜像，用于写进 OTA_1（`0x310000`）保留小智。App image for OTA_1 (`0x310000`) to keep XiaoZhi.
+            - `SHA256SUMS`：校验值 / checksums.

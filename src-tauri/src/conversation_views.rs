@@ -65,16 +65,22 @@ pub(crate) fn conversation_get_view(
 ) -> Result<ConversationView, String> {
     let _lease = crate::data_gate::try_read()?;
     let file = path(&app, &conversation_id)?;
-    let mut states = views.0.lock().map_err(|_| "无法读取会话草稿")?;
-    if let Some(view) = states.get(&conversation_id) {
+    let states = views.0.lock().map_err(|_| "无法读取会话草稿")?;
+    read_view(&file, &states, &conversation_id)
+}
+
+fn read_view(
+    file: &std::path::Path,
+    states: &HashMap<String, ConversationView>,
+    conversation_id: &str,
+) -> Result<ConversationView, String> {
+    if let Some(view) = states.get(conversation_id) {
         return Ok(view.clone());
     }
-    let view: ConversationView = crate::storage::read(&file)?;
+    let view: ConversationView = crate::storage::read(file)?;
     validate(&view)?;
-    if states.len() >= 32 {
-        return Err("打开的会话过多，请关闭不用的窗口".into());
-    }
-    states.insert(conversation_id, view.clone());
+    // Reading a device's defaults is not opening a window. Cache only on save,
+    // otherwise every completed device session consumes an open-view slot.
     Ok(view)
 }
 
@@ -120,21 +126,12 @@ pub(crate) fn conversation_chat_history(
     if !valid_id(&conversation_id) {
         return Err("无效的会话标识".into());
     }
-    let directory = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("agent");
-    let records = crate::agent::journal::TaskJournal::new(&directory).all()?;
-    let ids: std::collections::HashSet<_> = records
-        .iter()
-        .filter(|r| r.conversation_id == conversation_id)
-        .map(|r| r.request_id.as_str())
-        .collect();
-    Ok(crate::chat_session::repository::read_chat_history(&app)
-        .into_iter()
-        .filter(|entry| ids.contains(entry.id.as_str()))
-        .collect())
+    Ok(
+        crate::chat_session::repository::try_read_chat_history(&app)?
+            .into_iter()
+            .filter(|entry| entry.conversation_id.as_deref() == Some(&conversation_id))
+            .collect(),
+    )
 }
 
 #[tauri::command]
@@ -167,6 +164,22 @@ pub(crate) fn conversation_forget_view(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reading_device_defaults_does_not_consume_open_view_slots() {
+        let directory = tempfile::tempdir().unwrap();
+        let states: HashMap<_, _> = (0..32)
+            .map(|id| (format!("open-{id}"), ConversationView::default()))
+            .collect();
+        for id in 0..40 {
+            assert!(read_view(
+                &directory.path().join(format!("device-{id}.json")),
+                &states,
+                &format!("device-{id}")
+            )
+            .is_ok());
+        }
+        assert_eq!(states.len(), 32);
+    }
     #[test]
     fn rejects_paths_and_oversized_drafts() {
         for id in ["", "../outside", "a/b", "a\\b"] {

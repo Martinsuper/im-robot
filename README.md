@@ -47,6 +47,10 @@ npm run tauri dev
 
 如果没有 Apple Developer 证书和公证信息，GitHub Actions 生成的 macOS 安装包只能作为测试版分发，用户在首次打开时可能仍需要手动放行。
 
+## Passport 硬件接入
+
+支持将 FoloToy AI Passport 作为 Piko 的局域网终端：宠物动画、按键互动、专注计时同步和按住说话的语音任务。可查询知识、管理提醒/日程/备忘和专注；文件与命令操作沿用桌面授权流程。桌面端在设置 → 系统与数据 → Piko Passport 中开启，设备需要构建并刷入专用固件。见[接入设计与使用说明](doc/design/07-passport-device-bridge.md)和[固件构建说明](firmware/passport/README.md)。
+
 ## 文档
 
 - [人宠交互详细实现方案](doc/prd/00-pet-human-interaction-detailed-design.md)
@@ -84,7 +88,7 @@ API Key 使用系统凭据存储（macOS Keychain、Windows Credential Manager�
 
 发布先通过质量检查，再创建草稿、构建各平台安装包并上传 SHA-256 校验文件，全部成功后公开。应用按系统与 CPU 架构选择安装包，仅接受项目正式 Release 的 HTTPS 地址，校验摘要后才能打开文件。缺少匹配安装包或校验值时请从发布页手动下载。下载上限为 1 GiB，支持进度与取消。
 
-macOS 最低版本为 11，与随应用分发的 Node 22 原生运行时要求一致。
+macOS 最低版本为 14，截图使用 ScreenCaptureKit 的单帧截图接口，不再依赖已弃用的 Core Graphics 截图 API。
 
 
 ## 架构与数据维护

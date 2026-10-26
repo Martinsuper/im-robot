@@ -1,6 +1,7 @@
 //! Plugin registry and shared tool contracts. Business writes remain behind the existing approval flow.
 pub(crate) mod bridge;
 mod builtins;
+mod focus;
 #[cfg(feature = "wasm-plugins")]
 mod wasm_runtime;
 #[cfg(not(feature = "wasm-plugins"))]
@@ -77,12 +78,14 @@ pub(crate) struct PluginRegistry {
 
 impl PluginRegistry {
     pub(crate) fn with_builtin_plugins() -> Self {
+        let focus_plugin: Arc<dyn PikoPlugin> = Arc::new(focus::FocusPlugin);
         let reminder_plugin: Arc<dyn PikoPlugin> = Arc::new(ReminderPlugin);
         let memo_plugin: Arc<dyn PikoPlugin> = Arc::new(MemoPlugin);
         let calendar_plugin: Arc<dyn PikoPlugin> = Arc::new(CalendarPlugin);
         let knowledge_plugin: Arc<dyn PikoPlugin> = Arc::new(KnowledgePlugin);
         let mut plugins = HashMap::new();
         plugins.insert(reminder_plugin.manifest().id, reminder_plugin);
+        plugins.insert(focus_plugin.manifest().id, focus_plugin);
         plugins.insert(memo_plugin.manifest().id, memo_plugin);
         plugins.insert(calendar_plugin.manifest().id, calendar_plugin);
         plugins.insert(knowledge_plugin.manifest().id, knowledge_plugin);

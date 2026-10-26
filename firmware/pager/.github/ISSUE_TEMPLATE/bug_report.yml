@@ -1,0 +1,39 @@
+name: 问题报告 / Bug report
+description: 翻页器不工作、连不上、显示异常等
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 固件版本 / Firmware version
+      description: 开机日志里 "App version" 那一行，或 Release 版本号
+      placeholder: v0.2.0
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: 连接的设备 / Host device
+      placeholder: macOS 15 Keynote、文石 NoteX6、Windows 11 PowerPoint …
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 切到方向键模式
+        2. 按下键
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望和实际表现 / Expected vs actual
+  - type: textarea
+    id: log
+    attributes:
+      label: 串口日志 / Serial log
+      description: idf.py monitor 的输出，贴相关部分即可
+      render: text

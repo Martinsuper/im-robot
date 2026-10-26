@@ -17,8 +17,8 @@ export type T_attachments_AttachmentPreview_Output = { "displayName": string; "b
 export type T_background_WorkerStatus_Output = { "name": string; "state": string; "lastError": string | null };
 export type T_calendar_service_CalendarEventInput_Input = { "title": string; "startAt": number; "endAt": number; "location"?: string | null; "notes"?: string | null };
 export type T_calendar_service_CalendarEvent_Output = { "id": string; "title": string; "startAt": number; "endAt": number; "location": string | null; "notes": string | null };
-export type T_chat_session_ChatHistoryEntry_Output = { "id": string; "prompt": string; "response": string; "createdAt": number };
-export type T_chat_session_ChatMessage_Output = { "role": T_chat_session_ChatRole_Output; "content": string; "createdAt": number; "sourceEntryId"?: string | null };
+export type T_chat_session_ChatHistoryEntry_Output = { "conversationId"?: string | null; "id": string; "prompt": string; "response": string; "createdAt": number };
+export type T_chat_session_ChatMessage_Output = { "conversationId"?: string | null; "role": T_chat_session_ChatRole_Output; "content": string; "createdAt": number; "sourceEntryId"?: string | null };
 export type T_chat_session_ChatRole_Output = "user" | "assistant";
 export type T_chat_session_ChatSession_Output = { "id": string; "title": string; "messages": Array<T_chat_session_ChatMessage_Output>; "createdAt": number; "updatedAt": number };
 export type T_companion_PetCompanionGenerationInput_Input = { "mode": string; "scene": string; "bondTier": string; "interactionType"?: string | null; "personality": T_companion_PetPersonalityInput_Input; "personalitySummary"?: string | null; "context"?: string | null };
@@ -32,6 +32,7 @@ export type T_data_gate_LockMetrics_Output = { "acquisitions": number; "waitMicr
 export type T_data_snapshot_DataHealth_Output = { "memoryPersistent": boolean; "sqlite": T_data_gate_LockMetrics_Output; "jsonLockAcquisitions": number; "jsonLockWaitMicros": number; "speechRecognition": boolean; "wasmPlugins": boolean };
 export type T_data_snapshot_RestoreResult_Output = { "rollback": T_data_snapshot_SnapshotInfo_Output; "restoredFiles": number; "restartRequired": boolean };
 export type T_data_snapshot_SnapshotInfo_Output = { "id": string; "directory": string; "createdAt": number; "fileCount": number; "bytes": number; "excluded": Array<string> };
+export type T_devices_DeviceStatus_Output = { "running": boolean; "port": number; "pairingCode": string | null; "pairingSeconds": number; "deviceId": string | null; "deviceName": string | null; "connected": boolean; "battery": number | null; "firmware": string | null; "error": string | null; "pendingDevice": string | null; "pendingRequest": string | null };
 export type T_favorites_HtmlFavoriteInput_Input = { "html": string; "sourceChatId"?: string | null };
 export type T_favorites_HtmlFavorite_Output = { "id": string; "title": string; "html": string; "sourceChatId"?: string | null; "createdAt": number; "updatedAt": number };
 export type T_memory_extraction_ExtractionStatus_Output = { "enabled": boolean; "intervalMinutes": number; "lastRunAt": number; "processedCount": number; "pendingCount": number };
@@ -150,6 +151,8 @@ export type T_speech_DownloadSpeechModelInput_Input = { "modelId": string };
 export type T_speech_SpeechModelStatus_Output = { "id": string; "name": string; "fileName": string; "downloadUrl": string; "downloaded": boolean; "byteSize": number; "path": string | null };
 export type T_speech_VoiceTranscriptionInput_Input = { "audioDataUrl": string };
 export type T_speech_VoiceTranscriptionOutput_Output = { "text": string };
+export type T_tts_SpeechOutputInput_Input = { "provider": string; "voice": string; "style": string; "apiKey"?: string | null };
+export type T_tts_SpeechOutputStatus_Output = { "provider": string; "voice": string; "style": string; "hasApiKey": boolean };
 export type T_typing_activity_TypingStatsToday_Output = { "date": string; "typedCharacters": number; "typingSeconds": number; "updatedAt": number };
 export interface CommandMap {
   "abstract_semantic_from_events": { args: { "memoryType"?: T_memory_model_MemoryType_Input | null; "minCount"?: number | null }; result: T_memory_model_MemoryItem_Output | null };
@@ -167,6 +170,7 @@ export interface CommandMap {
   "agent_steer": { args: { "requestId": string; "text": string }; result: null };
   "apply_memory_candidates": { args: { "input": T_memory_model_ApplyCandidateInput_Input }; result: T_memory_model_MemoryItem_Output | null };
   "background_status": { args: {  }; result: Array<T_background_WorkerStatus_Output> };
+  "begin_device_pairing": { args: { "requestId"?: string | null }; result: T_devices_DeviceStatus_Output };
   "begin_screen_capture": { args: {  }; result: null };
   "build_memory_context": { args: { "input": T_memory_model_BuildContextInput_Input }; result: Array<T_memory_model_MemoryItem_Output> };
   "cancel_screen_capture": { args: {  }; result: null };
@@ -216,10 +220,12 @@ export interface CommandMap {
   "export_to_file": { args: { "filePath": string }; result: null };
   "extract_memories_now": { args: {  }; result: number };
   "feedback_memory": { args: { "input": T_memory_model_FeedbackInput_Input }; result: null };
+  "forget_device": { args: {  }; result: T_devices_DeviceStatus_Output };
   "generate_pet_companion_response": { args: { "input": T_companion_PetCompanionGenerationInput_Input }; result: T_companion_PetCompanionGenerationOutput_Output };
   "get_bubble_chat_history": { args: {  }; result: Array<T_chat_session_ChatHistoryEntry_Output> };
   "get_calendar_sync_status": { args: {  }; result: JsonValue };
   "get_data_health": { args: {  }; result: T_data_snapshot_DataHealth_Output };
+  "get_device_status": { args: {  }; result: T_devices_DeviceStatus_Output };
   "get_focus_state": { args: {  }; result: T_rhythm_FocusSnapshot_Output };
   "get_foreground_app_state": { args: {  }; result: JsonValue };
   "get_global_shortcut": { args: {  }; result: string };
@@ -237,6 +243,7 @@ export interface CommandMap {
   "get_screen_capture_preview": { args: {  }; result: T_screen_capture_ScreenshotPreview_Output | null };
   "get_settings": { args: {  }; result: T_app_settings_AppSettings_Output };
   "get_speech_model_status": { args: {  }; result: Array<T_speech_SpeechModelStatus_Output> };
+  "get_speech_output_settings": { args: {  }; result: T_tts_SpeechOutputStatus_Output };
   "get_typing_stats_today": { args: {  }; result: T_typing_activity_TypingStatsToday_Output };
   "get_work_rhythm_state": { args: {  }; result: T_rhythm_WorkRhythmState_Output };
   "hide_bubble": { args: {  }; result: null };
@@ -287,6 +294,7 @@ export interface CommandMap {
   "prepare_text_attachment": { args: { "path": string; "contextId"?: string | null }; result: T_attachments_AttachmentPreview_Output };
   "preview_data_snapshot": { args: { "directory": string }; result: T_data_snapshot_SnapshotInfo_Output };
   "preview_import": { args: { "filePath": string }; result: JsonValue };
+  "publish_device_pet": { args: { "mode": string; "emotion": string; "reaction": string }; result: null };
   "recalculate_confidence": { args: {  }; result: number };
   "reflect_memory_now": { args: { "reflectionType"?: string | null }; result: T_memory_model_ReflectionSummary_Output };
   "reject_chat_action": { args: { "id": string }; result: null };
@@ -338,9 +346,11 @@ export interface CommandMap {
   "soul_update_open_loop": { args: { "input": T_memory_soul_model_UpdateOpenLoopInput_Input }; result: T_memory_soul_model_OpenLoop_Output };
   "soul_update_profile": { args: { "input": T_memory_soul_model_UpdateRoleInput_Input }; result: T_memory_soul_model_RoleSnapshot_Output };
   "soul_update_settings": { args: { "input": T_memory_soul_model_UpdateSoulSettingsInput_Input }; result: T_memory_soul_model_SoulSettings_Output };
-  "speak_local_text": { args: { "text": string }; result: null };
+  "speak_local_text": { args: { "text": string }; result: boolean };
   "start_break": { args: { "minutes": number }; result: T_rhythm_FocusSnapshot_Output };
+  "start_device_bridge": { args: {  }; result: T_devices_DeviceStatus_Output };
   "start_focus": { args: { "minutes": number }; result: T_rhythm_FocusSnapshot_Output };
+  "stop_device_bridge": { args: {  }; result: T_devices_DeviceStatus_Output };
   "stop_focus": { args: {  }; result: T_rhythm_FocusSnapshot_Output };
   "stop_local_speech": { args: {  }; result: null };
   "summarize_memos": { args: {  }; result: Array<T_memos_MemoSummaryGroup_Output> };
@@ -361,12 +371,13 @@ export interface CommandMap {
   "update_memory": { args: { "id": string; "input": T_memory_model_UpdateMemoryInput_Input }; result: T_memory_model_MemoryItem_Output };
   "update_preferences": { args: { "input": T_settings_commands_PreferencesInput_Input }; result: T_app_settings_AppSettings_Output };
   "update_quiet_mode": { args: { "quietMode": string }; result: T_app_settings_AppSettings_Output };
+  "update_speech_output_settings": { args: { "input": T_tts_SpeechOutputInput_Input }; result: T_tts_SpeechOutputStatus_Output };
   "update_work_rhythm_preferences": { args: { "input": T_rhythm_WorkRhythmPreferencesInput_Input }; result: T_app_settings_AppSettings_Output };
 }
 export type CommandName = keyof CommandMap;
 export class IpcFailure extends Error { constructor(public command: string, public code: string, message: string) { super(message); this.name = 'IpcFailure'; } }
 export function invokeCommand<K extends CommandName>(command: K, args: CommandMap[K]['args']): Promise<CommandMap[K]['result']> { return invoke<CommandMap[K]['result']>(command, args).catch((error: unknown) => { if (error && typeof error === 'object' && 'code' in error && 'message' in error) throw new IpcFailure(command, String(error.code), String(error.message)); throw new IpcFailure(command, 'backend_error', error instanceof Error ? error.message : String(error)); }); }
-export const commandNames = ["abstract_semantic_from_events","add_memory_relation","agent_approve","agent_cancel","agent_confirm_action","agent_get_diagnostics","agent_get_task_snapshot","agent_get_task_snapshots","agent_list_tasks","agent_reject_action","agent_select_workspace","agent_start","agent_steer","apply_memory_candidates","background_status","begin_screen_capture","build_memory_context","cancel_screen_capture","cancel_update_download","capture_memory_candidates","chat_cancel","chat_start","check_for_updates","check_for_updates_extended","clear_chat_context","clear_chat_history","clear_memories","clear_my_data","clear_screen_capture","clear_text_attachment","complete_onboarding","complete_schedule_item","configure_memory_extraction","confirm_chat_action","confirm_screen_capture","conversation_chat_history","conversation_close_window","conversation_forget_view","conversation_get_view","conversation_list_windows","conversation_open_window","conversation_save_view","create_calendar_event","create_data_snapshot","create_html_favorite","create_html_preview_frame","create_memo","create_memory","create_reminder","delete_calendar_event","delete_chat_session","delete_html_favorite","delete_memo","delete_memory","delete_reminder","download_speech_model","download_update_asset","expire_old_memories","export_calendar_events","export_data","export_memories","export_to_file","extract_memories_now","feedback_memory","generate_pet_companion_response","get_bubble_chat_history","get_calendar_sync_status","get_data_health","get_focus_state","get_foreground_app_state","get_global_shortcut","get_memory_detail","get_memory_extraction_status","get_memory_relations","get_memory_summaries","get_merge_candidates","get_notification_status","get_onboarding_status","get_pending_candidates","get_pet_position","get_pet_state","get_recent_memories","get_screen_capture_preview","get_settings","get_speech_model_status","get_typing_stats_today","get_work_rhythm_state","hide_bubble","hide_pet","import_data","import_memories","knowledge_configure_maintenance","knowledge_delete_document","knowledge_get_maintenance_status","knowledge_get_settings","knowledge_import","knowledge_list_documents","knowledge_maintain","knowledge_reindex","knowledge_save_settings","knowledge_search","list_business_plugins","list_calendar_events","list_chat_history","list_chat_sessions","list_external_plugins","list_html_favorites","list_memories","list_memos","list_models","list_provider_tools","list_reminders","list_schedule_items","memory_get_provenance","memory_preview_import","memory_revisions","memory_vault_configure","memory_vault_open_directory","memory_vault_preview","memory_vault_resolve","memory_vault_status","memory_vault_sync","merge_memories_cmd","migrate_pet_state","move_pet","move_pet_relative","open_calendar_import","open_html_preview_window","open_notification_settings","open_panel","pause_focus","pin_memory","prepare_text_attachment","preview_data_snapshot","preview_import","recalculate_confidence","reflect_memory_now","reject_chat_action","reject_memory_candidate","remove_html_preview_frame","remove_memory_relation","request_notification_permission","reset_onboarding","restore_data_snapshot","resume_focus","save_generated_text","save_pet_state","screen_capture_permission_status","search_memories","search_related_memories","send_test_notification","show_bubble","show_pet","show_pet_context_menu","skip_onboarding","soul_ack_message","soul_clear","soul_clear_category","soul_current_message","soul_desktop_status","soul_diagnostics","soul_get_continuity","soul_get_desktop_settings","soul_get_mood","soul_get_profile","soul_get_settings","soul_list_open_loop_candidates","soul_list_open_loops","soul_list_topic_responses","soul_preview_visibility","soul_reply_context","soul_report_activity","soul_request_notification_permission","soul_reset_profile","soul_resolve_task","soul_review_candidate","soul_review_evolution","soul_review_topic_response","soul_rollback_evolution","soul_test_desktop_model","soul_test_desktop_speech","soul_update_continuity","soul_update_desktop_settings","soul_update_open_loop","soul_update_profile","soul_update_settings","speak_local_text","start_break","start_focus","stop_focus","stop_local_speech","summarize_memos","supersede_memory","sync_calendar_from_system","sync_calendar_to_system","toggle_bubble","toggle_foreground_sensing","toggle_panel","transcribe_voice_input","unpin_memory","update_agent_auto_approve_commands","update_ai_settings","update_global_shortcut","update_html_preview_enabled","update_language","update_memo","update_memory","update_preferences","update_quiet_mode","update_work_rhythm_preferences",] as const;
+export const commandNames = ["abstract_semantic_from_events","add_memory_relation","agent_approve","agent_cancel","agent_confirm_action","agent_get_diagnostics","agent_get_task_snapshot","agent_get_task_snapshots","agent_list_tasks","agent_reject_action","agent_select_workspace","agent_start","agent_steer","apply_memory_candidates","background_status","begin_device_pairing","begin_screen_capture","build_memory_context","cancel_screen_capture","cancel_update_download","capture_memory_candidates","chat_cancel","chat_start","check_for_updates","check_for_updates_extended","clear_chat_context","clear_chat_history","clear_memories","clear_my_data","clear_screen_capture","clear_text_attachment","complete_onboarding","complete_schedule_item","configure_memory_extraction","confirm_chat_action","confirm_screen_capture","conversation_chat_history","conversation_close_window","conversation_forget_view","conversation_get_view","conversation_list_windows","conversation_open_window","conversation_save_view","create_calendar_event","create_data_snapshot","create_html_favorite","create_html_preview_frame","create_memo","create_memory","create_reminder","delete_calendar_event","delete_chat_session","delete_html_favorite","delete_memo","delete_memory","delete_reminder","download_speech_model","download_update_asset","expire_old_memories","export_calendar_events","export_data","export_memories","export_to_file","extract_memories_now","feedback_memory","forget_device","generate_pet_companion_response","get_bubble_chat_history","get_calendar_sync_status","get_data_health","get_device_status","get_focus_state","get_foreground_app_state","get_global_shortcut","get_memory_detail","get_memory_extraction_status","get_memory_relations","get_memory_summaries","get_merge_candidates","get_notification_status","get_onboarding_status","get_pending_candidates","get_pet_position","get_pet_state","get_recent_memories","get_screen_capture_preview","get_settings","get_speech_model_status","get_speech_output_settings","get_typing_stats_today","get_work_rhythm_state","hide_bubble","hide_pet","import_data","import_memories","knowledge_configure_maintenance","knowledge_delete_document","knowledge_get_maintenance_status","knowledge_get_settings","knowledge_import","knowledge_list_documents","knowledge_maintain","knowledge_reindex","knowledge_save_settings","knowledge_search","list_business_plugins","list_calendar_events","list_chat_history","list_chat_sessions","list_external_plugins","list_html_favorites","list_memories","list_memos","list_models","list_provider_tools","list_reminders","list_schedule_items","memory_get_provenance","memory_preview_import","memory_revisions","memory_vault_configure","memory_vault_open_directory","memory_vault_preview","memory_vault_resolve","memory_vault_status","memory_vault_sync","merge_memories_cmd","migrate_pet_state","move_pet","move_pet_relative","open_calendar_import","open_html_preview_window","open_notification_settings","open_panel","pause_focus","pin_memory","prepare_text_attachment","preview_data_snapshot","preview_import","publish_device_pet","recalculate_confidence","reflect_memory_now","reject_chat_action","reject_memory_candidate","remove_html_preview_frame","remove_memory_relation","request_notification_permission","reset_onboarding","restore_data_snapshot","resume_focus","save_generated_text","save_pet_state","screen_capture_permission_status","search_memories","search_related_memories","send_test_notification","show_bubble","show_pet","show_pet_context_menu","skip_onboarding","soul_ack_message","soul_clear","soul_clear_category","soul_current_message","soul_desktop_status","soul_diagnostics","soul_get_continuity","soul_get_desktop_settings","soul_get_mood","soul_get_profile","soul_get_settings","soul_list_open_loop_candidates","soul_list_open_loops","soul_list_topic_responses","soul_preview_visibility","soul_reply_context","soul_report_activity","soul_request_notification_permission","soul_reset_profile","soul_resolve_task","soul_review_candidate","soul_review_evolution","soul_review_topic_response","soul_rollback_evolution","soul_test_desktop_model","soul_test_desktop_speech","soul_update_continuity","soul_update_desktop_settings","soul_update_open_loop","soul_update_profile","soul_update_settings","speak_local_text","start_break","start_device_bridge","start_focus","stop_device_bridge","stop_focus","stop_local_speech","summarize_memos","supersede_memory","sync_calendar_from_system","sync_calendar_to_system","toggle_bubble","toggle_foreground_sensing","toggle_panel","transcribe_voice_input","unpin_memory","update_agent_auto_approve_commands","update_ai_settings","update_global_shortcut","update_html_preview_enabled","update_language","update_memo","update_memory","update_preferences","update_quiet_mode","update_speech_output_settings","update_work_rhythm_preferences",] as const;
 /** Compatibility adapter: explicit T describes an existing UI view model. New code uses invokeCommand. */
 export interface CommandInvoker {
   <T = T_memory_model_MemoryItem_Output | null>(command: "abstract_semantic_from_events", args?: { "memoryType"?: T_memory_model_MemoryType_Input | null; "minCount"?: number | null }, fallback?: T): Promise<T>;
@@ -384,6 +395,7 @@ export interface CommandInvoker {
   <T = null>(command: "agent_steer", args: { "requestId": string; "text": string }, fallback?: T): Promise<T>;
   <T = T_memory_model_MemoryItem_Output | null>(command: "apply_memory_candidates", args: { "input": T_memory_model_ApplyCandidateInput_Input }, fallback?: T): Promise<T>;
   <T = Array<T_background_WorkerStatus_Output>>(command: "background_status", args?: {  }, fallback?: T): Promise<T>;
+  <T = T_devices_DeviceStatus_Output>(command: "begin_device_pairing", args?: { "requestId"?: string | null }, fallback?: T): Promise<T>;
   <T = null>(command: "begin_screen_capture", args?: {  }, fallback?: T): Promise<T>;
   <T = Array<T_memory_model_MemoryItem_Output>>(command: "build_memory_context", args: { "input": T_memory_model_BuildContextInput_Input }, fallback?: T): Promise<T>;
   <T = null>(command: "cancel_screen_capture", args?: {  }, fallback?: T): Promise<T>;
@@ -433,10 +445,12 @@ export interface CommandInvoker {
   <T = null>(command: "export_to_file", args: { "filePath": string }, fallback?: T): Promise<T>;
   <T = number>(command: "extract_memories_now", args?: {  }, fallback?: T): Promise<T>;
   <T = null>(command: "feedback_memory", args: { "input": T_memory_model_FeedbackInput_Input }, fallback?: T): Promise<T>;
+  <T = T_devices_DeviceStatus_Output>(command: "forget_device", args?: {  }, fallback?: T): Promise<T>;
   <T = T_companion_PetCompanionGenerationOutput_Output>(command: "generate_pet_companion_response", args: { "input": T_companion_PetCompanionGenerationInput_Input }, fallback?: T): Promise<T>;
   <T = Array<T_chat_session_ChatHistoryEntry_Output>>(command: "get_bubble_chat_history", args?: {  }, fallback?: T): Promise<T>;
   <T = JsonValue>(command: "get_calendar_sync_status", args?: {  }, fallback?: T): Promise<T>;
   <T = T_data_snapshot_DataHealth_Output>(command: "get_data_health", args?: {  }, fallback?: T): Promise<T>;
+  <T = T_devices_DeviceStatus_Output>(command: "get_device_status", args?: {  }, fallback?: T): Promise<T>;
   <T = T_rhythm_FocusSnapshot_Output>(command: "get_focus_state", args?: {  }, fallback?: T): Promise<T>;
   <T = JsonValue>(command: "get_foreground_app_state", args?: {  }, fallback?: T): Promise<T>;
   <T = string>(command: "get_global_shortcut", args?: {  }, fallback?: T): Promise<T>;
@@ -454,6 +468,7 @@ export interface CommandInvoker {
   <T = T_screen_capture_ScreenshotPreview_Output | null>(command: "get_screen_capture_preview", args?: {  }, fallback?: T): Promise<T>;
   <T = T_app_settings_AppSettings_Output>(command: "get_settings", args?: {  }, fallback?: T): Promise<T>;
   <T = Array<T_speech_SpeechModelStatus_Output>>(command: "get_speech_model_status", args?: {  }, fallback?: T): Promise<T>;
+  <T = T_tts_SpeechOutputStatus_Output>(command: "get_speech_output_settings", args?: {  }, fallback?: T): Promise<T>;
   <T = T_typing_activity_TypingStatsToday_Output>(command: "get_typing_stats_today", args?: {  }, fallback?: T): Promise<T>;
   <T = T_rhythm_WorkRhythmState_Output>(command: "get_work_rhythm_state", args?: {  }, fallback?: T): Promise<T>;
   <T = null>(command: "hide_bubble", args?: {  }, fallback?: T): Promise<T>;
@@ -504,6 +519,7 @@ export interface CommandInvoker {
   <T = T_attachments_AttachmentPreview_Output>(command: "prepare_text_attachment", args: { "path": string; "contextId"?: string | null }, fallback?: T): Promise<T>;
   <T = T_data_snapshot_SnapshotInfo_Output>(command: "preview_data_snapshot", args: { "directory": string }, fallback?: T): Promise<T>;
   <T = JsonValue>(command: "preview_import", args: { "filePath": string }, fallback?: T): Promise<T>;
+  <T = null>(command: "publish_device_pet", args: { "mode": string; "emotion": string; "reaction": string }, fallback?: T): Promise<T>;
   <T = number>(command: "recalculate_confidence", args?: {  }, fallback?: T): Promise<T>;
   <T = T_memory_model_ReflectionSummary_Output>(command: "reflect_memory_now", args?: { "reflectionType"?: string | null }, fallback?: T): Promise<T>;
   <T = null>(command: "reject_chat_action", args: { "id": string }, fallback?: T): Promise<T>;
@@ -555,9 +571,11 @@ export interface CommandInvoker {
   <T = T_memory_soul_model_OpenLoop_Output>(command: "soul_update_open_loop", args: { "input": T_memory_soul_model_UpdateOpenLoopInput_Input }, fallback?: T): Promise<T>;
   <T = T_memory_soul_model_RoleSnapshot_Output>(command: "soul_update_profile", args: { "input": T_memory_soul_model_UpdateRoleInput_Input }, fallback?: T): Promise<T>;
   <T = T_memory_soul_model_SoulSettings_Output>(command: "soul_update_settings", args: { "input": T_memory_soul_model_UpdateSoulSettingsInput_Input }, fallback?: T): Promise<T>;
-  <T = null>(command: "speak_local_text", args: { "text": string }, fallback?: T): Promise<T>;
+  <T = boolean>(command: "speak_local_text", args: { "text": string }, fallback?: T): Promise<T>;
   <T = T_rhythm_FocusSnapshot_Output>(command: "start_break", args: { "minutes": number }, fallback?: T): Promise<T>;
+  <T = T_devices_DeviceStatus_Output>(command: "start_device_bridge", args?: {  }, fallback?: T): Promise<T>;
   <T = T_rhythm_FocusSnapshot_Output>(command: "start_focus", args: { "minutes": number }, fallback?: T): Promise<T>;
+  <T = T_devices_DeviceStatus_Output>(command: "stop_device_bridge", args?: {  }, fallback?: T): Promise<T>;
   <T = T_rhythm_FocusSnapshot_Output>(command: "stop_focus", args?: {  }, fallback?: T): Promise<T>;
   <T = null>(command: "stop_local_speech", args?: {  }, fallback?: T): Promise<T>;
   <T = Array<T_memos_MemoSummaryGroup_Output>>(command: "summarize_memos", args?: {  }, fallback?: T): Promise<T>;
@@ -578,6 +596,7 @@ export interface CommandInvoker {
   <T = T_memory_model_MemoryItem_Output>(command: "update_memory", args: { "id": string; "input": T_memory_model_UpdateMemoryInput_Input }, fallback?: T): Promise<T>;
   <T = T_app_settings_AppSettings_Output>(command: "update_preferences", args: { "input": T_settings_commands_PreferencesInput_Input }, fallback?: T): Promise<T>;
   <T = T_app_settings_AppSettings_Output>(command: "update_quiet_mode", args: { "quietMode": string }, fallback?: T): Promise<T>;
+  <T = T_tts_SpeechOutputStatus_Output>(command: "update_speech_output_settings", args: { "input": T_tts_SpeechOutputInput_Input }, fallback?: T): Promise<T>;
   <T = T_app_settings_AppSettings_Output>(command: "update_work_rhythm_preferences", args: { "input": T_rhythm_WorkRhythmPreferencesInput_Input }, fallback?: T): Promise<T>;
   <K extends CommandName>(command: K, ...args: {} extends CommandMap[K]['args'] ? [args?: CommandMap[K]['args'], fallback?: CommandMap[K]['result']] : [args: CommandMap[K]['args'], fallback?: CommandMap[K]['result']]): Promise<CommandMap[K]['result']>;
 }

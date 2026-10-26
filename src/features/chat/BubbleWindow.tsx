@@ -4,7 +4,7 @@ import { WorkspaceDivider } from "./WorkspaceDivider";
 import { ChatContextMenu } from "./ChatContextMenu";
 import { useConversationSurface } from "./useConversationSurface";
 import { WorkspaceMenu } from "./WorkspaceMenu";
-import { useAppSettings } from "../panel/settingsStore";
+import { parseAppSettings, useAppSettings } from "../app/settingsStore";
 import { ChatModelMenu } from "./ChatModelMenu";
 import { useWorkspaceSelection } from "./useWorkspaceSelection";
 import { useStableEvent } from "../../hooks/useStableEvent";
@@ -34,7 +34,7 @@ import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notif
 import { ActionConfirmationCard, getConfirmationChoices } from "./ActionConfirmationCard";
 import { getBubbleCompanionMessage } from "./bubbleMessage";
 import type { ActionDraft, ChatEvent } from "./chatTypes";
-import type { AttachmentAction, AttachmentPreview, AppSettings, ChatHistoryEntry, PanelTab, ScreenshotPreview } from "../../types/appTypes";
+import type { AttachmentAction, AttachmentPreview, ChatHistoryEntry, PanelTab, ScreenshotPreview } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
 import {
   ACTIVITY_HEARTBEAT_SECONDS,
@@ -302,6 +302,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
   const [soulMessage, setSoulMessage] = useState<SoulProactiveMessage | null>(null);
   const [soulReplyId, setSoulReplyId] = useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const speechRevision = useRef(0);
   const [isListening, setIsListening] = useState(false);
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
   const [contextNotice, setContextNotice] = useState("");
@@ -315,6 +316,8 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
   const aiConfigured = sharedSettings.hasApiKey || /localhost|127\.0\.0\.1/.test(sharedSettings.ai.baseUrl);
   // New state for redesign
   const [chatHistory, setChatHistory] = useState<ChatHistoryEntry[]>([]);
+  const [historyError, setHistoryError] = useState("");
+  const historyGeneration = useRef(0);
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
   const [historySourceIds, setHistorySourceIds] = useState<Set<string>>(new Set());
   const [currentPrompt, setCurrentPrompt] = useState("");
@@ -389,7 +392,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
     });
   }, [tabId, onTabState, viewLoaded, taskStateLoaded, currentPrompt, chatHistory, agentBusy, isThinking, agentApprovals.length, pendingAction, workspaceRequired, replyStatus]);
   const hasCurrentTurn = Boolean(currentPrompt || message || pendingAction || showReplySkeleton || agentTools.length || workspaceRequired);
-  const showWelcome = !hasCurrentTurn && chatHistory.length === 0;
+  const showWelcome = !hasCurrentTurn && chatHistory.length === 0 && !historyError;
 
   // 02 §3.3：Esc 收起窗口；Cmd/Ctrl + Enter 发送
   function handleWindowKeyDown(event: React.KeyboardEvent<HTMLElement>) {
@@ -446,11 +449,16 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
 
   const refreshChatHistory = useStableEvent(() => {
     if (!isTauriRuntime) return;
+    const generation = ++historyGeneration.current;
     const history = tabId
       ? runCommand("conversation_chat_history", { conversationId: tabId }, [])
       : runCommand("get_bubble_chat_history", undefined, []);
     void history.then((entries) => {
+      if (!mountedRef.current || generation !== historyGeneration.current) return;
+      setHistoryError("");
       if (entries) { const current = conversationRef.current; setChatHistory((tabId || current.importHistory ? entries : entries.filter((entry) => current.turnIds.includes(entry.id))).filter((entry) => entry.id !== displayedRequestId.current)); }
+    }).catch(error => {
+      if (mountedRef.current && generation === historyGeneration.current) setHistoryError(toUserMessage(error, "对话历史加载失败，请重试。"));
     });
   });
 
@@ -483,7 +491,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
   }, []);
 
   useEffect(() => {
-    void void runCommand("get_data_health").then(health => setVoiceAvailable(health?.speechRecognition !== false)).catch(error => console.error("[capabilities]", error));
+    void runCommand("get_data_health").then(health => setVoiceAvailable(health?.speechRecognition !== false)).catch(error => console.error("[capabilities]", error));
     refreshChatHistory();
   }, [refreshChatHistory]);
 
@@ -1004,7 +1012,6 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
         await requestPermission();
       }
       if (businessAction.current) {
-      if (!activeRequestId.current) return;
         if (!activeRequestId.current) return;
         await runCommand("agent_confirm_action", { requestId: activeRequestId.current, id: pendingAction.id, selectedIndexes: confirmationChoices.length ? selectedChoiceIndexes : undefined });
         return;
@@ -1036,7 +1043,6 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
     if (!pendingAction) return;
     try {
       if (businessAction.current) {
-      if (!activeRequestId.current) return;
         if (!activeRequestId.current) return;
         await runCommand("agent_reject_action", { requestId: activeRequestId.current, id: pendingAction.id });
         return;
@@ -1051,6 +1057,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
   }
 
   async function toggleSpeech() {
+    const revision = ++speechRevision.current;
     if (isSpeaking) {
       if (isTauriRuntime) {
         await runCommand("stop_local_speech");
@@ -1062,10 +1069,14 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
     }
     if (isTauriRuntime) {
       try {
-        await runCommand("speak_local_text", { text: message });
         setIsSpeaking(true);
+        const finished = await runCommand("speak_local_text", { text: message });
+        if (revision === speechRevision.current) setIsSpeaking(!finished);
       } catch (error) {
-        toast.error(toUserMessage(error, "朗读失败，请重试。"));
+        if (revision !== speechRevision.current) return;
+        setIsSpeaking(false);
+        const message = toUserMessage(error, "朗读失败，请重试。");
+        if (!message.includes("已取消朗读")) toast.error(message);
       }
       return;
     }
@@ -1255,7 +1266,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
       { enabled },
       { ...defaultAppSettings, htmlPreviewEnabled: enabled },
     );
-    applyServer(settings as AppSettings);
+    applyServer(parseAppSettings(settings));
   }
 
   async function saveResult() {
@@ -1369,6 +1380,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
         followThreadRef.current = !away;
         setAwayFromBottom(away);
       }}>
+        {historyError && <p role="alert">{historyError} <button type="button" onClick={refreshChatHistory}>重试加载历史</button></p>}
         <TaskHistory busy={agentBusy} onInspect={(record) => inspectTask(record.requestId)} onResume={resumeTask} />
         {verificationOf && <section className="task-history" aria-label="只读核对模式">
           <strong>正在只读核对结果</strong>

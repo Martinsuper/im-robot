@@ -185,3 +185,21 @@ fn task_cleanup_does_not_discard_another_tasks_pending_action() {
     assert!(store.get("task-a").unwrap().is_none());
     assert_eq!(store.take("task-b").unwrap().id, "task-b");
 }
+
+#[test]
+fn focus_drafts_show_exact_duration_and_reject_invalid_minutes() {
+    let now = Local.with_ymd_and_hms(2026, 10, 24, 12, 0, 0).unwrap();
+    let call = ToolCall {
+        plugin_id: "piko.focus".into(),
+        tool_name: "start_focus".into(),
+        arguments: serde_json::json!({"minutes":45}),
+    };
+    let draft = action_draft_from_tool_call(&call, now).unwrap();
+    assert!(draft.summary.contains("45"));
+    assert_eq!(draft.arguments["minutes"], 45);
+    let invalid = ToolCall {
+        arguments: serde_json::json!({"minutes":2}),
+        ..call
+    };
+    assert!(action_draft_from_tool_call(&invalid, now).is_err());
+}

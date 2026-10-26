@@ -6,7 +6,7 @@ import type { OnboardingStatus, PanelTab } from "../../types/appTypes";
 import { OnboardingWindow } from "../onboarding/OnboardingWindow";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { PanelHeader, PanelNavigation } from "./PanelChrome";
-import { useAppSettings } from "./settingsStore";
+import { useAppSettings } from "../app/settingsStore";
 import { RecordsTab } from "./tabs/RecordsTab";
 import { SettingsTab } from "./tabs/SettingsTab";
 import { TodayTab } from "./tabs/TodayTab";

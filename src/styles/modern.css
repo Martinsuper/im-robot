@@ -673,3 +673,9 @@
     transition: none;
   }
 }
+
+.panel-shell .speech-output-settings { display: grid; gap: 12px; min-width: 0; }
+.panel-shell .speech-output-settings .field-label { display: grid; gap: 6px; min-width: 0; }
+.panel-shell .speech-output-settings :is(input, select, textarea) { box-sizing: border-box; width: 100%; min-width: 0; }
+.panel-shell .speech-output-settings .settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.panel-shell .speech-output-settings p { margin: 0; }

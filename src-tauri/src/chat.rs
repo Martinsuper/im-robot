@@ -771,6 +771,7 @@ async fn stream_chat(
         assistant_response.push_str(&citation_note);
     }
     let history_entry = ChatHistoryEntry {
+        conversation_id: None,
         id: request_id.to_string(),
         prompt: history_prompt.to_string(),
         response: assistant_response,

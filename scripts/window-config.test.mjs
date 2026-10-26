@@ -4,6 +4,15 @@ import test from "node:test";
 
 const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 
+test("macOS deployment requires the ScreenCaptureKit screenshot API baseline", () => {
+  assert.equal(config.bundle.macOS.minimumSystemVersion, "14.0");
+  const build = readFileSync(new URL("./build.sh", import.meta.url), "utf8");
+  assert.match(build, /MACOSX_DEPLOYMENT_TARGET:-14\.0/);
+  const capture = readFileSync(new URL("../src-tauri/vendor/xcap/src/macos/capture.rs", import.meta.url), "utf8");
+  assert.match(capture, /SCScreenshotManager::captureImageWithFilter/);
+  assert.doesNotMatch(capture, /CGWindowListCreateImage/);
+});
+
 for (const label of ["panel", "bubble"]) {
   test(`${label} provides a standard resizable desktop window`, () => {
     const window = config.app.windows.find((entry) => entry.label === label);

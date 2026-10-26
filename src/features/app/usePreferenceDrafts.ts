@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { useStableEvent } from "../../hooks/useStableEvent";
 import type { AppSettings } from "../../types/appTypes";
-import { defaultAppSettings } from "../app/appShared";
-import { isTauriRuntime, runCommand } from "../app/appRuntime";
+import { defaultAppSettings } from "./appShared";
+import { isTauriRuntime, runCommand } from "./appRuntime";
 import { useAppSettings } from "./settingsStore";
 import {
   isWorkRhythmDraftValid,

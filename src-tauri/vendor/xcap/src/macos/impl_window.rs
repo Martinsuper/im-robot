@@ -10,7 +10,6 @@ use objc2_core_graphics::{
     CGRectIntersectsRect, CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo,
     CGWindowListOption,
 };
-use objc2_foundation::{NSNumber, NSString};
 
 use crate::{XCapError, error::XCapResult};
 
@@ -351,19 +350,10 @@ impl ImplWindow {
     }
 
     pub fn is_focused(&self) -> XCapResult<bool> {
-        let pid_key = NSString::from_str("NSApplicationProcessIdentifier");
-
         let workspace = NSWorkspace::sharedWorkspace();
-
-        // activeApplication is deprecated, but the alternative, frontmostApplication,
-        // returns the application in focus when the process started while activeApplication
-        // returns a `NSDictionary` of application currently in focus, in real-time
-        let active_app_dictionary = workspace.activeApplication();
-
-        let active_app_pid = active_app_dictionary
-            .and_then(|dict| dict.valueForKey(&pid_key))
-            .and_then(|pid| pid.downcast::<NSNumber>().ok())
-            .map(|pid| pid.intValue() as u32);
+        let active_app_pid = workspace
+            .frontmostApplication()
+            .map(|app| app.processIdentifier() as u32);
 
         if active_app_pid == self.pid().ok() {
             return Ok(true);
@@ -377,10 +367,6 @@ impl ImplWindow {
 
         let cg_rect = get_window_cg_rect(window_cf_dictionary.as_ref())?;
 
-        capture(
-            cg_rect,
-            CGWindowListOption::OptionIncludingWindow,
-            self.window_id,
-        )
+        capture(cg_rect, 0, Some(self.window_id))
     }
 }

@@ -55,15 +55,3 @@ export function reportCommandError(command: string): (error: unknown) => void {
     console.error(`[piko] ${command} failed:`, error);
   };
 }
-
-export async function runCommandAndRefresh<K extends CommandName>(
-  command: K,
-  args: CommandMap[K]["args"],
-  refreshers: Array<() => Promise<void> | void>,
-  fallback?: CommandMap[K]["result"],
-) {
-  const result = isTauriRuntime ? await invokeCommand(command, args) : fallback;
-  if (!isTauriRuntime)
-    await Promise.all(refreshers.map((refresh) => Promise.resolve(refresh())));
-  return result;
-}

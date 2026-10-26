@@ -71,7 +71,19 @@ pub(crate) struct SpeechModelDefinition {
 }
 
 #[derive(Default)]
-pub(crate) struct LocalTts(pub(crate) Mutex<Option<Child>>);
+pub(crate) struct LocalTts(
+    pub(crate) Mutex<Option<SpeechPlayback>>,
+    pub(crate) Mutex<Option<tokio_util::sync::CancellationToken>>,
+);
+pub(crate) struct SpeechPlayback {
+    child: Child,
+}
+impl Drop for SpeechPlayback {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
 
 pub(crate) fn speech_model_definitions() -> &'static [SpeechModelDefinition] {
     &[SpeechModelDefinition {
@@ -231,6 +243,26 @@ pub(crate) fn resample_to_16khz(sample_rate: u32, samples: &[f32]) -> Vec<f32> {
     output
 }
 
+/// Start loading ASR while the user is still speaking, off the socket/UI thread.
+pub(crate) fn prewarm_voice_recognition(app: AppHandle) {
+    #[cfg(feature = "speech-recognition")]
+    crate::background::SUPERVISOR.spawn("speech-prewarm", move |_| {
+        let definition = speech_model_definitions().first().ok_or("未配置语音模型")?;
+        if !speech_model_status(&app, definition).downloaded {
+            return Ok(());
+        }
+        transcribe_with_sense_voice(
+            speech_model_path(&app, definition)?,
+            sense_voice_tokens_path(&app, definition)?,
+            Vec::new(),
+            16000,
+        )
+        .map(|_| ())
+    });
+    #[cfg(not(feature = "speech-recognition"))]
+    let _ = app;
+}
+
 #[cfg(feature = "speech-recognition")]
 pub(crate) fn transcribe_with_sense_voice(
     model_path: PathBuf,
@@ -250,8 +282,42 @@ pub(crate) fn transcribe_with_sense_voice(
     config.model_config.provider = Some("cpu".to_string());
     config.model_config.num_threads = 2;
 
-    let recognizer = OfflineRecognizer::create(&config)
-        .ok_or_else(|| "加载 SenseVoice 模型失败：无法创建识别器".to_string())?;
+    // Keep one model resident across utterances/chunks. Serialize access so
+    // simultaneous desktop/device requests cannot decode on the same instance.
+    // Include file metadata so replacing a downloaded model invalidates it.
+    type CacheKey = (
+        PathBuf,
+        PathBuf,
+        Option<std::time::SystemTime>,
+        u64,
+        Option<std::time::SystemTime>,
+        u64,
+    );
+    static CACHE: std::sync::Mutex<Option<(CacheKey, OfflineRecognizer)>> =
+        std::sync::Mutex::new(None);
+    let model_meta = std::fs::metadata(&model_path).map_err(|e| e.to_string())?;
+    let tokens_meta = std::fs::metadata(&tokens_path).map_err(|e| e.to_string())?;
+    let key = (
+        model_path,
+        tokens_path,
+        model_meta.modified().ok(),
+        model_meta.len(),
+        tokens_meta.modified().ok(),
+        tokens_meta.len(),
+    );
+    let mut cached = CACHE
+        .lock()
+        .map_err(|_| "语音识别器状态异常，请重启 Piko".to_string())?;
+    if cached.as_ref().is_none_or(|(old, _)| old != &key) {
+        let recognizer = OfflineRecognizer::create(&config)
+            .ok_or_else(|| "加载 SenseVoice 模型失败：无法创建识别器".to_string())?;
+        *cached = Some((key, recognizer));
+    }
+    let recognizer = &cached.as_ref().unwrap().1;
+    // An empty buffer is used only to warm the model while recording starts.
+    if audio.is_empty() {
+        return Ok(String::new());
+    }
     let stream = recognizer.create_stream();
     stream.accept_waveform(sample_rate, &audio);
     recognizer.decode(&stream);
@@ -263,14 +329,14 @@ pub(crate) fn transcribe_with_sense_voice(
 }
 
 pub(crate) fn stop_local_tts(tts: &LocalTts) -> Result<(), String> {
+    if let Some(cancel) = tts.1.lock().map_err(|_| "无法停止语音请求")?.take() {
+        cancel.cancel();
+    }
     let mut active = tts
         .0
         .lock()
         .map_err(|_| "无法读取本地朗读状态".to_string())?;
-    if let Some(mut child) = active.take() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
+    drop(active.take());
     Ok(())
 }
 
@@ -327,18 +393,31 @@ pub(crate) fn spawn_local_tts(text: &str) -> Result<Child, String> {
 }
 
 #[tauri::command]
-pub(crate) fn speak_local_text(tts: State<'_, LocalTts>, text: String) -> Result<(), String> {
+pub(crate) async fn speak_local_text(
+    app: AppHandle,
+    tts: State<'_, LocalTts>,
+    text: String,
+) -> Result<bool, String> {
     let text = text_for_speech(&text);
     let text = text.trim();
     if text.is_empty() {
-        return Err("没有可朗读的内容".to_string());
+        return Err("没有可朗读的内容".into());
     }
     stop_local_tts(&tts)?;
-    let child = spawn_local_tts(text)?;
-    *tts.0
-        .lock()
-        .map_err(|_| "无法更新本地朗读状态".to_string())? = Some(child);
-    Ok(())
+    let cancel = tokio_util::sync::CancellationToken::new();
+    *tts.1.lock().map_err(|_| "无法更新语音请求")? = Some(cancel.clone());
+    if crate::tts::settings(&app)?.provider == "mimo" {
+        crate::tts_stream::speak(&app, text, cancel).await?;
+        return Ok(true); // Stream finished. Offline OS speech returns after starting.
+    }
+    let mut active = tts.0.lock().map_err(|_| "无法更新朗读状态")?;
+    if cancel.is_cancelled() {
+        return Err("已取消朗读".into());
+    }
+    *active = Some(SpeechPlayback {
+        child: spawn_local_tts(text)?,
+    });
+    Ok(false)
 }
 
 #[tauri::command]
@@ -493,4 +572,40 @@ pub(crate) async fn download_speech_model(
 ) -> Result<SpeechModelStatus, String> {
     let _ = (app, input.model_id);
     Err("此构建未启用语音识别".into())
+}
+
+#[cfg(all(test, feature = "speech-recognition"))]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a downloaded SenseVoice model; set PIKO_SENSEVOICE_DIR"]
+    fn sense_voice_model_reuse() {
+        let directory = PathBuf::from(std::env::var_os("PIKO_SENSEVOICE_DIR").unwrap());
+        let model = directory.join("model.int8.onnx");
+        let tokens = directory.join("tokens.txt");
+        let cold = std::time::Instant::now();
+        assert!(
+            transcribe_with_sense_voice(model.clone(), tokens.clone(), vec![], 16000)
+                .unwrap()
+                .is_empty()
+        );
+        let cold_ms = cold.elapsed().as_millis();
+        let warm = std::time::Instant::now();
+        assert!(
+            transcribe_with_sense_voice(model.clone(), tokens.clone(), vec![], 16000)
+                .unwrap()
+                .is_empty()
+        );
+        eprintln!(
+            "SenseVoice load_ms={cold_ms} cached_ms={}",
+            warm.elapsed().as_millis()
+        );
+        // Exercise separate streams on the same recognizer after prewarming.
+        let first =
+            transcribe_with_sense_voice(model.clone(), tokens.clone(), vec![0.0; 16000], 16000)
+                .unwrap();
+        let second = transcribe_with_sense_voice(model, tokens, vec![0.0; 16000], 16000).unwrap();
+        assert_eq!(first, second);
+    }
 }

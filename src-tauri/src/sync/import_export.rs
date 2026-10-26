@@ -101,14 +101,14 @@ pub struct ImportPreview {
 }
 
 /// Build export data from current state.
-pub fn build_export_data(app: &AppHandle) -> ExportData {
+pub fn build_export_data(app: &AppHandle) -> Result<ExportData, String> {
     let settings = read_settings_for_export(app);
-    let chats = crate::chat_session::repository::read_chat_history(app);
+    let chats = crate::chat_session::repository::try_read_chat_history(app)?;
     let reminders = crate::reminder_service::read_reminders(app);
     let calendar = crate::calendar_service::read_calendar_events(app);
     let focus = read_focus_records(app);
 
-    ExportData {
+    Ok(ExportData {
         schema_version: 1,
         exported_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -119,13 +119,13 @@ pub fn build_export_data(app: &AppHandle) -> ExportData {
         reminders,
         calendar,
         focus,
-    }
+    })
 }
 
 /// Export data to a JSON file.
 pub fn export_to_file(app: &AppHandle, path: &Path) -> Result<(), String> {
     let _transaction = storage::transaction();
-    let data = build_export_data(app);
+    let data = build_export_data(app)?;
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     storage::write(
         path,
@@ -359,6 +359,7 @@ mod tests {
 
     fn entry(index: u64, created_at: u64) -> ChatHistoryEntry {
         ChatHistoryEntry {
+            conversation_id: None,
             id: format!("entry-{index}"),
             prompt: format!("question {index}"),
             response: format!("answer {index}"),

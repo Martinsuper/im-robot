@@ -2,11 +2,11 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Eye, EyeOff, X } from "lucide-react";
 import { ModelPicker } from "./ModelPicker";
-import { useAppSettings } from "./settingsStore";
+import { parseAppSettings, useAppSettings } from "../app/settingsStore";
 import { findProviderPreset, providerOptions } from "../app/appShared";
 import { runCommand } from "../app/appRuntime";
 import { toUserMessage } from "../../lib/errors";
-import type { AiSettings, AppSettings } from "../../types/appTypes";
+import type { AiSettings } from "../../types/appTypes";
 import "./modelSettingsDialog.css";
 
 export function ModelSettingsDialog({ onClose, initialTab = "models" }: { onClose: () => void; initialTab?: "models" | "connection" }) {
@@ -56,7 +56,7 @@ export function ModelSettingsDialog({ onClose, initialTab = "models" }: { onClos
       const next = await runCommand("update_ai_settings", {
         input: { ...draft, baseUrl: draft.baseUrl.trim(), model: draft.model.trim(), apiKey: clearKey ? null : apiKey.trim() || (sameConnection ? undefined : null) },
       }, { ...settings, ai: draft, hasApiKey: !clearKey && (!!apiKey.trim() || (sameConnection && baseline.hasApiKey)) });
-      applyServer(next as AppSettings);
+      applyServer(parseAppSettings(next));
       onClose();
     } catch (reason) { setError(toUserMessage(reason)); }
     finally { setSaving(false); }

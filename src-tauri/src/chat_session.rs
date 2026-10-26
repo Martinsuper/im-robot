@@ -11,8 +11,8 @@
 //! # 做法（与 ScheduleItem 同一套）
 //!
 //! `chat-sessions.json` 成为**唯一写入口**；`ChatHistoryEntry` 退化为它的一个**视图**。
-//! 因此 `read_chat_history` / `persist_chat_history` 的签名保持不变，
-//! `chat.rs` 的写入路径一行都不用改。
+//! 查询通过 `try_read_chat_history` 返回明确错误；扁平视图携带可选的 conversationId，
+//! 与消息一起持久化，避免依赖会被裁剪的任务日志。
 //!
 //! # 会话边界
 //!
@@ -27,6 +27,8 @@ pub(crate) mod repository;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatHistoryEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) conversation_id: Option<String>,
     pub(crate) id: String,
     pub(crate) prompt: String,
     pub(crate) response: String,
@@ -64,6 +66,8 @@ pub(crate) enum ChatRole {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) conversation_id: Option<String>,
     pub(crate) role: ChatRole,
     pub(crate) content: String,
     pub(crate) created_at: u64,
@@ -115,12 +119,14 @@ impl ChatSession {
 fn messages_from_entry(entry: &ChatHistoryEntry) -> [ChatMessage; 2] {
     [
         ChatMessage {
+            conversation_id: entry.conversation_id.clone(),
             role: ChatRole::User,
             content: entry.prompt.clone(),
             created_at: entry.created_at,
             source_entry_id: None,
         },
         ChatMessage {
+            conversation_id: entry.conversation_id.clone(),
             role: ChatRole::Assistant,
             content: entry.response.clone(),
             // 回答与提问同一轮，时间上取同一秒即可；顺序由数组位置保证。
@@ -142,6 +148,7 @@ pub(crate) fn entries_view(sessions: &[ChatSession]) -> Vec<ChatHistoryEntry> {
                 ChatRole::Assistant => {
                     let prompt = pending_prompt.take();
                     entries.push(ChatHistoryEntry {
+                        conversation_id: message.conversation_id.clone(),
                         // 优先用原始 id，保证迁移无损；没有时（新会话）才合成
                         id: message
                             .source_entry_id
@@ -158,6 +165,7 @@ pub(crate) fn entries_view(sessions: &[ChatSession]) -> Vec<ChatHistoryEntry> {
         // 只有提问还没有回答的那一轮也要能被看见（对话进行到一半就退出）
         if let Some(prompt) = pending_prompt {
             entries.push(ChatHistoryEntry {
+                conversation_id: prompt.conversation_id.clone(),
                 id: format!("{}-{}", session.id, index),
                 prompt: prompt.content.clone(),
                 response: String::new(),
@@ -168,6 +176,29 @@ pub(crate) fn entries_view(sessions: &[ChatSession]) -> Vec<ChatHistoryEntry> {
     // 旧的扁平结构是「最新的在前」，视图保持一致，避免调用方行为变化。
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at));
     entries
+}
+
+pub(crate) fn backfill_conversation_links(
+    sessions: &mut [ChatSession],
+    links: &std::collections::HashMap<&str, &str>,
+) -> bool {
+    let mut changed = false;
+    for message in sessions
+        .iter_mut()
+        .flat_map(|session| &mut session.messages)
+    {
+        if message.conversation_id.is_none() {
+            if let Some(id) = message
+                .source_entry_id
+                .as_deref()
+                .and_then(|id| links.get(id))
+            {
+                message.conversation_id = Some((*id).to_owned());
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 /// 由旧扁平历史推断会话（迁移用）。
@@ -346,6 +377,7 @@ mod tests {
 
     fn entry(created_at: u64, prompt: &str) -> ChatHistoryEntry {
         ChatHistoryEntry {
+            conversation_id: None,
             id: format!("entry-{created_at}"),
             prompt: prompt.to_string(),
             response: format!("回答：{prompt}"),
@@ -435,6 +467,7 @@ mod tests {
     fn view_keeps_a_pending_question_without_an_answer() {
         let mut sessions = sessions_from_entries(&[entry(1000, "已答")]);
         sessions[0].messages.push(ChatMessage {
+            conversation_id: None,
             role: ChatRole::User,
             content: "还没回答".into(),
             created_at: 1060,

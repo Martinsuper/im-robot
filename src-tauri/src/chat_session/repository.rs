@@ -63,7 +63,45 @@ pub(crate) fn load_chat_sessions(
         }
     }
     let path = chat_sessions_path(app).ok_or("无法获取会话存储路径")?;
-    storage::read(&path)
+    let mut sessions = storage::read(&path)?;
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("agent");
+    backfill_conversation_links_at(&path, &directory, &mut sessions)?;
+    Ok(sessions)
+}
+
+// Persist legacy task associations before the bounded task journal evicts them.
+fn backfill_conversation_links_at(
+    path: &std::path::Path,
+    agent_directory: &std::path::Path,
+    sessions: &mut Vec<chat_session::ChatSession>,
+) -> Result<(), String> {
+    let marker = path.with_extension("conversation-links-v1.json");
+    let migrated: serde_json::Value = storage::read(&marker)?;
+    if migrated
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|version| version >= 1)
+    {
+        return Ok(());
+    }
+    let records = crate::agent::journal::TaskJournal::new(agent_directory).all()?;
+    let links = records
+        .iter()
+        .map(|record| (record.request_id.as_str(), record.conversation_id.as_str()))
+        .collect();
+    if chat_session::backfill_conversation_links(sessions, &links) {
+        let backup = path.with_extension("before-conversation-links.json");
+        if !backup.exists() {
+            std::fs::copy(path, &backup).map_err(|e| format!("无法备份会话关联：{e}"))?;
+        }
+        storage::write(path, sessions)?;
+    }
+    storage::write(&marker, &serde_json::json!({"version": 1}))?;
+    Ok(())
 }
 
 pub(crate) fn persist_chat_sessions(
@@ -76,15 +114,8 @@ pub(crate) fn persist_chat_sessions(
     Ok(())
 }
 
-/// 旧的扁平视图。签名不变，因此 chat.rs / 面板 / 导出都无需改动。
-pub(crate) fn read_chat_history(app: &AppHandle) -> Vec<ChatHistoryEntry> {
-    match load_chat_sessions(app, true) {
-        Ok(sessions) => chat_session::entries_view(&sessions),
-        Err(error) => {
-            eprintln!("[chat] 读取对话历史失败：{error}");
-            Vec::new()
-        }
-    }
+pub(crate) fn try_read_chat_history(app: &AppHandle) -> Result<Vec<ChatHistoryEntry>, String> {
+    Ok(chat_session::entries_view(&load_chat_sessions(app, true)?))
 }
 
 pub(crate) fn persist_chat_history(
@@ -106,4 +137,82 @@ pub(crate) fn append_chat_history(app: &AppHandle, entry: ChatHistoryEntry) -> R
     let mut sessions = load_chat_sessions(app, false)?;
     chat_session::append_entry_to_sessions(&mut sessions, &entry);
     persist_chat_sessions(app, &sessions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::journal::TaskJournal;
+
+    #[test]
+    fn legacy_links_are_backed_up_and_survive_journal_eviction() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("chat-sessions.json");
+        let journal = TaskJournal::new(directory.path());
+        journal.start("first", "passport-test", 1).unwrap();
+        journal
+            .event("first", &serde_json::json!({"type":"completed"}), 2)
+            .unwrap();
+        let entry = ChatHistoryEntry {
+            conversation_id: None,
+            id: "first".into(),
+            prompt: "旧问题".into(),
+            response: "旧回答".into(),
+            created_at: 1,
+        };
+        let mut sessions = chat_session::sessions_from_entries(&[entry]);
+        storage::write(&path, &sessions).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        backfill_conversation_links_at(&path, directory.path(), &mut sessions).unwrap();
+        let backup = path.with_extension("before-conversation-links.json");
+        assert_eq!(std::fs::read(&backup).unwrap(), original);
+        for index in 0..110 {
+            let id = format!("next-{index}");
+            journal
+                .start(&id, "another-conversation", index + 3)
+                .unwrap();
+            journal
+                .event(&id, &serde_json::json!({"type":"completed"}), index + 3)
+                .unwrap();
+        }
+        assert!(!journal
+            .all()
+            .unwrap()
+            .iter()
+            .any(|task| task.request_id == "first"));
+        // Once migrated, reading chats must not consult the journal at all.
+        std::fs::write(directory.path().join("tasks.json"), b"{broken").unwrap();
+        let mut restored = storage::read(&path).unwrap();
+        backfill_conversation_links_at(&path, directory.path(), &mut restored).unwrap();
+        let history = chat_session::entries_view(&restored);
+        assert_eq!(history[0].conversation_id.as_deref(), Some("passport-test"));
+        assert_eq!(history[0].prompt, "旧问题");
+        assert_eq!(std::fs::read(&backup).unwrap(), original);
+    }
+
+    #[test]
+    fn persisted_links_win_over_task_metadata_and_roundtrip_through_exports() {
+        let entry = ChatHistoryEntry {
+            conversation_id: Some("original".into()),
+            id: "request".into(),
+            prompt: "问题".into(),
+            response: "回答".into(),
+            created_at: 1,
+        };
+        let mut sessions = chat_session::sessions_from_entries(&[entry]);
+        let links = std::collections::HashMap::from([("request", "wrong")]);
+        assert!(!chat_session::backfill_conversation_links(
+            &mut sessions,
+            &links
+        ));
+        let history = chat_session::entries_view(&sessions);
+        let exported = serde_json::to_string(&history).unwrap();
+        let imported: Vec<ChatHistoryEntry> = serde_json::from_str(&exported).unwrap();
+        assert_eq!(
+            chat_session::entries_view(&chat_session::sessions_from_entries(&imported))[0]
+                .conversation_id
+                .as_deref(),
+            Some("original")
+        );
+    }
 }

@@ -492,3 +492,9 @@
 @media (max-width: 400px) {
   .tab--settings .settings-form { --settings-label-width: 72px; }
 }
+
+/* Passport pairing remains readable in the narrow workspace. */
+.passport-device { display: grid; gap: 12px; }
+.passport-device > p, .passport-device h2 { margin: 0; }
+.passport-device .button-secondary { justify-self: start; min-height: 36px; }
+.passport-pairing-code { font-family: ui-monospace, monospace; letter-spacing: .08em; color: var(--piko-accent); }

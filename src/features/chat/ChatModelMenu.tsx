@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { ModelSettingsDialog } from "../panel/ModelSettingsDialog";
-import { useAppSettings } from "../panel/settingsStore";
+import { useAppSettings } from "../app/settingsStore";
 import "./chatModelMenu.css";
 
 export function ChatModelMenu({ disabled }: { disabled: boolean }) {

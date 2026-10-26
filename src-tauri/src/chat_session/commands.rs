@@ -51,8 +51,8 @@ pub(crate) fn delete_chat_session(app: AppHandle, id: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub(crate) fn list_chat_history(app: AppHandle) -> Vec<ChatHistoryEntry> {
-    read_chat_history(&app)
+pub(crate) fn list_chat_history(app: AppHandle) -> Result<Vec<ChatHistoryEntry>, String> {
+    try_read_chat_history(&app)
 }
 
 #[tauri::command]
@@ -109,7 +109,7 @@ pub(crate) fn get_bubble_chat_history(
         .lock()
         .map_err(|_| "无法读取对话历史".to_string())?
         .clone();
-    for entry in read_chat_history(&app) {
+    for entry in try_read_chat_history(&app)? {
         if !entries.iter().any(|current| current.id == entry.id) {
             entries.push(entry);
         }

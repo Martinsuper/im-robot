@@ -930,6 +930,7 @@ mod tests {
 
     fn entry(id: &str, prompt: &str) -> crate::chat_session::ChatHistoryEntry {
         crate::chat_session::ChatHistoryEntry {
+            conversation_id: None,
             id: id.into(),
             prompt: prompt.into(),
             response: String::new(),
@@ -1393,6 +1394,7 @@ mod calendar_integration_tests {
             .unwrap()
             .timestamp();
         let entry = crate::chat_session::ChatHistoryEntry {
+            conversation_id: None,
             id: "calendar-source".into(),
             prompt: "我打算下个月去旅行".into(),
             response: "".into(),

@@ -5,6 +5,8 @@ Build dependency `zip` is changed from 2 to 9.0.0 to remove RUSTSEC-2026-0367, R
 
 Build dependency `ureq` is upgraded from 2.12 to 3.4.2, removing its dependency on the vulnerable `webpki-roots` 0.26 certificate bundle (RUSTSEC-2026-0381). The downloader uses ureq 3's agent and streaming body APIs; environment proxy discovery remains enabled by default. The lockfile selects `webpki-roots` 1.0.10.
 
-Native FFI, native library versions and archive extraction logic are unchanged. Remove these patches when upstream adopts fixed dependencies.
+Native cache reuse validates that every required linker input exists and is non-empty, rather than trusting a `lib/` directory that rust-cache cleanup may have emptied. Incomplete caches are re-extracted (or downloaded again if the archive was also removed). The validation has standalone tests run by `node --test scripts/sherpa-cache.test.mjs`.
+
+Native FFI and native library versions are unchanged. Remove these patches when upstream adopts the fixes.
 
 Upstream crate archive SHA-256: `14bbeabb73f73f1c1f4a278af0ee9ae90a19f9727482027047fb9422fa14f8fe`.

@@ -513,6 +513,7 @@ mod tests {
     use super::*;
     fn entry(id: &str, prompt: &str) -> crate::chat_session::ChatHistoryEntry {
         crate::chat_session::ChatHistoryEntry {
+            conversation_id: None,
             id: id.into(),
             prompt: prompt.into(),
             response: "已完成支付".into(),

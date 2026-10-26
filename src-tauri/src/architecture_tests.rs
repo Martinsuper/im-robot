@@ -754,6 +754,7 @@ fn session_chat_history_is_limited_to_ten_entries() {
         append_session_chat_history(
             &mut history,
             ChatHistoryEntry {
+                conversation_id: None,
                 id: index.to_string(),
                 prompt: index.to_string(),
                 response: index.to_string(),

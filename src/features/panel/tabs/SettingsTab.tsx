@@ -1,3 +1,5 @@
+import { SpeechOutputSettings } from "../SpeechOutputSettings";
+import { DeviceSettings } from "../DeviceSettings";
 import { DataSettings } from "../DataSettings";
 import { ModelSettingsDialog } from "../ModelSettingsDialog";
 import "./settings.css";
@@ -24,8 +26,8 @@ import { SettingsGroup } from "../PanelChrome";
 import { EmptyState } from "../../../components/feedback/States";
 import { useToast } from "../../../components/feedback/toastStore";
 import { toUserMessage } from "../../../lib/errors";
-import { usePreferenceDrafts } from "../usePreferenceDrafts";
-import { useAppSettings } from "../settingsStore";
+import { usePreferenceDrafts } from "../../app/usePreferenceDrafts";
+import { parseAppSettings, useAppSettings } from "../../app/settingsStore";
 
 import type {
   AppSettings,
@@ -380,7 +382,7 @@ export function SettingsTab() {
           agentAutoApproveCommands: enabled,
         },
       );
-      applyServer(next as AppSettings);
+      applyServer(parseAppSettings(next));
       toast.success(
         enabled
           ? t(
@@ -566,6 +568,7 @@ export function SettingsTab() {
           <button type="button" onClick={() => setModelSettingsOpen(true)}>模型与 API</button>
         </section>
         {modelSettingsOpen && <ModelSettingsDialog initialTab="connection" onClose={() => setModelSettingsOpen(false)} />}
+        <SpeechOutputSettings />
         <details className="settings-subgroup">
           <summary>语音输入</summary>
           <div className="settings-subgroup__body">
@@ -811,6 +814,7 @@ export function SettingsTab() {
         description="启动、快捷键、备份与更新"
         status={`${autostartEnabled ? "开机启动开启" : "开机启动关闭"} · 备份与权限`}
       >
+        <DeviceSettings />
         <section className="panel-card">
           <h2>命令执行权限</h2>
           <label className="setting-toggle">

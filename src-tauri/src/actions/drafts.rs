@@ -157,6 +157,31 @@ pub(crate) fn action_draft_from_tool_call_with_locale(
             }
             lines.join("\n")
         }
+        ("piko.focus", "start_focus" | "start_break") => {
+            let minutes = call.arguments["minutes"]
+                .as_u64()
+                .ok_or("请提供有效的分钟数")?;
+            let valid = if call.tool_name == "start_focus" {
+                matches!(minutes, 15 | 25 | 45 | 60)
+            } else {
+                matches!(minutes, 5 | 10 | 15)
+            };
+            if !valid {
+                return Err("不支持的专注或休息时长".into());
+            }
+            format!(
+                "开始 {} 分钟{}（不会覆盖已有计时）",
+                minutes,
+                if call.tool_name == "start_focus" {
+                    "专注"
+                } else {
+                    "休息"
+                }
+            )
+        }
+        ("piko.focus", "pause_focus") => "暂停当前专注或休息计时".into(),
+        ("piko.focus", "resume_focus") => "继续当前已暂停的计时".into(),
+        ("piko.focus", "stop_focus") => "结束当前计时（不计作完成）".into(),
         _ => return Err("该工具暂不支持确认后执行".to_string()),
     };
     if call.plugin_id == "piko.calendar" {

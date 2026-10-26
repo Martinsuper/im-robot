@@ -17,7 +17,7 @@ import { MemoryExtractionControls } from "./MemoryExtractionControls";
 import { OpenLoopReview } from "../soul/OpenLoopReview";
 import { MemoryCard } from "./MemoryCard";
 import { MemoryDetail } from "./MemoryDetail";
-import { isTauriRuntime, runCommand, runCommandAndRefresh } from "../app/appRuntime";
+import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { toUserMessage } from "../../lib/errors";
 import { EmptyState, ErrorState } from "../../components/feedback/States";
 import { useToast } from "../../components/feedback/toastStore";
@@ -199,9 +199,8 @@ export function MemoryCenter() {
 
   async function handleDelete(id: string) {
     try {
-      await runCommandAndRefresh("delete_memory", { id }, [
-        reloadVisibleMemories,
-      ]);
+      await runCommand("delete_memory", { id });
+      await reloadVisibleMemories();
       setListError("");
     } catch (error) {
       toast.error(toUserMessage(error, t("memory.error.deleteFailed")));
@@ -243,7 +242,8 @@ export function MemoryCenter() {
     if (!confirm(t("memory.confirm.clearAll"))) return;
     setIsClearing(true);
     try {
-      await runCommandAndRefresh("clear_memories", {}, [reloadVisibleMemories]);
+      await runCommand("clear_memories", {});
+      await reloadVisibleMemories();
       setListError("");
     } catch (error) {
       toast.error(toUserMessage(error, t("memory.error.clearFailed")));
@@ -267,13 +267,10 @@ export function MemoryCenter() {
 
   async function handleConfirmCandidate(candidateId: string) {
     try {
-      await runCommandAndRefresh(
-        "apply_memory_candidates",
-        {
-          input: { candidateId, confirmed: true },
-        },
-        [loadPending, loadMemories],
-      );
+      await runCommand("apply_memory_candidates", {
+        input: { candidateId, confirmed: true },
+      });
+      await Promise.all([loadPending(), loadMemories()]);
     } catch (error) {
       toast.error(toUserMessage(error, t("memory.error.confirmFailed")));
     }

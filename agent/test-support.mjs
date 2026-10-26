@@ -38,7 +38,7 @@ export async function fixture(t, handler) {
     await rm(root, { recursive: true, force: true });
   });
   function run({ prompt = "请执行任务", conversationId = "test-session", onEvent,
-    workingDirectory = cwd, provider = "openai-compatible", model = "mock", unified = false, autoApproveCommands = false, workspace = cwd, businessTools = [], history, images, readOnly = false, resumeRoot, requestId, systemPrompt, serializeSystemTools = false } = {}) {
+    workingDirectory = cwd, provider = "openai-compatible", model = "mock", unified = false, passport = false, autoApproveCommands = false, workspace = cwd, businessTools = [], history, images, readOnly = false, resumeRoot, requestId, systemPrompt, serializeSystemTools = false } = {}) {
     const child = spawn(process.env.PIKO_TEST_NODE || process.execPath, [sidecar], { stdio: ["pipe", "pipe", "pipe"] }); children.push(child);
     const events = []; let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -61,7 +61,7 @@ export async function fixture(t, handler) {
       });
     });
     send({ type: "start", cwd: workingDirectory, dataDir: path.join(root, "data"), conversationId,
-      provider, model, unified, autoApproveCommands, workspace, businessTools, history, images, readOnly, resumeRoot, requestId, systemPrompt, serializeSystemTools, baseUrl: `http://127.0.0.1:${server.address().port}/v1`, apiKey: "mock-key", prompt });
+      provider, model, unified, passport, autoApproveCommands, workspace, businessTools, history, images, readOnly, resumeRoot, requestId, systemPrompt, serializeSystemTools, baseUrl: `http://127.0.0.1:${server.address().port}/v1`, apiKey: "mock-key", prompt });
     return Object.assign(result, { send, child, events, exited });
   }
   return { root, cwd, run, requests, httpRequests };

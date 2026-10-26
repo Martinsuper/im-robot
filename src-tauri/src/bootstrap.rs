@@ -88,6 +88,7 @@ pub(crate) fn run() {
         .manage(ActionDrafts::default())
         .manage(LocalTts::default())
         .manage(FocusTimer::default())
+        .manage(crate::devices::DeviceBridge::default())
         .manage(IdleDetection::default())
         .manage(PetContextMenu::default())
         .manage(WorkRhythmCache::default())
@@ -238,6 +239,7 @@ pub(crate) fn run() {
             typing_activity::watch_typing_rollover(app.handle());
             watch_work_rhythm(app.handle());
             crate::conversation_windows::restore(app.handle());
+            crate::devices::restore_device_bridge(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -268,6 +270,12 @@ pub(crate) fn run() {
             desktop::move_pet_relative,
             desktop::get_pet_position,
             settings::commands::get_settings,
+            crate::devices::get_device_status,
+            crate::devices::start_device_bridge,
+            crate::devices::stop_device_bridge,
+            crate::devices::begin_device_pairing,
+            crate::devices::forget_device,
+            crate::devices::publish_device_pet,
             screen_capture::screen_capture_permission_status,
             crate::background::background_status,
             crate::data_snapshot::get_data_health,
@@ -325,6 +333,8 @@ pub(crate) fn run() {
             settings::commands::update_preferences,
             rhythm::update_work_rhythm_preferences,
             settings::commands::update_ai_settings,
+            crate::tts::get_speech_output_settings,
+            crate::tts::update_speech_output_settings,
             speech::get_speech_model_status,
             speech::download_speech_model,
             speech::transcribe_voice_input,
@@ -464,10 +474,13 @@ pub(crate) fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 crate::conversation_windows::prepare_exit(app);
                 if let Some(tts) = app.try_state::<LocalTts>() {
-                    if let Ok(mut active) = tts.0.try_lock() {
-                        if let Some(mut child) = active.take() {
-                            let _ = child.kill();
+                    if let Ok(mut cancel) = tts.1.try_lock() {
+                        if let Some(cancel) = cancel.take() {
+                            cancel.cancel();
                         }
+                    }
+                    if let Ok(mut active) = tts.0.try_lock() {
+                        drop(active.take());
                     }
                 }
                 let closing = app.clone();

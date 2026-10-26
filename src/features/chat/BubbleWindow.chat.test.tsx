@@ -784,4 +784,23 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     await waitFor(() => expect(screen.queryByTitle("停止生成")).toBeNull());
   });
 
+  it("shows history read errors and retries without presenting an empty welcome state", async () => {
+    const defaults = runCommandMock.getMockImplementation()!;
+    let fail = true;
+    runCommandMock.mockImplementation((command: string) => {
+      if (command === "conversation_chat_history") {
+        if (fail) return Promise.reject(new Error("历史文件读取失败"));
+        return Promise.resolve([{ id: "saved-history", prompt: "之前的问题", response: "之前的回答", createdAt: 1 }]);
+      }
+      return defaults(command);
+    });
+    render(<BubbleWindow tabId="history-error-test" />);
+    await screen.findByText("历史文件读取失败");
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "重试加载历史" }));
+    fireEvent.click(await screen.findByRole("button", { name: /之前的问题/ }));
+    await screen.findByText("之前的回答");
+    expect(screen.queryByText("历史文件读取失败")).toBeNull();
+  });
+
 });

@@ -118,6 +118,11 @@ pub fn completed(app: &AppHandle, key: &str) -> Result<(), String> {
 }
 pub fn current(app: &AppHandle, plugin: &str) -> Result<Value, String> {
     match plugin {
+        "piko.focus" => serde_json::to_value(crate::rhythm::focus_snapshot(
+            app,
+            &app.state::<crate::rhythm::FocusTimer>(),
+        )?)
+        .map_err(|error| error.to_string()),
         "piko.memos" => {
             let file = crate::memos::memos_path(app).ok_or("无法获取备忘录路径")?;
             let items: Vec<crate::memos::Memo> = crate::storage::read(&file)?;

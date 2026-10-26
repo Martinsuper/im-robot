@@ -233,3 +233,33 @@ mod migration_tests {
         assert!(path.exists());
     }
 }
+
+fn mimo_tts_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(
+        &CONFIG.get().ok_or("密钥配置目录尚未初始化")?.service,
+        "mimo-tts-api-key",
+    )
+    .map_err(|_| storage_error())
+}
+pub(crate) fn read_mimo_tts_key() -> Result<Option<String>, String> {
+    match mimo_tts_entry()?.get_password() {
+        Ok(key) => Ok(Some(key).filter(|s| !s.trim().is_empty())),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err(storage_error()),
+    }
+}
+pub(crate) fn update_mimo_tts_key(key: Option<String>) -> Result<(), String> {
+    let Some(key) = key else {
+        return Ok(());
+    };
+    if key.trim().is_empty() {
+        match mimo_tts_entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(_) => Err(storage_error()),
+        }
+    } else {
+        mimo_tts_entry()?
+            .set_password(key.trim())
+            .map_err(|_| storage_error())
+    }
+}

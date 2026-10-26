@@ -24,6 +24,8 @@ wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
+getrandom = "0.3"
 sha2 = "0.10"
 lopdf = "0.42"
 keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
@@ -40,6 +42,7 @@ serde_json = "1"
 serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 reqwest = { version = "0.13", default-features = false, features = ["charset", "http2", "json", "multipart", "native-tls", "stream", "system-proxy"] }
 futures-util = "0.3"
+rodio = { version = "=0.21.1", default-features = false, features = ["playback"] }
 sherpa-onnx = { version = "1.13.2", default-features = false, features = ["static"], optional = true }
 bzip2 = { version = "0.4", optional = true }
 tar = { version = "0.4", optional = true }

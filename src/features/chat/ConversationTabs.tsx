@@ -8,8 +8,8 @@ import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { useToast } from "../../components/feedback/toastStore";
 
 import type { PanelTab } from "../../types/appTypes";
-import { useAppSettings } from "../panel/settingsStore";
-import { deviceConversations } from "./deviceConversations";
+import { useAppSettings } from "../app/settingsStore";
+import { DeviceConversationHistory } from "./DeviceConversationHistory";
 
 const candidateId = new URLSearchParams(location.search).get("conversation");
 const detachedId = candidateId && /^[a-zA-Z0-9-]{1,80}$/.test(candidateId) ? candidateId : null;
@@ -98,6 +98,9 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
       else localStorage.setItem("piko.preview.resume-request", JSON.stringify({ ...record, nonce: crypto.randomUUID() }));
       return;
     }
+    if (!current.current.tabs.some(tab => tab.id === record.conversationId) && current.current.tabs.length >= MAX_TABS) {
+      toast.info("最多打开 12 个会话，请先关闭不用的会话。"); return;
+    }
     setPendingResume(record);
     setWorkspace(value => ({ tabs: value.tabs.some(tab => tab.id === record.conversationId) ? value.tabs : [...value.tabs, { id: record.conversationId, title: "继续任务" }], selected: record.conversationId }));
     if (windowsRef.current.windows.some(item => item.conversationId === record.conversationId)) void closeConversationWindow(record.conversationId).catch(error => toast.error(String(error)));
@@ -123,9 +126,6 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
       listen<AgentEvent>("agent-event", ({ payload: event }) => {
         if (event.conversationId) requests.set(event.requestId, event.conversationId);
         const id = requests.get(event.requestId);
-        if (id?.startsWith("passport-") && event.conversationId) {
-          setWorkspace(value => value.tabs.some(tab => tab.id === id) ? value : { ...value, tabs: [...value.tabs, { id, title: (event.prompt || "设备对话").slice(0, 24) }] });
-        }
         if (!id || !windowsRef.current.windows.some(item => item.conversationId === id)) return;
         if (event.eventSequence !== undefined && event.eventSequence <= (sequences.get(event.requestId) ?? 0)) return;
         sequences.set(event.requestId, event.eventSequence ?? 0);
@@ -143,22 +143,12 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
       ]);
       if (disposed) return;
       applyWindows(windows);
-      const [records, history] = await Promise.all([
-        runCommand("agent_list_tasks"),
-        runCommand("list_chat_history"),
-      ]);
-      if (disposed) return;
-      const devices = deviceConversations(records, history);
-      setWorkspace(value => {
-        const missing = devices.filter(device => !value.tabs.some(tab => tab.id === device.id));
-        return missing.length ? { ...value, tabs: [...value.tabs, ...missing] } : value;
-      });
       for (const snapshot of snapshots) {
         requests.set(snapshot.requestId, snapshot.conversationId);
         if (snapshot.eventSequence < (sequences.get(snapshot.requestId) ?? 0)) continue;
         sequences.set(snapshot.requestId, snapshot.eventSequence);
         const terminal = snapshot.events.find(event => ["completed", "failed", "cancelled"].includes(event.type));
-        if (!terminal) setWorkspace(value => value.tabs.some(tab => tab.id === snapshot.conversationId) ? value : { ...value, tabs: [...value.tabs, { id: snapshot.conversationId, title: snapshot.prompt.slice(0, 24) }] });
+        if (!terminal) setWorkspace(value => value.tabs.some(tab => tab.id === snapshot.conversationId) || value.tabs.length >= MAX_TABS ? value : { ...value, tabs: [...value.tabs, { id: snapshot.conversationId, title: snapshot.prompt.slice(0, 24) }] });
         if (windows.windows.some(item => item.conversationId === snapshot.conversationId)) updateTab(snapshot.conversationId, {
           title: snapshot.prompt.slice(0, 24) || "新对话", busy: !terminal,
           waiting: snapshot.events.some(event => ["approval", "action-proposed", "workspace-required"].includes(event.type)),
@@ -204,6 +194,14 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
       void runCommand("conversation_forget_view", { conversationId: id }).catch(error => toast.error(String(error)));
     }
     delete previousStates.current[id];
+    setStates(value => { const remaining = { ...value }; delete remaining[id]; return remaining; });
+  }
+
+  function openHistory(conversation: { id: string; title: string }) {
+    if (!current.current.tabs.some(tab => tab.id === conversation.id) && current.current.tabs.length >= MAX_TABS) {
+      toast.info("最多打开 12 个会话，请先关闭不用的会话。"); return;
+    }
+    setWorkspace(value => ({ tabs: value.tabs.some(tab => tab.id === conversation.id) ? value.tabs : [...value.tabs, conversation], selected: conversation.id }));
   }
 
   const running = Object.values(states).filter(state => state.busy).length;
@@ -242,6 +240,7 @@ export function ConversationTabs({ initialWorkspaceOpen = false }: { initialWork
           </div>;
         })}
       </div>
+      {!detachedId && <DeviceConversationHistory openIds={workspace.tabs.map(tab => tab.id)} onOpen={openHistory} />}
       <button className="conversation-tabs__new" aria-label="新建会话标签页" title="新建会话" onClick={newTab}><Plus size={16} /></button>
       {running > 0 && <span className="conversation-tabs__count" aria-live="polite">{running}/2</span>}
     </div>

@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { defaultAppSettings } from "../app/appShared";
+import { defaultAppSettings } from "./appShared";
 const { listen, command } = vi.hoisted(() => ({ listen: vi.fn(), command: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
-vi.mock("../app/appRuntime", () => ({ isTauriRuntime: true, runCommand: command }));
+vi.mock("./appRuntime", () => ({ isTauriRuntime: true, runCommand: command }));
 beforeEach(() => { vi.resetModules(); listen.mockReset(); command.mockReset(); });
 afterEach(cleanup);
 it("registers once for concurrent consumers and ignores a stale initial load", async () => {

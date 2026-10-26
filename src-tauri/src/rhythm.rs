@@ -117,7 +117,7 @@ fn today_focus_minutes(records: &[FocusRecord], now: u64) -> u64 {
         .sum()
 }
 
-fn focus_snapshot(app: &AppHandle, focus: &FocusTimer) -> Result<FocusSnapshot, String> {
+pub(crate) fn focus_snapshot(app: &AppHandle, focus: &FocusTimer) -> Result<FocusSnapshot, String> {
     let now = unix_timestamp();
     let active = focus.0.lock().map_err(|_| "无法读取专注状态".to_string())?;
     let (status, kind, remaining_seconds) = active
@@ -348,14 +348,47 @@ pub(crate) fn start_focus(
     if !matches!(minutes, 15 | 25 | 45 | 60) {
         return Err("专注时长仅支持 15、25、45 或 60 分钟".to_string());
     }
-    start_timer(&focus, "focus", minutes)?;
+    start_timer(&focus, "focus", minutes, true)?;
     let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::FocusStarted);
     emit_focus_updated(&app, &focus);
     focus_snapshot(&app, &focus)
 }
 
-fn start_timer(focus: &FocusTimer, kind: &str, minutes: u64) -> Result<(), String> {
-    *focus.0.lock().map_err(|_| "无法更新专注状态".to_string())? = Some(ActiveFocus {
+pub(crate) fn start_focus_from_device(
+    app: AppHandle,
+    focus: State<'_, FocusTimer>,
+) -> Result<FocusSnapshot, String> {
+    start_device_timer(app, focus, "focus", 25)
+}
+
+pub(crate) fn start_device_timer(
+    app: AppHandle,
+    focus: State<'_, FocusTimer>,
+    kind: &str,
+    minutes: u64,
+) -> Result<FocusSnapshot, String> {
+    let valid = match kind {
+        "focus" => matches!(minutes, 15 | 25 | 45 | 60),
+        "break" => matches!(minutes, 5 | 10 | 15),
+        _ => false,
+    };
+    if !valid {
+        return Err("不支持的计时类型或时长".into());
+    }
+    start_timer(&focus, kind, minutes, false)?;
+    if kind == "focus" {
+        let _ = app.emit_to("pet", "pet-visual-event", PetVisualEvent::FocusStarted);
+    }
+    emit_focus_updated(&app, &focus);
+    focus_snapshot(&app, &focus)
+}
+
+fn start_timer(focus: &FocusTimer, kind: &str, minutes: u64, replace: bool) -> Result<(), String> {
+    let mut active = focus.0.lock().map_err(|_| "无法更新专注状态".to_string())?;
+    if !replace && active.is_some() {
+        return Err("已有专注或休息计时，请先结束当前计时".into());
+    }
+    *active = Some(ActiveFocus {
         status: "running".to_string(),
         kind: kind.to_string(),
         end_at: unix_timestamp() + minutes * 60,
@@ -374,7 +407,7 @@ pub(crate) fn start_break(
     if !matches!(minutes, 5 | 10 | 15) {
         return Err("休息时长仅支持 5、10 或 15 分钟".to_string());
     }
-    start_timer(&focus, "break", minutes)?;
+    start_timer(&focus, "break", minutes, true)?;
     emit_focus_updated(&app, &focus);
     focus_snapshot(&app, &focus)
 }
@@ -594,5 +627,22 @@ mod tests {
         assert!(!super::is_within_quiet_hours(
             "22:00", "08:00", false, late_night
         ));
+    }
+}
+
+#[cfg(test)]
+mod passport_tests {
+    use super::*;
+    #[test]
+    fn device_cannot_replace_running_or_paused_timer() {
+        let focus = FocusTimer::default();
+        start_timer(&focus, "break", 10, true).unwrap();
+        assert!(start_timer(&focus, "focus", 25, false).is_err());
+        focus.0.lock().unwrap().as_mut().unwrap().status = "paused".into();
+        assert!(start_timer(&focus, "focus", 25, false).is_err());
+        assert_eq!(focus.0.lock().unwrap().as_ref().unwrap().kind, "break");
+        *focus.0.lock().unwrap() = None;
+        start_timer(&focus, "focus", 25, false).unwrap();
+        assert_eq!(focus.0.lock().unwrap().as_ref().unwrap().minutes, 25);
     }
 }

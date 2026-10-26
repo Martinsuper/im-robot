@@ -10,6 +10,8 @@ use std::{collections::HashSet, ffi::OsString};
 use bzip2::read::BzDecoder;
 use tar::Archive;
 
+mod native_cache;
+
 const RELEASE_BASE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
 const XCFRAMEWORK_RELEASE_URL: &str =
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/xcframework";
@@ -163,8 +165,16 @@ fn download_prebuilt_libs(
         && (target_triple.contains("sim") || target_arch == "x86_64");
     let lib_dir_name = if is_ios_sim { "lib-sim" } else { "lib" };
     let lib_dir = extracted_dir.join(lib_dir_name);
+    let cache_is_complete = |dir: &Path| {
+        native_cache::has_required_libraries(
+            dir,
+            link_mode == LinkMode::Static,
+            target_os,
+            SHERPA_ONNX_STATIC_LIBS,
+        )
+    };
 
-    if lib_dir.is_dir() {
+    if cache_is_complete(&lib_dir) {
         return Ok((lib_dir, archive_stem.to_string()));
     }
 
@@ -173,10 +183,10 @@ fn download_prebuilt_libs(
     // have a top-level directory while others extract directly into cache_root.
     let android_lib_dir = extracted_dir.join("jniLibs").join(android_abi(target_arch));
     let android_lib_dir_alt = cache_root.join("jniLibs").join(android_abi(target_arch));
-    if android_lib_dir.is_dir() {
+    if target_os == "android" && cache_is_complete(&android_lib_dir) {
         return Ok((android_lib_dir, archive_stem.to_string()));
     }
-    if android_lib_dir_alt.is_dir() {
+    if target_os == "android" && cache_is_complete(&android_lib_dir_alt) {
         return Ok((android_lib_dir_alt, archive_stem.to_string()));
     }
 
@@ -244,7 +254,7 @@ fn download_prebuilt_libs(
         .into());
     }
 
-    if !lib_dir.is_dir() {
+    if !cache_is_complete(&lib_dir) {
         // Android archives use jniLibs/{abi}/ instead of lib/.
         // Check both extracted_dir/jniLibs/ and cache_root/jniLibs/ because
         // some archives have a top-level directory while others extract
@@ -255,9 +265,9 @@ fn download_prebuilt_libs(
         let android_lib_dir_alt = cache_root
             .join("jniLibs")
             .join(android_abi(target_arch));
-        let android_lib_dir = if android_lib_dir.is_dir() {
+        let android_lib_dir = if target_os == "android" && cache_is_complete(&android_lib_dir) {
             Some(android_lib_dir)
-        } else if android_lib_dir_alt.is_dir() {
+        } else if target_os == "android" && cache_is_complete(&android_lib_dir_alt) {
             Some(android_lib_dir_alt)
         } else {
             None
@@ -278,7 +288,7 @@ fn download_prebuilt_libs(
         }
 
         return Err(format!(
-            "Downloaded archive did not contain a lib directory: {}",
+            "Downloaded archive did not contain all required native libraries: {}",
             lib_dir.display()
         )
         .into());

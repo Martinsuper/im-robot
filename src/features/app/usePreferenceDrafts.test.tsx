@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { defaultAppSettings } from "../app/appShared";
+import { defaultAppSettings } from "./appShared";
 import { usePreferenceDrafts } from "./usePreferenceDrafts";
 const { command } = vi.hoisted(() => ({ command: vi.fn() }));
-vi.mock("../app/appRuntime", () => ({ runCommand: command }));
+vi.mock("./appRuntime", () => ({ runCommand: command }));
 beforeEach(() => {
   vi.useFakeTimers();
   command.mockReset().mockImplementation(async (_name, { input }) => ({ ...defaultAppSettings, ...input }));

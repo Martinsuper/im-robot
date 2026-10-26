@@ -81,6 +81,7 @@ pub(crate) fn confirm_chat_action(
         "piko.calendar" => "日程已创建。",
         "piko.memos" => "备忘录已创建。",
         "piko.reminders" if tool_name == "delete_reminder" => "提醒已删除。",
+        "piko.focus" => "专注计时状态已更新。",
         _ => "提醒已创建。",
     };
     Ok(ActionExecution {

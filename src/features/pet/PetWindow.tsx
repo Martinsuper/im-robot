@@ -1,12 +1,12 @@
 import { useStableEvent } from "../../hooks/useStableEvent";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { AppSettings, PetVisualEvent, QuietMode, Theme } from "../../types/appTypes";
+import type { PetVisualEvent } from "../../types/appTypes";
 import {
   PetSprite,
-  defaultAppSettings,
   usePetVisualStyle,
 } from "../app/appShared";
 import { runCommand } from "../app/appRuntime";
+import { useAppSettings } from "../app/settingsStore";
 import { reportSoulActivity, currentActivitySnapshot, ACTIVITY_HEARTBEAT_SECONDS } from "../soul/proactiveBridge";
 import { initialPetState, reducePetState } from "./petState";
 import { moodExpression, type SoulMood } from "../soul/moodPresentation";
@@ -89,10 +89,10 @@ function PetWindowContent() {
     void runCommand("soul_get_mood").then(setSoulMood).catch(() => setSoulMood("calm"));
   });
 
-  const [companionName, setCompanionName] = useState("Piko");
-  const [quietMode, setQuietMode] = useState<QuietMode>("balanced");
-  const [sensingPaused, setSensingPaused] = useState(false);
-  const [theme, setTheme] = useState<Theme>("sage");
+  // Settings mirror via the shared store; the previous local copy kept a
+  // second get_settings + settings-updated pair in sync by hand.
+  const { settings } = useAppSettings();
+  const { companionName, quietMode, sensingPaused, theme } = settings;
   const isResting = petState.mode === "resting";
   const resetTimer = useRef<number | undefined>(undefined);
   const [mouseDelta, setMouseDelta] = useState({ x: 0, y: 0 });
@@ -124,6 +124,13 @@ function PetWindowContent() {
   const handleDragEnd = useStableEvent((distance: number) => handleHumanInteraction({ type: "drag_end", timestamp: Date.now(), payload: { distancePx: distance } }));
   const handleStroke = useStableEvent((distance: number, duration: number) => handleHumanInteraction({ type: "pet_stroke", timestamp: Date.now(), intensity: Math.min(1, distance / 120), payload: { durationMs: duration, distancePx: distance } }));
   const handleClick = useStableEvent(() => handleHumanInteraction({ type: "click", timestamp: Date.now() }));
+  useTauriEventSubscription<null>("passport-interact", () => handleClick());
+  useEffect(() => {
+    void runCommand("publish_device_pet", {
+      mode: petState.mode, emotion: petState.emotion, reaction: petState.reaction,
+    }).catch((error: unknown) => console.warn("[passport] 状态同步失败", error));
+  }, [petState.mode, petState.emotion, petState.reaction]);
+
   const { isDragging, isLongPressing, handlers: dragHandlers } = usePetDrag({ onDragEnd: handleDragEnd, onStroke: handleStroke, onClick: handleClick });
 
   function handleHumanInteraction(event: HumanInteractionEvent) {
@@ -251,16 +258,6 @@ function PetWindowContent() {
     };
   }, [petState.mode, quietMode, idleRhythm]);
 
-  useEffect(() => {
-    void runCommand("get_settings", undefined, defaultAppSettings).then((raw) => {
-      const settings = raw as AppSettings;
-      setCompanionName(settings.companionName);
-      setQuietMode(settings.quietMode);
-      setSensingPaused(settings.sensingPaused);
-      setTheme(settings.theme);
-    });
-  }, []);
-
   // Chat event subscription
   useTauriEventSubscription<ChatEvent>("chat-event", (event) => {
     if (event.type === "started") {
@@ -360,14 +357,6 @@ function PetWindowContent() {
       showCompanionNotice("focus_completed", "做完啦，来看看结果。", 3200);
     }
   }, [quietMode, bondTier]);
-
-  // Settings updated subscription
-  useTauriEventSubscription<AppSettings>("settings-updated", (event) => {
-    setCompanionName(event.companionName);
-    setQuietMode(event.quietMode);
-    setSensingPaused(event.sensingPaused);
-    setTheme(event.theme);
-  }, []);
 
   useEffect(() => {
     const refreshProfile = () => {

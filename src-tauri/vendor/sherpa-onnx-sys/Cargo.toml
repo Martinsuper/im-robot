@@ -18,6 +18,7 @@ links = "sherpa-onnx"
 include = [
     "src/**",
     "build.rs",
+    "native_cache.rs",
     "Cargo.toml",
     "README.md",
     "LICENSE*",
