@@ -27,7 +27,7 @@ tauri-build = { version = "2", features = [] }
 tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 getrandom = "0.3"
 sha2 = "0.10"
-lopdf = "0.42"
+lopdf = "0.46"
 tokio = { version = "1", features = ["sync", "macros", "rt", "time", "process", "io-util", "fs"] }
 tokio-util = "0.7"
 parking_lot = "0.12"
