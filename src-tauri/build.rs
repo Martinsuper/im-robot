@@ -4,7 +4,7 @@ fn main() {
         std::env::var("TARGET").unwrap(),
     )
     .unwrap();
-    tauri_build::build();
+    build_tauri();
 
     // Compile the EventKit Objective-C bridge on macOS.
     // This links directly into the main Tauri binary so it inherits the
@@ -76,5 +76,25 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=UserNotifications");
         println!("cargo:rustc-link-lib=framework=AppKit");
         println!("cargo:rerun-if-changed=src/soul_notifications.m");
+    }
+}
+
+/// Embed the Windows manifest through the linker so lib unit tests also load
+/// Common Controls v6 (TaskDialogIndirect is absent from the default v5 DLL).
+/// Disable Tauri's resource-based manifest to avoid duplicate app resources.
+fn build_tauri() {
+    let windows_msvc = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+    if windows_msvc {
+        let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
+            .join("windows.manifest");
+        println!("cargo:rerun-if-changed={}", manifest.display());
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+        let attributes = tauri_build::Attributes::new()
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+        tauri_build::try_build(attributes).expect("Failed to build Tauri Windows resources");
+    } else {
+        tauri_build::build();
     }
 }

@@ -90,6 +90,8 @@ API Key 使用系统凭据存储（macOS Keychain、Windows Credential Manager�
 
 macOS 最低版本为 14，截图使用 ScreenCaptureKit 的单帧截图接口，不再依赖已弃用的 Core Graphics 截图 API。
 
+Windows/MSVC 构建通过链接器将 `src-tauri/windows.manifest` 同时嵌入应用和测试程序，以加载 Common Controls v6；否则库单元测试可能在运行前因 `TaskDialogIndirect` 入口点缺失（`0xc0000139`）而退出。
+
 
 ## 架构与数据维护
 

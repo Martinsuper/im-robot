@@ -27,6 +27,19 @@ test("native cache regression tests run and stale caches use a new namespace", (
   assert.match(workflow, /key: verify-native-cache-v2-\$\{\{ matrix\.os \}\}/);
 });
 
+test("Windows MSVC embeds Common Controls v6 in library test executables too", () => {
+  const build = readFileSync(new URL("../src-tauri/build.rs", import.meta.url), "utf8");
+  const manifest = readFileSync(new URL("../src-tauri/windows.manifest", import.meta.url), "utf8");
+  assert.match(build, /CARGO_CFG_TARGET_OS/);
+  assert.match(build, /CARGO_CFG_TARGET_ENV/);
+  assert.match(build, /WindowsAttributes::new_without_app_manifest\(\)/);
+  assert.match(build, /cargo:rustc-link-arg=\/MANIFEST:EMBED/);
+  assert.match(build, /cargo:rustc-link-arg=\/MANIFESTINPUT:/);
+  assert.doesNotMatch(build, /cargo:rustc-link-arg-tests=/);
+  assert.match(manifest, /name="Microsoft\.Windows\.Common-Controls"/);
+  assert.match(manifest, /version="6\.0\.0\.0"/);
+});
+
 test("parallel release builds cannot publish before verification succeeds", () => {
   const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   const prepare = release.split(/^  prepare:\s*$/m)[1]?.split(/^  [\w-]+:\s*$/m)[0];
