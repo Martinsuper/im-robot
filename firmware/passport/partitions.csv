@@ -1,6 +1,0 @@
-# Preserve 0x356000..0x359fff: original device identity on known stock layouts.
-# Never use erase-flash or write a merged image for an existing device.
-nvs,      data, nvs,     0x9000,   0x6000,
-phy_init, data, phy,     0xf000,   0x1000,
-factory,  app,  factory, 0x10000,  0x340000,
-identity, data, 0x40,    0x356000, 0x4000,

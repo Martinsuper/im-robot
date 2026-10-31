@@ -1,9 +1,0 @@
-menu "Passport Pager"
-    config PAGER_SIM_NO_BLE
-        bool "Skip Bluetooth (simulator UI build only)"
-        default n
-        help
-            PassportSim binds BLE only for ESP-IDF 5.5.3 images. This builds a variant that
-            never starts the Bluetooth controller, so the screen and buttons can be tested there.
-            Never enable it for firmware that goes on the device.
-endmenu
