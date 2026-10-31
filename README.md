@@ -49,7 +49,7 @@ npm run tauri dev
 
 ## Passport 硬件接入
 
-支持将 FoloToy AI Passport 作为 Piko 的局域网终端：宠物动画、按键互动、专注计时同步和按住说话的语音任务。可查询知识、管理提醒/日程/备忘和专注；文件与命令操作沿用桌面授权流程。桌面端在设置 → 系统与数据 → Piko Passport 中开启，设备需要构建并刷入专用固件。见[接入设计与使用说明](doc/design/07-passport-device-bridge.md)和[固件构建说明](firmware/passport/README.md)。
+支持将 FoloToy AI Passport 作为 Piko 的局域网终端：宠物动画、按键互动、专注计时同步和按住说话的语音任务。可查询知识、管理提醒/日程/备忘和专注；文件与命令操作沿用桌面授权流程。桌面端在设置 → 系统与数据 → Piko Passport 中开启，设备需要构建并刷入专用固件。见[接入设计与使用说明](doc/design/07-passport-device-bridge.md)和[固件构建说明](doc/design/17-firmware-repository.md)。
 
 ## 文档
 
@@ -57,6 +57,7 @@ npm run tauri dev
 - [宠物身份与养成产品方案](doc/prd/01-pet-identity-nurturing-product.md)
 - [桌面助手产品基线与路线图](doc/prd/02-desktop-assistant-baseline-roadmap.md)
 - [桌面代理交付计划](doc/prd/03-desktop-agent-delivery-plan.md)
+- [委托式任务代理：自主执行与方向把控](doc/prd/04-delegated-task-agent.md)
 - [宠物核心系统设计](doc/design/01-pet-core-systems.md)
 - [角色驱动化视觉系统设计](doc/design/05-piko-character-driven-visual-system.md)
 - [角色驱动化视觉技术方案](doc/design/06-piko-character-driven-visual-implementation.md)
