@@ -6,5 +6,5 @@
   "engines": { "node": ">=22.19.0" },
   "scripts": { "test": "node --test *.test.mjs" },
   "dependencies": { "@earendil-works/pi-coding-agent": "1.2.0" },
-  "overrides": { "undici": "8.12.2" }
+  "overrides": { "undici": "8.12.2", "minimatch": "^11.0.1" }
 }

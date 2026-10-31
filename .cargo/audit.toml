@@ -1,0 +1,15 @@
+# cargo-audit 豁免清单（CI 的 cargo audit 从仓库根目录运行，读取本文件）。
+# 原则：只豁免"上游无修复版本且实际影响可控"的通告；出现修复版本立即移除豁免。
+[advisories]
+ignore = [
+  # zstd 0.13.x / zstd-safe 7.x 仅经 wasmtime-internal-cache（wasm 插件沙箱的本地编译缓存，
+  # optional feature wasm-plugins）进入依赖图，wasmtime 50.0.1 仍钉 ^0.13，上游无修复版本：
+  # - RUSTSEC-2026-0391：abandoned stream 数据泄漏到复用 context 的下一个 stream；
+  #   影响面是本机编译缓存条目之间，不触及用户数据流。
+  # - RUSTSEC-2026-0403 / RUSTSEC-2026-0398：legacy frame 流式解压与 Seekable 解压路径，
+  #   wasmtime 缓存不使用这两个解压入口。
+  # 跟进点：wasmtime 依赖 zstd 0.14 / zstd-safe 8.2 的版本发布后，升级并删除本豁免。
+  "RUSTSEC-2026-0391",
+  "RUSTSEC-2026-0403",
+  "RUSTSEC-2026-0398",
+]

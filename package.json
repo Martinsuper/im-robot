@@ -76,6 +76,7 @@
     "fsevents@2.3.2": true
   },
   "overrides": {
-    "katex": "$katex"
+    "katex": "$katex",
+    "minimatch": "^11.0.1"
   }
 }

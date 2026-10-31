@@ -54,8 +54,8 @@ rusqlite = { version = "0.37", features = ["bundled", "backup"] }
 chrono = "0.4"
 chrono-tz = "0.10"
 iana-time-zone = "0.1"
-wasmtime = { version = "49.0.4", optional = true }
-wasmtime-wasi = { version = "49.0.4", optional = true }
+wasmtime = { version = "50.0.1", optional = true }
+wasmtime-wasi = { version = "50.0.1", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3"
