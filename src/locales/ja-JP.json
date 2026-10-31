@@ -63,6 +63,146 @@
       "favorite": "お気に入り",
       "unfavorite": "お気に入り解除",
       "copySource": "ソースをコピー"
+    },
+    "task": {
+      "steer": {
+        "modeLabel": "差し挟み方式",
+        "guidance": "補足",
+        "redirect": "転換",
+        "guidanceHint": "次のマイルストーン境界で注入し、承認権は取り消さない",
+        "redirectHint": "直ちに注入し、未決の承認を取り消す",
+        "pendingNotice": "前の差し挟みがまだ届いていません。しばらく待ってから再試行してください。",
+        "queueBadge": "{count}件を順次送信予定"
+      },
+      "policy": {
+        "cautious": "慎重（すべて事前確認）",
+        "standard": "標準（ファイルは自動、コマンドは確認）",
+        "trusted": "信頼（コマンドも自動、危険なものは除く）"
+      },
+      "policyHint": {
+        "cautious": "ファイル編集もコマンドも毎回確認します。",
+        "standard": "ワークスペース内のファイル編集は自動実行、コマンドと外部書き込みは確認します。",
+        "trusted": "常用コマンドも自動実行。危険なコマンドとワークスペース外への書き込みは確認します。"
+      },
+      "git": {
+        "branch": "タスクブランチを作成しマイルストーンごとにコミット",
+        "files-only": "ブランチを作らず、タスクが触れたファイルだけコミット",
+        "off": "git の安全網を使わない"
+      },
+      "milestone": {
+        "aria": "マイルストーンの進行",
+        "started": "実行中",
+        "completed": "完了",
+        "failed": "失敗",
+        "skipped": "スキップ",
+        "toolDetail": "操作詳細 · {count}件",
+        "preparation": "準備段階の操作 · {count}件"
+      },
+      "receipt": {
+        "ariaLabel": "タスクレシート",
+        "statusCompleted": "タスク完了",
+        "statusSuspended": "タスクは中断して収束しました",
+        "milestones": "マイルストーン状態",
+        "files": "変更ファイル",
+        "openFile": "エディターで開く",
+        "copyPath": "パスをコピー",
+        "copied": "コピーしました",
+        "copyFailed": "コピーに失敗しました。パスを選んで手動でコピーしてください。",
+        "verify": "検証結果",
+        "verifyPassed": "合格",
+        "verifyFailed": "不合格",
+        "outputTruncated": "\n…出力は省略されました",
+        "branch": "ブランチ",
+        "commits": "コミット",
+        "openQuestions": "未解決の質問",
+        "notices": "黄旗記録",
+        "toolEvidence": "ツールの証跡を見る",
+        "inspect": "この実行を読み取り専用で確認",
+        "reject": "差し戻す",
+        "feedbackLabel": "差し戻しフィードバック",
+        "feedbackPlaceholder": "問題点や追加要件を記入してください。送信するとこのタスクから自動的に再開します。",
+        "sendFeedback": "フィードバックを送信して再開",
+        "cancelFeedback": "キャンセル",
+        "accept": "受け入れて閉じる"
+      },
+      "contract": {
+        "ariaLabel": "確認待ちのタスク契約",
+        "title": "タスク契約",
+        "milestones": "マイルストーン",
+        "milestoneTitle": "マイルストーンのタイトル",
+        "milestoneAcceptance": "受け入れ基準の説明",
+        "addMilestone": "マイルストーンを追加",
+        "removeMilestone": "マイルストーンを削除",
+        "verifyCommand": "検証コマンド",
+        "timeMinutes": "時間予算（分、0 は無制限）",
+        "policy": "自律レベル",
+        "gitMode": "git モード",
+        "dirtyHint": "ワークスペースに未コミットの変更がある場合、ホストはこのタスクが触れたファイルだけをコミットし、他の変更には触れません。",
+        "risks": "リスク",
+        "approve": "確認して開始",
+        "reject": "タスクを破棄"
+      },
+      "queue": {
+        "mode": "次のタスクとして予約",
+        "modeHint": "現在のタスク終了後に新しいタスクとして自動送信します",
+        "sendAria": "新タスクを予約",
+        "badge": "キュー内 {count}件",
+        "aria": "予約されたタスク",
+        "remove": "予約タスクを削除",
+        "full": "キューは上限（5件）に達しました。タスク終了後に送信してください。"
+      },
+      "log": {
+        "title": "タスクログ",
+        "loading": "タスクログを読み込み中…",
+        "empty": "タスクログはまだありません。",
+        "loadFailed": "タスクログの読み取りに失敗しました。再試行してください。",
+        "truncated": "ログが長すぎるため先頭256KBのみ表示しています。",
+        "annotationLabel": "タスクへの注釈",
+        "annotationPlaceholder": "注釈を書くと補足指示として送信されます…",
+        "annotationSend": "注釈を送信",
+        "annotationHint": "注釈は次のマイルストーン境界で反映されます。",
+        "annotationClosed": "タスクは終了したため注釈は送信されませんでした。"
+      },
+      "steps": {
+        "button": "完全な履歴を表示",
+        "loading": "完全な履歴を読み込み中…",
+        "loadFailed": "履歴の読み取りに失敗しました。再試行してください。",
+        "archived": "アーカイブ{count}件を含む",
+        "empty": "記録されたツール手順はありません。"
+      },
+      "history": {
+        "contractInterrupted": "タスクは契約確認待ちで中断されました",
+        "restart": "再発行",
+        "restartMissing": "元のタスク情報が欠けているため再発行できません。"
+      }
+    },
+    "project": {
+      "menuLabel": "プロジェクト",
+      "new": "新規プロジェクト",
+      "pickTitle": "プロジェクトフォルダを選択",
+      "loading": "プロジェクトを読み込み中…",
+      "empty": "まだプロジェクトがありません。フォルダを選ぶと作成できます。",
+      "listFailed": "プロジェクト一覧を読み込めませんでした。作業フォルダは選択できます。",
+      "createFailed": "プロジェクトを作成できませんでした。再試行してください。"
+    },
+    "schedule": {
+      "aria": "予約委任",
+      "title": "予約委任",
+      "promptLabel": "タスクプロンプト",
+      "promptPlaceholder": "時間になったらPikoに任せたいこと…",
+      "projectLabel": "プロジェクト",
+      "currentWorkspace": "現在の作業ディレクトリ",
+      "timeLabel": "実行時刻",
+      "policyHint": "自主性レベルはプロジェクトの既定値に従います。",
+      "submit": "予約委任を作成",
+      "created": "予約委任を作成しました。",
+      "createFailed": "予約委任の作成に失敗しました。再試行してください。",
+      "invalidTime": "プロンプトを入力し、未来の時刻を選択してください。",
+      "listFailed": "予約委任の読み取りに失敗しました。再試行してください。",
+      "pendingTitle": "待機中",
+      "pendingEmpty": "待機中の予約委任はありません。",
+      "cancel": "取り消す",
+      "cancelFailed": "キャンセルに失敗しました。再試行してください。"
     }
   },
   "settings": {

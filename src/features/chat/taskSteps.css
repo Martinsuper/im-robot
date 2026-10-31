@@ -1,0 +1,5 @@
+.task-steps { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 10px; font-size: 12px; overflow-wrap: anywhere; }
+.task-steps summary { cursor: pointer; }
+.task-steps p { margin: 6px 0; color: var(--piko-muted, #62736a); }
+.task-steps__list { max-height: 220px; margin: 6px 0; padding-left: 20px; overflow: auto; }
+.task-steps__list li { margin: 3px 0; }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseCommand, eventEnvelope, PROTOCOL_VERSION } from "./protocol.mjs";
 
 test("reject incompatible versions, malformed commands and stale task commands", () => {
-  for (const value of [null, [], {}, { type: "cancel", protocolVersion: 2 },
+  for (const value of [null, [], {}, { type: "cancel", protocolVersion: 3 },
     { type: "approval", approvalId: "a", allowed: "false" },
     { type: "steer", text: " " }, { type: "app-result" },
     { type: "cancel", requestId: "old" }, { type: "start" }]) {
@@ -20,7 +20,7 @@ test("accept legacy clients and versioned controls without coercing approvals", 
 
 test("stamp events with authoritative protocol and task identity", () => {
   assert.deepEqual(eventEnvelope({ type: "completed", requestId: "wrong", protocolVersion: 9 }, "current"),
-    { type: "completed", protocolVersion: 1, requestId: "current" });
+    { type: "completed", protocolVersion: 2, requestId: "current" });
 });
 
 test("real sidecar preserves version and identity throughout a task", { timeout: 25000 }, async (t) => {

@@ -23,24 +23,103 @@ use tokio::{
     sync::Mutex,
 };
 
-// Includes time spent waiting for user confirmation. Expiry never retries a write.
+// 04 §4.4 活性超时：仅在"无工具运行 && 无审批等待 && 无契约等待"时推进；
+// 工具运行单列上限（可配，见 app_settings::agent_tool_timeout_minutes）；
+// 任务总时限改为预算，耗尽先请求优雅收尾再终止。
 const AGENT_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-const AGENT_TASK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+const DEFAULT_TOOL_TIMEOUT_MINUTES: u64 = 20;
+const COMPANION_BUDGET_MINUTES: u64 = 30;
+const CODING_BUDGET_MINUTES: u64 = 90;
+pub(crate) const MAX_BUDGET_MINUTES: u64 = 7 * 24 * 60;
+const BUDGET_GRACE: std::time::Duration = std::time::Duration::from_secs(3 * 60);
+const WAIT_RECHECK: std::time::Duration = std::time::Duration::from_secs(60);
+const BUDGET_WRAP_UP_TEXT: &str = "任务预算即将耗尽，请收尾：提交当前进度并输出总结";
 const TIMEOUT_MESSAGE: &str =
     "任务等待过久，已停止。此前可能已有部分操作完成，请检查结果后再决定是否重试。";
+const TOOL_TIMEOUT_MESSAGE: &str =
+    "单个工具已连续运行过久，已停止。此前可能已有部分操作完成，请检查结果后再决定是否重试。";
+const BUDGET_EXHAUSTED_MESSAGE: &str =
+    "任务预算已用尽，已停止。此前可能已有部分操作完成，请检查结果后再决定是否重试。";
+/// P2 §9 崩溃自动续跑：发给 UI 的 notice 文案。
+const AUTO_RESUMED_NOTICE: &str = "任务进程意外退出，已自动续跑";
+/// P2 §9 任务日志读取上限：256KB，超出截断。
+const TASK_LOG_LIMIT: usize = 256 * 1024;
+
+/// 等待一行输出时的挂起原因；Err 携带终止原因，Ok(None) 表示对端关闭。
+enum LineWait {
+    Line(String),
+    Eof,
+    Timeout,
+    Shutdown,
+    Comm(String),
+}
 
 async fn next_agent_line<R: AsyncBufRead + Unpin>(
     lines: &mut Lines<R>,
-    deadline: tokio::time::Instant,
-    idle_timeout: std::time::Duration,
-) -> Result<Option<String>, String> {
-    let until = deadline.min(tokio::time::Instant::now() + idle_timeout);
+    until: tokio::time::Instant,
+) -> LineWait {
     let shutdown = crate::background::SUPERVISOR.token();
     tokio::select! { biased;
-        _=shutdown.cancelled()=>Err("应用正在退出，任务已停止".into()),
-        result=tokio::time::timeout_at(until,lines.next_line())=>result
-            .map_err(|_|TIMEOUT_MESSAGE.to_string())?
-            .map_err(|_|"Agent 通信中断。此前可能已有部分操作完成，请检查结果。".to_string()),
+        _=shutdown.cancelled()=>LineWait::Shutdown,
+        result=tokio::time::timeout_at(until,lines.next_line())=>match result {
+            Ok(Ok(Some(line)))=>LineWait::Line(line),
+            Ok(Ok(None))=>LineWait::Eof,
+            Ok(Err(_))=>LineWait::Comm("Agent 通信中断。此前可能已有部分操作完成，请检查结果。".into()),
+            Err(_)=>LineWait::Timeout,
+        },
+    }
+}
+
+/// 一次阻塞读取前的活性状态：决定超时上限与超时后的归类。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Liveness {
+    /// 无工具运行、无审批/契约等待：idle 超时推进。
+    Idle,
+    /// 有工具在运行：按最早启动时间加单工具上限。
+    ToolRun(tokio::time::Instant),
+    /// 审批/业务确认等待用户：不推进 idle，也不受工具上限约束。
+    AwaitingUser,
+    /// 契约等待用户裁决：预算同时冻结。
+    AwaitingContract,
+}
+
+/// 读取下一行前应等待到的时刻；预算（除契约冻结外）总是生效。
+fn line_deadline(
+    now: tokio::time::Instant,
+    budget_deadline: tokio::time::Instant,
+    liveness: Liveness,
+    tool_timeout: std::time::Duration,
+) -> tokio::time::Instant {
+    match liveness {
+        Liveness::AwaitingContract => now + WAIT_RECHECK,
+        Liveness::AwaitingUser => budget_deadline.min(now + WAIT_RECHECK),
+        Liveness::ToolRun(started) => (started + tool_timeout).min(budget_deadline),
+        Liveness::Idle => (now + AGENT_IDLE_TIMEOUT).min(budget_deadline),
+    }
+}
+
+/// 超时后的归类：预算优先（触发收尾），其次工具上限；等待用户期间的定时唤醒不算超时。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TimeoutKind {
+    Budget,
+    Tool,
+    Idle,
+    Wake,
+}
+
+fn classify_line_timeout(
+    now: tokio::time::Instant,
+    budget_deadline: tokio::time::Instant,
+    liveness: Liveness,
+    tool_timeout: std::time::Duration,
+) -> TimeoutKind {
+    if liveness != Liveness::AwaitingContract && now >= budget_deadline {
+        return TimeoutKind::Budget;
+    }
+    match liveness {
+        Liveness::ToolRun(started) if now >= started + tool_timeout => TimeoutKind::Tool,
+        Liveness::Idle => TimeoutKind::Idle,
+        _ => TimeoutKind::Wake,
     }
 }
 
@@ -81,11 +160,33 @@ impl AgentRuntime {
         let mut waiting = false;
         for task in active.values() {
             let pending = task.pending_actions.try_lock().ok()?;
-            waiting |= !pending.is_empty() || task.workspace_call.is_some();
+            let contract_wait = task
+                .pending_contract
+                .lock()
+                .map(|contract| contract.is_some())
+                .unwrap_or(false);
+            let approvals = task
+                .pending_approvals
+                .lock()
+                .map(|approvals| !approvals.is_empty())
+                .unwrap_or(false);
+            waiting |=
+                !pending.is_empty() || approvals || contract_wait || task.workspace_call.is_some();
         }
         Some((!active.is_empty(), waiting))
     }
 }
+
+/// 等待用户裁决的契约：由事件循环在转发 contract-proposed 时登记，
+/// agent_confirm_contract 校验并清除，同时作为活性/宠物状态的一部分。
+type PendingContract = Arc<std::sync::Mutex<Option<String>>>;
+
+/// 待用户审批的 sidecar 审批集合：agent_approve 的归属校验依据（04 §3.2 H7）。
+type PendingApprovals = Arc<std::sync::Mutex<HashMap<String, String>>>;
+
+/// agent_confirm_contract 可能携带更小的契约时限（doc/design/18 §3），
+/// 事件循环在下一轮消费后归零。
+type BudgetOverride = Arc<std::sync::Mutex<Option<u64>>>;
 
 struct RunningTask {
     _data_lease: crate::data_gate::ReadLease,
@@ -94,6 +195,9 @@ struct RunningTask {
     stdin: Arc<Mutex<ChildStdin>>,
     child: Arc<Mutex<Child>>,
     pending_actions: Arc<Mutex<HashMap<String, String>>>,
+    pending_approvals: PendingApprovals,
+    pending_contract: PendingContract,
+    budget_override: BudgetOverride,
     workspace_call: Option<String>,
     passport: bool,
     read_only: bool,
@@ -133,22 +237,273 @@ fn validate_task_start(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStartInput {
-    request_id: String,
-    conversation_id: String,
-    knowledge_scope: Option<String>,
-    cwd: Option<String>,
+    pub(crate) request_id: String,
+    pub(crate) conversation_id: String,
+    pub(crate) knowledge_scope: Option<String>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) prompt: String,
+    #[serde(default)]
+    pub(crate) unified: bool,
+    #[serde(default)]
+    pub(crate) import_history: bool,
+    pub(crate) attachment_action: Option<String>,
+    pub(crate) context_id: Option<String>,
+    pub(crate) screenshot: Option<crate::screen_capture::ScreenshotPreview>,
+    pub(crate) include_screenshot: Option<bool>,
+    pub(crate) verification_of: Option<String>,
+    pub(crate) proactive_message_id: Option<String>,
+    pub(crate) resume_of: Option<String>,
+    // 委托式任务扩展（doc/design/18 §2）：缺省时 companion，现有行为零变化。
+    #[serde(default)]
+    pub(crate) task_kind: Option<String>,
+    #[serde(default)]
+    pub(crate) policy: Option<TaskPolicyInput>,
+    #[serde(default)]
+    pub(crate) budget: Option<TaskBudgetInput>,
+    #[serde(default)]
+    pub(crate) project_id: Option<String>,
+    #[serde(default)]
+    pub(crate) verify_command: Option<String>,
+    #[serde(default)]
+    pub(crate) git_mode: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskPolicyInput {
+    pub(crate) workspace_files: Option<String>,
+    pub(crate) shell: Option<String>,
+    pub(crate) outside_workspace: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskBudgetInput {
+    pub(crate) time_minutes: Option<u64>,
+    pub(crate) token_budget: Option<u64>,
+}
+
+/// 解析任务类别：缺省 companion（现状行为）；非法值直接拒绝。
+fn resolve_task_kind(input: Option<&str>) -> Result<&'static str, String> {
+    match input.map(str::trim) {
+        None | Some("") => Ok("companion"),
+        Some("companion") => Ok("companion"),
+        Some("coding") => Ok("coding"),
+        Some(_) => Err("无效的任务类型，仅支持 companion/coding".into()),
+    }
+}
+
+/// doc/design/18 §5 预设档位；接受中英文名称。
+pub(crate) fn policy_preset(name: &str) -> Option<Value> {
+    match name.trim() {
+        "cautious" | "谨慎" => {
+            Some(json!({"workspaceFiles":"confirm","shell":"confirm","outsideWorkspace":"confirm"}))
+        }
+        "standard" | "标准" => {
+            Some(json!({"workspaceFiles":"auto","shell":"confirm","outsideWorkspace":"confirm"}))
+        }
+        "trusted" | "信任" => {
+            Some(json!({"workspaceFiles":"auto","shell":"auto","outsideWorkspace":"confirm"}))
+        }
+        _ => None,
+    }
+}
+
+fn default_policy(task_kind: &str) -> Value {
+    if task_kind == "coding" {
+        json!({"workspaceFiles":"auto","shell":"confirm","outsideWorkspace":"confirm"})
+    } else {
+        json!({"workspaceFiles":"confirm","shell":"confirm","outsideWorkspace":"confirm"})
+    }
+}
+
+/// 校验并归一策略输入；outsideWorkspace 在 v2 恒为 confirm（不提供自动档）。
+fn resolve_policy_input(input: &TaskPolicyInput) -> Result<Value, String> {
+    let mut policy = default_policy("companion");
+    for (key, value) in [
+        ("workspaceFiles", &input.workspace_files),
+        ("shell", &input.shell),
+        ("outsideWorkspace", &input.outside_workspace),
+    ] {
+        let Some(value) = value.as_deref().map(str::trim).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        let valid = match key {
+            "outsideWorkspace" => value == "confirm",
+            _ => matches!(value, "auto" | "confirm"),
+        };
+        if !valid {
+            return Err(format!(
+                "无效的任务策略：{key} 仅支持 auto/confirm（工作区外恒为 confirm）"
+            ));
+        }
+        policy[key] = json!(value);
+    }
+    Ok(policy)
+}
+
+/// 组合出随 start 下发的策略对象：显式输入 > 项目档位 > 任务类型默认。
+fn resolve_policy(
+    input: Option<&TaskPolicyInput>,
+    project: Option<&crate::project_registry::Project>,
+    task_kind: &str,
+) -> Result<Value, String> {
+    if let Some(input) = input {
+        return resolve_policy_input(input);
+    }
+    if let Some(name) = project.and_then(|project| project.policy.as_deref()) {
+        return policy_preset(name)
+            .ok_or_else(|| "无效的自主权档位，仅支持 cautious/standard/trusted".to_string());
+    }
+    Ok(default_policy(task_kind))
+}
+
+/// 预算解析：coding 默认 90 分钟，companion 保持 30；0 表示不限时。
+fn resolve_budget(input: Option<&TaskBudgetInput>, task_kind: &str) -> Result<(u64, u64), String> {
+    let default_minutes = if task_kind == "coding" {
+        CODING_BUDGET_MINUTES
+    } else {
+        COMPANION_BUDGET_MINUTES
+    };
+    let Some(input) = input else {
+        return Ok((default_minutes, 0));
+    };
+    let minutes = input.time_minutes.unwrap_or(default_minutes);
+    if minutes > MAX_BUDGET_MINUTES {
+        return Err("任务预算超出范围（最多 7 天）".into());
+    }
+    Ok((minutes, input.token_budget.unwrap_or(0)))
+}
+
+/// git 安全网模式：coding 默认开分支（仓库不干净时由编排器降级为 files-only），companion 关闭。
+fn resolve_git_mode(input: Option<&str>, task_kind: &str) -> Result<&'static str, String> {
+    match input.map(str::trim) {
+        None | Some("") => Ok(if task_kind == "coding" {
+            "branch"
+        } else {
+            "off"
+        }),
+        Some("branch") => Ok("branch"),
+        Some("files-only") => Ok("files-only"),
+        Some("off") => Ok("off"),
+        Some(_) => Err("无效的 git 模式，仅支持 branch/files-only/off".into()),
+    }
+}
+
+/// P2 §9 预算收尾协议化：sidecar 以 reason==="budget" 为权威收尾信号，文本仅作旧宿主回退。
+fn budget_wrap_up_command() -> Value {
+    json!({"type":"steer", "text":BUDGET_WRAP_UP_TEXT, "mode":"guidance", "reason":"budget"})
+}
+
+/// 崩溃自动续跑（doc/design/18 §9）所需的启动参数快照；
+/// 仅 coding 任务捕获（companion/核对/通行证通道不自动续跑）。
+struct AutoResumeInput {
+    workspace: Option<PathBuf>,
     prompt: String,
-    #[serde(default)]
     unified: bool,
-    #[serde(default)]
-    import_history: bool,
-    attachment_action: Option<String>,
-    context_id: Option<String>,
-    screenshot: Option<crate::screen_capture::ScreenshotPreview>,
-    include_screenshot: Option<bool>,
-    verification_of: Option<String>,
-    proactive_message_id: Option<String>,
-    resume_of: Option<String>,
+    knowledge_scope: Option<String>,
+    policy: Option<TaskPolicyInput>,
+    budget: Option<TaskBudgetInput>,
+    project_id: Option<String>,
+    verify_command: Option<String>,
+    git_mode: &'static str,
+}
+
+/// 自动续跑门槛：有 coding 续跑计划、设置开启、非用户取消、且该任务链尚未自动续跑过。
+fn auto_resume_allowed(
+    plan: Option<&AutoResumeInput>,
+    enabled: bool,
+    user_cancelled: bool,
+    chain_used: bool,
+) -> bool {
+    plan.is_some() && enabled && !user_cancelled && !chain_used
+}
+
+/// 续跑任务标识：沿用原 id 前缀并附加时间戳，保证 journal 唯一且合法。
+fn auto_resume_request_id(previous: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut id: String = previous.chars().take(60).collect();
+    id.push_str(&format!("-a{:x}", nanos));
+    id
+}
+
+/// 用户是否已请求取消（取消后的 EOF 是正常收尾，绝不自动续跑）。
+fn task_cancelled(app: &AppHandle, request_id: &str) -> bool {
+    app.state::<AgentRuntime>()
+        .0
+        .try_lock()
+        .ok()
+        .and_then(|slot| {
+            slot.get(request_id)
+                .map(|task| task.cancelled.is_cancelled())
+        })
+        .unwrap_or(false)
+}
+
+/// EOF 且通过门槛后的续跑：链标记（防循环）在决策点已占用，这里沿 resume_of 链拉起新任务。
+async fn auto_resume_task(
+    app: &AppHandle,
+    previous_id: &str,
+    conversation_id: &str,
+    plan: AutoResumeInput,
+) {
+    let input = AgentStartInput {
+        request_id: auto_resume_request_id(previous_id),
+        conversation_id: conversation_id.to_string(),
+        knowledge_scope: plan.knowledge_scope,
+        cwd: plan
+            .workspace
+            .map(|path| path.to_string_lossy().into_owned()),
+        prompt: plan.prompt,
+        unified: plan.unified,
+        import_history: false,
+        attachment_action: None,
+        context_id: None,
+        screenshot: None,
+        include_screenshot: None,
+        verification_of: None,
+        proactive_message_id: None,
+        resume_of: Some(previous_id.to_string()),
+        task_kind: Some("coding".into()),
+        policy: plan.policy,
+        budget: plan.budget,
+        project_id: plan.project_id,
+        verify_command: plan.verify_command,
+        git_mode: Some(plan.git_mode.to_string()),
+    };
+    if let Err(error) = start_agent(app.clone(), app.state::<AgentRuntime>(), input, false).await {
+        emit(
+            app,
+            previous_id,
+            json!({"type":"notice", "level":"warn", "text":format!("自动续跑失败：{error}")}),
+        );
+        crate::notifications::task_event(
+            app,
+            previous_id,
+            "error",
+            "Piko 任务自动续跑失败",
+            &error,
+        );
+    }
+}
+
+/// 从事件流末尾派生独立监督任务执行续跑；独立的函数边界避免启动 future
+/// 与事件流 future 在类型上互相嵌套（Send 推导需要无环）。
+fn spawn_auto_resume(
+    app: AppHandle,
+    previous_id: String,
+    conversation_id: String,
+    plan: AutoResumeInput,
+) {
+    crate::background::SUPERVISOR.spawn_async_effect(
+        "agent-auto-resume",
+        move |_worker| async move {
+            auto_resume_task(&app, &previous_id, &conversation_id, plan).await;
+        },
+    );
 }
 
 fn verify_entities(tool: &str, result: &Value, current: &Value) -> bool {
@@ -200,7 +555,7 @@ fn verification_tool_allowed(risk: &str, confirmation: &str) -> bool {
     risk == "read" && confirmation == "never"
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 80 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
@@ -310,21 +665,129 @@ pub fn agent_get_diagnostics(app: AppHandle, request_id: String) -> Result<Value
     crate::storage::read(&path)
 }
 
+/// P2 §9 任务日志读取：读 <workspace>/.piko/task-<requestId>.md，超限截断并保留完整字符。
+fn read_task_log_at(workspace: &Path, request_id: &str) -> Result<Option<(String, bool)>, String> {
+    let path = workspace
+        .join(".piko")
+        .join(format!("task-{request_id}.md"));
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if bytes.len() > TASK_LOG_LIMIT {
+        let text = String::from_utf8_lossy(&bytes[..TASK_LOG_LIMIT]).into_owned();
+        return Ok(Some((text.trim_end_matches('\u{FFFD}').to_string(), true)));
+    }
+    Ok(Some((String::from_utf8_lossy(&bytes).into_owned(), false)))
+}
+
+/// 前端日志查看/批注（doc/design/18 §9）：工作目录取任务快照。
+#[tauri::command]
+pub fn agent_read_task_log(
+    runtime: State<'_, AgentRuntime>,
+    request_id: String,
+) -> Result<Value, String> {
+    if !valid_id(&request_id) {
+        return Err("无效的任务标识".into());
+    }
+    let workspace = runtime
+        .1
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&request_id)
+        .and_then(|snapshot| snapshot.cwd.clone())
+        .ok_or("任务不存在或工作目录不可用")?;
+    match read_task_log_at(Path::new(&workspace), &request_id)? {
+        Some((content, truncated)) => {
+            Ok(json!({"exists": true, "content": content, "truncated": truncated}))
+        }
+        None => Ok(json!({"exists": false, "content": "", "truncated": false})),
+    }
+}
+
+/// P2 §9 步骤读取：常驻步骤 + （可选）steps-archive 归档段按时间序合并。
+fn task_steps_at(
+    agent_dir: &Path,
+    request_id: &str,
+    include_archive: bool,
+) -> Result<(Vec<journal::TaskStep>, usize), String> {
+    let records = TaskJournal::new(agent_dir).all()?;
+    let record = records
+        .iter()
+        .find(|record| record.request_id == request_id)
+        .ok_or("任务记录不存在")?;
+    let mut steps = record.steps.clone();
+    let archive_path = agent_dir
+        .join("steps-archive")
+        .join(format!("{request_id}.json"));
+    let mut archived: Vec<journal::TaskStep> = if archive_path.exists() {
+        crate::storage::read(&archive_path)?
+    } else {
+        Vec::new()
+    };
+    let archived_count = archived.len();
+    if include_archive {
+        archived.append(&mut steps);
+        steps = archived;
+    }
+    Ok((steps, archived_count))
+}
+
+/// 前端"完整流水"（doc/design/18 §9）：archivedCount 报告归档段规模。
+#[tauri::command]
+pub fn agent_get_task_steps(
+    app: AppHandle,
+    request_id: String,
+    include_archive: Option<bool>,
+) -> Result<Value, String> {
+    if !valid_id(&request_id) {
+        return Err("无效的任务标识".into());
+    }
+    let agent_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("agent");
+    let (steps, archived_count) =
+        task_steps_at(&agent_dir, &request_id, include_archive.unwrap_or(false))?;
+    Ok(json!({"steps": steps, "archivedCount": archived_count}))
+}
+
 #[tauri::command]
 pub async fn agent_list_tasks(
     app: AppHandle,
     runtime: State<'_, AgentRuntime>,
-) -> Result<Vec<journal::TaskRecord>, String> {
+) -> Result<Vec<Value>, String> {
     let slot = runtime.0.lock().await;
     let directory = app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("agent");
-    TaskJournal::new(&directory).recover_active(
+    let records = TaskJournal::new(&directory).recover_active(
         &slot.keys().map(String::as_str).collect::<Vec<_>>(),
         crate::common::unix_timestamp(),
-    )
+    )?;
+    // 内存快照里有原任务的 prompt/cwd，供前端"重新发起"使用（doc 18 §9）；
+    // 快照不持久化，重启后字段缺失由前端降级处理。
+    let snapshots = runtime.1.lock().map_err(|_| "任务快照状态不可用")?;
+    Ok(records
+        .into_iter()
+        .map(|record| {
+            let mut value = serde_json::to_value(&record).unwrap_or(Value::Null);
+            if let Some((_, snapshot)) = snapshots
+                .iter()
+                .find(|(_, snapshot)| snapshot.request_id == record.request_id)
+            {
+                value["prompt"] = json!(snapshot.prompt);
+                if let Some(cwd) = &snapshot.cwd {
+                    value["cwd"] = json!(cwd);
+                }
+            }
+            value
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -376,6 +839,12 @@ pub(crate) async fn start_passport_agent(
         verification_of: None,
         proactive_message_id: None,
         resume_of: None,
+        task_kind: None,
+        policy: None,
+        budget: None,
+        project_id: None,
+        verify_command: None,
+        git_mode: None,
     };
     start_agent(app.clone(), app.state(), input, true).await
 }
@@ -384,6 +853,116 @@ struct WorkspaceDirs {
     selected_workspace: Option<PathBuf>,
     data_dir: PathBuf,
     cwd: PathBuf,
+}
+
+/// 工具运行单列上限（可配）：0 视为未配置，回退默认 20 分钟。
+fn tool_timeout_duration(settings: &crate::app_settings::AppSettings) -> std::time::Duration {
+    std::time::Duration::from_secs(
+        if settings.agent_tool_timeout_minutes == 0 {
+            DEFAULT_TOOL_TIMEOUT_MINUTES
+        } else {
+            settings.agent_tool_timeout_minutes.min(24 * 60)
+        } * 60,
+    )
+}
+
+/// projectId 解析（04 §4.6）：自动补全工作目录与验收命令；显式传入的字段优先。
+fn resolve_start_project(
+    app: &AppHandle,
+    input: &mut AgentStartInput,
+) -> Result<Option<crate::project_registry::Project>, String> {
+    let Some(project_id) = input
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+    else {
+        return Ok(None);
+    };
+    if !valid_id(&project_id) {
+        return Err("无效的项目标识".into());
+    }
+    let project = crate::project_registry::resolve_for_start(app, &project_id)?;
+    if input
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|cwd| !cwd.is_empty())
+        .is_none()
+    {
+        input.cwd = Some(project.path.clone());
+    }
+    if input.verify_command.is_none() {
+        input.verify_command = project.verify_command.clone();
+    }
+    Ok(Some(project))
+}
+
+/// 宠物任务事件（04 §4.7）：复用 pet-visual-event 通道，phase ∈ working/confirming/success/error。
+fn task_pet(app: &AppHandle, phase: crate::runtime_types::TaskPhase) {
+    let _ = app.emit_to(
+        "pet",
+        "pet-visual-event",
+        crate::runtime_types::PetVisualEvent::Task { phase },
+    );
+}
+
+fn task_waiting_body(kind: &str, event: &Value) -> String {
+    match kind {
+        "approval" => format!(
+            "任务需要确认工具：{}",
+            event["tool"].as_str().unwrap_or("命令")
+        ),
+        "action-proposed" => "任务提出了待确认操作".to_string(),
+        "workspace-required" => "任务需要选择工作目录".to_string(),
+        "contract-proposed" => "任务契约等待你的确认".to_string(),
+        _ => "任务正在等待确认".to_string(),
+    }
+}
+
+fn task_prompt_head(app: &AppHandle, request_id: &str) -> String {
+    app.state::<AgentRuntime>()
+        .1
+        .lock()
+        .ok()
+        .and_then(|snapshots| {
+            snapshots
+                .get(request_id)
+                .map(|snapshot| snapshot.prompt.chars().take(40).collect::<String>())
+        })
+        .unwrap_or_default()
+}
+
+/// stdout EOF 后尽力采集退出码/信号（04 §3.2 H2）。
+async fn child_exit_detail(child: &Arc<Mutex<Child>>) -> String {
+    let status = tokio::time::timeout(std::time::Duration::from_millis(300), async {
+        child.lock().await.try_wait().ok().flatten()
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some(status) = status else {
+        return String::new();
+    };
+    if let Some(code) = status.code() {
+        return format!("（退出码 {code}）");
+    }
+    if let Some(signal) = unix_signal(&status) {
+        return format!("（被信号 {signal} 终止）");
+    }
+    String::new()
+}
+
+#[cfg(unix)]
+fn unix_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn unix_signal(_: &std::process::ExitStatus) -> Option<i32> {
+    None
 }
 
 fn resolve_workspace_dirs(
@@ -666,7 +1245,7 @@ fn build_business_tools(app: &AppHandle, unified: bool, read_only: bool, resumin
     crate::plugins::bridge::provider_tools("openai", &manifests)
 }
 
-async fn start_agent(
+pub(crate) async fn start_agent(
     app: AppHandle,
     runtime: State<'_, AgentRuntime>,
     mut input: AgentStartInput,
@@ -686,6 +1265,9 @@ async fn start_agent(
         return Err("任务描述最多 100 KB".into());
     }
     let data_lease = crate::data_gate::try_read()?;
+    let task_kind = resolve_task_kind(input.task_kind.as_deref())?;
+    let git_mode = resolve_git_mode(input.git_mode.as_deref(), task_kind)?;
+    let project = resolve_start_project(&app, &mut input)?;
     let WorkspaceDirs {
         selected_workspace,
         data_dir,
@@ -714,12 +1296,29 @@ async fn start_agent(
     let operation_root = resume_root
         .clone()
         .unwrap_or_else(|| input.request_id.clone());
+    let resume_operation_root = operation_root.clone();
     let resuming = resumed.is_some();
     let read_only = verification.is_some();
     let settings = crate::settings::read_settings(&app);
     if settings.ai.model.trim().is_empty() || settings.ai.base_url.trim().is_empty() {
         return Err("请先在模型设置中配置模型和 API 地址".into());
     }
+    let policy_json = resolve_policy(input.policy.as_ref(), project.as_ref(), task_kind)?;
+    let (budget_minutes, token_budget) = resolve_budget(input.budget.as_ref(), task_kind)?;
+    let tool_timeout = tool_timeout_duration(&settings);
+    // modelOverride 只覆盖模型名；provider/baseUrl 沿用全局设置（04 §4.6）。
+    let model = project
+        .as_ref()
+        .and_then(|project| project.model_override.as_deref())
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| settings.ai.model.clone());
+    let context_window = project
+        .as_ref()
+        .map(|project| project.context_window)
+        .filter(|window| *window > 0)
+        .unwrap_or(settings.ai.context_window);
     let knowledge_db = app.state::<Arc<crate::memory::MemoryDb>>();
     let knowledge_scope = crate::memory::knowledge::bind_conversation(
         &knowledge_db,
@@ -727,6 +1326,22 @@ async fn start_agent(
         &input.request_id,
         input.knowledge_scope.as_deref(),
     )?;
+    // P2 §9：崩溃自动续跑的启动参数快照；companion/核对/通行证通道不捕获（不自动续跑）。
+    let auto_resume = if task_kind == "coding" && !passport && !read_only {
+        Some(AutoResumeInput {
+            workspace: selected_workspace.clone(),
+            prompt: model_prompt.clone(),
+            unified: input.unified,
+            knowledge_scope: knowledge_scope.clone(),
+            policy: input.policy.clone(),
+            budget: input.budget,
+            project_id: input.project_id.clone(),
+            verify_command: input.verify_command.clone(),
+            git_mode,
+        })
+    } else {
+        None
+    };
     // Backfill conversation links before the task journal can evict old records.
     let saved_history = crate::chat_session::repository::try_read_chat_history(&app)?;
     let (child, stdin, stdout) = spawn_agent_child(&app, &input.request_id, &cwd, &data_dir)?;
@@ -811,12 +1426,15 @@ async fn start_agent(
         "conversationId": conversation_id,
         "requestId": input.request_id, "resumeRoot":resume_root, "dataDir": data_dir,
         "provider": settings.ai.provider, "baseUrl": settings.ai.base_url,
-        "model": settings.ai.model, "apiKey": crate::credentials::read_api_key()?.unwrap_or_default(),
+        "model": model, "apiKey": crate::credentials::read_api_key()?.unwrap_or_default(),
         "autoApproveCommands":!passport && settings.agent_auto_approve_commands,
         "readOnly":read_only,
-        "contextWindow":settings.ai.context_window,"maxOutputTokens":settings.ai.max_output_tokens,"timeoutSeconds":settings.ai.timeout_seconds,
+        "contextWindow":context_window,"maxOutputTokens":settings.ai.max_output_tokens,"timeoutSeconds":settings.ai.timeout_seconds,
         "unified":input.unified, "passport":passport, "workspace":selected_workspace, "businessTools":business_tools, "serializeSystemTools":true,
-        "systemPrompt":system_prompt, "history":history, "images":images });
+        "systemPrompt":system_prompt, "history":history, "images":images,
+        "taskKind":task_kind, "policy":policy_json,
+        "budget":{"timeMinutes":budget_minutes,"tokenBudget":token_budget},
+        "projectId":input.project_id, "verifyCommand":input.verify_command, "gitMode":git_mode });
     journal.start_linked(
         &input.request_id,
         &conversation_id,
@@ -857,6 +1475,9 @@ async fn start_agent(
     let request_id = input.request_id;
     let history_prompt = Arc::new(Mutex::new(history_prompt));
     let pending_actions = Arc::new(Mutex::new(HashMap::new()));
+    let pending_approvals: PendingApprovals = Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let pending_contract: PendingContract = Arc::new(std::sync::Mutex::new(None));
+    let budget_override: BudgetOverride = Arc::new(std::sync::Mutex::new(None));
     let shutdown_stdin = stdin.clone();
     slot.insert(
         request_id.clone(),
@@ -867,6 +1488,9 @@ async fn start_agent(
             stdin: stdin.clone(),
             child: child.clone(),
             pending_actions: pending_actions.clone(),
+            pending_approvals: pending_approvals.clone(),
+            pending_contract: pending_contract.clone(),
+            budget_override: budget_override.clone(),
             workspace_call: None,
             passport,
             read_only,
@@ -880,16 +1504,123 @@ async fn start_agent(
     drop(slot);
     crate::background::SUPERVISOR.spawn_async_effect("agent-stream", move |_worker| async move {
         let mut lines = BufReader::new(stdout).lines();
-        let deadline = tokio::time::Instant::now() + AGENT_TASK_TIMEOUT;
+        // P2 §9 崩溃自动续跑：coding 任务的续跑快照与本轮是否已决定续跑。
+        let mut auto_resume = auto_resume;
+        let mut resume_plan: Option<AutoResumeInput> = None;
+        // 任务预算（04 §4.4）：coding 默认 90 分钟、companion 保持 30；0 表示不限时。
+        let mut budget_deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(
+                if budget_minutes == 0 {
+                    MAX_BUDGET_MINUTES
+                } else {
+                    budget_minutes
+                } * 60,
+            );
+        let mut budget_warned = false;
+        let mut frozen_budget: Option<std::time::Duration> = None;
+        let mut running_tools: HashMap<String, tokio::time::Instant> = HashMap::new();
         let mut response = String::new();
         let mut citation_evidence = memory_context.unwrap_or_default();
         let mut terminal_event = loop {
-            let line = match next_agent_line(&mut lines, deadline, AGENT_IDLE_TIMEOUT).await {
-                Ok(Some(line)) => line,
-                Ok(None) => {
-                    break json!({"type":"failed", "message":"Agent 进程意外退出。此前可能已有部分操作完成，请检查结果。"})
+            // agent_confirm_contract 可能携带更小的契约时限；每轮消费一次。
+            if let Some(minutes) = budget_override.lock().ok().and_then(|mut cell| cell.take()) {
+                let limited = tokio::time::Instant::now()
+                    + std::time::Duration::from_secs(minutes.saturating_mul(60));
+                if limited < budget_deadline {
+                    budget_deadline = limited;
                 }
-                Err(message) => break json!({"type":"failed", "message":message}),
+            }
+            let contract_wait = pending_contract
+                .lock()
+                .map(|contract| contract.is_some())
+                .unwrap_or(false);
+            let now = tokio::time::Instant::now();
+            if contract_wait {
+                // 契约等待用户裁决：预算冻结，批准后从剩余预算继续。
+                frozen_budget =
+                    Some(budget_deadline.saturating_duration_since(now));
+            } else if let Some(remaining) = frozen_budget.take() {
+                budget_deadline = now + remaining;
+            }
+            let user_wait = !pending_actions
+                .try_lock()
+                .map(|drafts| drafts.is_empty())
+                .unwrap_or(false)
+                || pending_approvals
+                    .lock()
+                    .map(|approvals| !approvals.is_empty())
+                    .unwrap_or(false)
+                || app
+                    .state::<AgentRuntime>()
+                    .0
+                    .try_lock()
+                    .ok()
+                    .is_some_and(|slot| {
+                        slot.get(&request_id)
+                            .is_some_and(|task| task.workspace_call.is_some())
+                    });
+            let earliest_tool = running_tools.values().min().copied();
+            let liveness = if contract_wait {
+                Liveness::AwaitingContract
+            } else if user_wait {
+                Liveness::AwaitingUser
+            } else if let Some(started) = earliest_tool {
+                Liveness::ToolRun(started)
+            } else {
+                Liveness::Idle
+            };
+            let until = line_deadline(now, budget_deadline, liveness, tool_timeout);
+            let line = match next_agent_line(&mut lines, until).await {
+                LineWait::Line(line) => line,
+                LineWait::Eof => {
+                    // H2：采集退出码并入 failed 文案，方便排查崩溃。
+                    let detail = child_exit_detail(&child).await;
+                    // P2 §9：coding 任务崩溃自动续跑一次（用户取消/设置关闭/链已续跑除外）。
+                    if auto_resume_allowed(
+                        auto_resume.as_ref(),
+                        crate::settings::read_settings(&app).agent_auto_resume_enabled,
+                        task_cancelled(&app, &request_id),
+                        journal.auto_resume_used(&resume_operation_root),
+                    ) {
+                        resume_plan = auto_resume.take();
+                    }
+                    break json!({"type":"failed", "message":format!("Agent 进程意外退出{detail}。此前可能已有部分操作完成，请检查结果。")});
+                }
+                LineWait::Shutdown => {
+                    break json!({"type":"failed", "message":"应用正在退出，任务已停止"})
+                }
+                LineWait::Comm(message) => break json!({"type":"failed", "message":message}),
+                LineWait::Timeout => {
+                    // 用唤醒时刻归类：预算/工具/idle 的到期点以实际经过时间为准。
+                    let woke = tokio::time::Instant::now();
+                    let kind = classify_line_timeout(woke, budget_deadline, liveness, tool_timeout);
+                    match kind {
+                        TimeoutKind::Budget => {
+                            // 预算耗尽不立即失败：先请求编排器优雅收尾，再给 3 分钟宽限。
+                            if budget_warned {
+                                break json!({"type":"failed", "message":BUDGET_EXHAUSTED_MESSAGE});
+                            }
+                            budget_warned = true;
+                            budget_deadline = tokio::time::Instant::now() + BUDGET_GRACE;
+                            frozen_budget = None;
+                            if write_command(&stdin, budget_wrap_up_command())
+                                .await
+                                .is_err()
+                            {
+                                break json!({"type":"failed", "message":BUDGET_EXHAUSTED_MESSAGE});
+                            }
+                            emit(&app, &request_id, json!({"type":"notice", "level":"warn", "text":"任务预算即将耗尽，Piko 将收尾并输出总结。"}));
+                            continue;
+                        }
+                        TimeoutKind::Tool => {
+                            break json!({"type":"failed", "message":TOOL_TIMEOUT_MESSAGE})
+                        }
+                        TimeoutKind::Idle => {
+                            break json!({"type":"failed", "message":TIMEOUT_MESSAGE})
+                        }
+                        TimeoutKind::Wake => continue,
+                    }
+                }
             };
             let mut event = match protocol::event(&line, &request_id) {
                 Ok(event) => event,
@@ -898,6 +1629,60 @@ async fn start_agent(
                 }
             };
             let kind = event["type"].as_str().unwrap_or("").to_string();
+            if kind == "tool-start" {
+                if running_tools.len() >= 64 {
+                    if let Some(oldest) = running_tools
+                        .iter()
+                        .min_by_key(|(_, started)| **started)
+                        .map(|(id, _)| id.clone())
+                    {
+                        running_tools.remove(&oldest);
+                    }
+                }
+                running_tools.insert(
+                    event["toolCallId"].as_str().unwrap_or("").to_string(),
+                    tokio::time::Instant::now(),
+                );
+            }
+            if kind == "tool-end" {
+                running_tools.remove(event["toolCallId"].as_str().unwrap_or(""));
+            }
+            if kind == "approval" {
+                if let Ok(mut approvals) = pending_approvals.lock() {
+                    approvals.insert(
+                        event["approvalId"].as_str().unwrap_or("").to_string(),
+                        event["tool"].as_str().unwrap_or("").to_string(),
+                    );
+                }
+            }
+            if kind == "approval-expired" {
+                if let Ok(mut approvals) = pending_approvals.lock() {
+                    approvals.remove(event["approvalId"].as_str().unwrap_or(""));
+                }
+            }
+            if kind == "contract-proposed" {
+                if let Ok(mut contract) = pending_contract.lock() {
+                    *contract = Some(event["contractId"].as_str().unwrap_or("").to_string());
+                }
+            }
+            // 04 §4.7 宠物接线：任务状态迁移映射到 working/confirming 形态。
+            match kind.as_str() {
+                "started" | "receipt" => task_pet(&app, crate::runtime_types::TaskPhase::Working),
+                "milestone" if event["status"].as_str() == Some("completed") => {
+                    task_pet(&app, crate::runtime_types::TaskPhase::Working);
+                }
+                "approval" | "action-proposed" | "workspace-required" | "contract-proposed" => {
+                    task_pet(&app, crate::runtime_types::TaskPhase::Confirming);
+                    crate::notifications::task_event(
+                        &app,
+                        &request_id,
+                        "confirm",
+                        "Piko 任务等待确认",
+                        &task_waiting_body(&kind, &event),
+                    );
+                }
+                _ => {}
+            }
             if kind == "steering-accepted" {
                 let mut prompt = history_prompt.lock().await;
                 prompt.push_str("\n补充要求：");
@@ -962,6 +1747,16 @@ async fn start_agent(
         remove_drafts(&app, &pending_actions).await;
         // S09：任务终态时把 failed/interrupted 放进次日晨提醒队列（额度门控照常生效）。
         crate::memory::soul::tasks::on_task_terminal(&app, &request_id);
+        // P2 §9 崩溃自动续跑：先占用链标记（防循环），并在快照终态前把 notice 送进事件流。
+        let resume_plan = match resume_plan {
+            Some(plan) if journal.mark_auto_resumed(&resume_operation_root).is_ok() => {
+                let notice = json!({"type":"notice", "level":"info", "text":AUTO_RESUMED_NOTICE});
+                let _ = journal.event(&request_id, &notice, crate::common::unix_timestamp());
+                emit(&app, &request_id, notice);
+                Some(plan)
+            }
+            other => other,
+        };
         let state = app.state::<AgentRuntime>();
         let mut slot = state.0.lock().await;
         let owned = slot.contains_key(&request_id);
@@ -981,7 +1776,41 @@ async fn start_agent(
         drop(slot);
         // Every terminal path releases the runtime and invalidates drafts before the UI can retry.
         if owned {
+            let terminal_kind = terminal_event["type"].as_str().unwrap_or("").to_string();
+            let terminal_message = terminal_event["message"]
+                .as_str()
+                .unwrap_or("任务失败")
+                .chars()
+                .take(120)
+                .collect::<String>();
             emit(&app, &request_id, terminal_event);
+            task_pet(
+                &app,
+                if terminal_kind == "failed" {
+                    crate::runtime_types::TaskPhase::Error
+                } else {
+                    crate::runtime_types::TaskPhase::Success
+                },
+            );
+            let (level, title, body) = match terminal_kind.as_str() {
+                "completed" => (
+                    "done",
+                    "Piko 任务已完成",
+                    format!("「{}」已完成", task_prompt_head(&app, &request_id)),
+                ),
+                "cancelled" => (
+                    "done",
+                    "Piko 任务已停止",
+                    format!("「{}」已停止", task_prompt_head(&app, &request_id)),
+                ),
+                _ => ("error", "Piko 任务失败", terminal_message),
+            };
+            crate::notifications::task_event(&app, &request_id, level, title, &body);
+            crate::scheduled_tasks::on_agent_terminal(&app, &request_id, &terminal_kind);
+        }
+        // P2 §9 崩溃自动续跑：旧任务已终态并释放会话/工作目录，这里沿链拉起新任务。
+        if let Some(plan) = resume_plan {
+            spawn_auto_resume(app, request_id, conversation_id, plan);
         }
     });
     Ok(())
@@ -993,14 +1822,28 @@ pub async fn agent_steer(
     runtime: State<'_, AgentRuntime>,
     request_id: String,
     text: String,
+    mode: Option<String>,
 ) -> Result<(), String> {
     if text.trim().is_empty() || text.len() > 16_000 {
         return Err("补充要求应为 1 到 16000 字节".into());
     }
+    // doc 18 §2：guidance 在下一里程碑边界注入，不吊销任何已授权操作。
+    let guidance = match mode.as_deref() {
+        None | Some("redirect") => false,
+        Some("guidance") => true,
+        Some(other) => return Err(format!("未知的插话模式：{other}")),
+    };
     let mut slot = runtime.0.lock().await;
     let task = slot
         .get_mut(&request_id)
         .ok_or("任务已结束，请发送新消息")?;
+    if guidance {
+        return write_command(
+            &task.stdin,
+            json!({"type":"steer", "text":text, "mode":"guidance"}),
+        )
+        .await;
+    }
     remove_drafts(&app, &task.pending_actions).await;
     task.workspace_call = None;
     task.reuse_authorization = false;
@@ -1018,6 +1861,16 @@ pub async fn agent_approve(
 ) -> Result<(), String> {
     let slot = runtime.0.lock().await;
     let task = slot.get(&request_id).ok_or("任务已结束")?;
+    // H7：审批通道校验 approvalId 确实属于该任务的待审批集合。
+    if task
+        .pending_approvals
+        .lock()
+        .map_err(|_| "任务状态不可用")?
+        .remove(&approval_id)
+        .is_none()
+    {
+        return Err("确认卡片已失效".into());
+    }
     write_command(
         &task.stdin,
         json!({"type": "approval", "approvalId": approval_id, "allowed": allowed}),
@@ -1029,6 +1882,105 @@ pub async fn agent_approve(
         json!({"type":"approval-resolved", "approvalId":approval_id, "allowed":allowed}),
     );
     Ok(())
+}
+
+/// 契约裁决通道（doc/design/18 §2）：校验该任务确实在等待此 contractId，
+/// 经 protocol::command 包装后写 sidecar stdin；approved=false 同样透传。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn agent_confirm_contract(
+    app: AppHandle,
+    runtime: State<'_, AgentRuntime>,
+    request_id: String,
+    contract_id: String,
+    approved: bool,
+    contract: Option<Value>,
+    git_mode: Option<String>,
+    policy: Option<Value>,
+) -> Result<(), String> {
+    if !valid_id(&request_id) {
+        return Err("无效的任务标识".into());
+    }
+    let contract_id = contract_id.trim().to_string();
+    if contract_id.is_empty() || contract_id.len() > 200 {
+        return Err("无效的契约标识".into());
+    }
+    let git_mode = match git_mode.as_deref().map(str::trim) {
+        None | Some("") => "off",
+        Some("branch") => "branch",
+        Some("files-only") => "files-only",
+        Some("off") => "off",
+        Some(_) => return Err("无效的 git 模式，仅支持 branch/files-only/off".into()),
+    };
+    let policy_json = match policy {
+        None => None,
+        Some(Value::String(name)) => {
+            Some(policy_preset(&name).ok_or("无效的自主权档位，仅支持 cautious/standard/trusted")?)
+        }
+        Some(policy @ Value::Object(_)) => Some(resolve_policy_value(&policy)?),
+        Some(_) => return Err("无效的自主权档位".into()),
+    };
+    let slot = runtime.0.lock().await;
+    let task = slot.get(&request_id).ok_or("任务已结束")?;
+    let waiting = task
+        .pending_contract
+        .lock()
+        .map_err(|_| "任务状态不可用")?
+        .take_if(|waiting| *waiting == contract_id);
+    if waiting.is_none() {
+        return Err("契约确认已失效，请刷新任务状态".into());
+    }
+    // 契约 timeMinutes 覆盖 start 预算（取较小值由宿主裁决，doc/design/18 §3）。
+    if let Some(minutes) = contract
+        .as_ref()
+        .and_then(|contract| contract["timeMinutes"].as_u64())
+        .filter(|minutes| *minutes > 0)
+    {
+        if let Ok(mut cell) = task.budget_override.lock() {
+            *cell = Some(minutes.min(MAX_BUDGET_MINUTES));
+        }
+    }
+    let mut command = json!({"type":"contract", "requestId":request_id,
+        "contractId":contract_id, "approved":approved,
+        "contract":contract, "gitMode":git_mode});
+    if let Some(policy) = policy_json {
+        command["policy"] = policy;
+    }
+    write_command(&task.stdin, command).await?;
+    emit(
+        &app,
+        &request_id,
+        json!({"type":"contract-resolved", "contractId":contract_id, "approved":approved}),
+    );
+    if approved {
+        task_pet(&app, crate::runtime_types::TaskPhase::Working);
+    }
+    Ok(())
+}
+
+/// 校验契约卡片回传的策略对象（doc/design/18 §5）：字段白名单 + outsideWorkspace 恒为 confirm。
+fn resolve_policy_value(policy: &Value) -> Result<Value, String> {
+    let mut resolved = default_policy("companion");
+    for (key, value) in [
+        ("workspaceFiles", &policy["workspaceFiles"]),
+        ("shell", &policy["shell"]),
+        ("outsideWorkspace", &policy["outsideWorkspace"]),
+    ] {
+        let Some(value) = value.as_str().map(str::trim).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        let valid = match key {
+            "outsideWorkspace" => value == "confirm",
+            _ => matches!(value, "auto" | "confirm"),
+        };
+        if !valid {
+            return Err(format!(
+                "无效的任务策略：{key} 仅支持 auto/confirm（工作区外恒为 confirm）"
+            ));
+        }
+        resolved[key] = json!(value);
+    }
+    Ok(resolved)
 }
 
 #[tauri::command]
@@ -1471,8 +2423,14 @@ pub async fn agent_reject_action(
 #[cfg(test)]
 mod tests {
     use super::{
-        next_agent_line, valid_id, verification_tool_allowed, verify_entities, TIMEOUT_MESSAGE,
+        auto_resume_allowed, auto_resume_request_id, budget_wrap_up_command, classify_line_timeout,
+        line_deadline, next_agent_line, read_task_log_at, resolve_budget, resolve_git_mode,
+        resolve_policy, resolve_policy_value, resolve_resumption, resolve_task_kind, task_steps_at,
+        tool_timeout_duration, valid_id, verification_tool_allowed, verify_entities,
+        AgentStartInput, AutoResumeInput, LineWait, Liveness, TimeoutKind, AGENT_IDLE_TIMEOUT,
+        BUDGET_GRACE, TASK_LOG_LIMIT,
     };
+    use serde_json::json;
     use std::time::Duration;
     use tokio::io::{AsyncWriteExt, BufReader};
 
@@ -1528,13 +2486,11 @@ mod tests {
             .block_on(async {
                 let (_writer, reader) = tokio::io::duplex(64);
                 let mut lines = tokio::io::AsyncBufReadExt::lines(BufReader::new(reader));
-                let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-                assert_eq!(
-                    next_agent_line(&mut lines, deadline, Duration::from_millis(10))
-                        .await
-                        .unwrap_err(),
-                    TIMEOUT_MESSAGE
-                );
+                let until = tokio::time::Instant::now() + Duration::from_millis(10);
+                assert!(matches!(
+                    next_agent_line(&mut lines, until).await,
+                    LineWait::Timeout
+                ));
             });
     }
 
@@ -1548,22 +2504,226 @@ mod tests {
                 let (mut writer, reader) = tokio::io::duplex(64);
                 writer.write_all(b"first\n").await.unwrap();
                 let mut lines = tokio::io::AsyncBufReadExt::lines(BufReader::new(reader));
-                let deadline = tokio::time::Instant::now() + Duration::from_millis(10);
-                assert_eq!(
-                    next_agent_line(&mut lines, deadline, Duration::from_secs(60))
-                        .await
-                        .unwrap()
-                        .as_deref(),
-                    Some("first")
-                );
-                assert_eq!(
-                    next_agent_line(&mut lines, deadline, Duration::from_secs(60))
-                        .await
-                        .unwrap_err(),
-                    TIMEOUT_MESSAGE
-                );
+                let until = tokio::time::Instant::now() + Duration::from_secs(60);
+                assert!(matches!(
+                    next_agent_line(&mut lines, until).await,
+                    LineWait::Line(_)
+                ));
+                let until = tokio::time::Instant::now() + Duration::from_millis(10);
+                assert!(matches!(
+                    next_agent_line(&mut lines, until).await,
+                    LineWait::Timeout
+                ));
             });
     }
+
+    #[test]
+    fn task_kind_policy_budget_and_git_mode_have_safe_defaults() {
+        assert_eq!(resolve_task_kind(None).unwrap(), "companion");
+        assert_eq!(resolve_task_kind(Some("coding")).unwrap(), "coding");
+        assert!(resolve_task_kind(Some("agent")).is_err());
+
+        // companion 等价全 confirm（现状行为），coding 预设 standard。
+        assert_eq!(
+            resolve_policy(None, None, "companion").unwrap(),
+            json!({"workspaceFiles":"confirm","shell":"confirm","outsideWorkspace":"confirm"})
+        );
+        assert_eq!(
+            resolve_policy(None, None, "coding").unwrap(),
+            json!({"workspaceFiles":"auto","shell":"confirm","outsideWorkspace":"confirm"})
+        );
+        // 项目档位在无显式输入时生效，显式输入优先。
+        let project = crate::project_registry::Project {
+            policy: Some("trusted".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_policy(None, Some(&project), "companion").unwrap(),
+            json!({"workspaceFiles":"auto","shell":"auto","outsideWorkspace":"confirm"})
+        );
+        let explicit = super::TaskPolicyInput {
+            workspace_files: Some("confirm".into()),
+            shell: None,
+            outside_workspace: None,
+        };
+        assert_eq!(
+            resolve_policy(Some(&explicit), Some(&project), "coding").unwrap(),
+            json!({"workspaceFiles":"confirm","shell":"confirm","outsideWorkspace":"confirm"})
+        );
+        // outsideWorkspace 不提供自动档。
+        let outside = super::TaskPolicyInput {
+            workspace_files: None,
+            shell: None,
+            outside_workspace: Some("auto".into()),
+        };
+        assert!(resolve_policy(Some(&outside), None, "coding").is_err());
+        // 契约卡片回传的对象同样受白名单约束。
+        assert!(resolve_policy_value(&json!({"shell":"auto"})).is_ok());
+        assert!(resolve_policy_value(&json!({"outsideWorkspace":"auto"})).is_err());
+    }
+
+    #[test]
+    fn budgets_default_by_task_kind_and_cap_out_of_range_values() {
+        assert_eq!(resolve_budget(None, "companion").unwrap(), (30, 0));
+        assert_eq!(resolve_budget(None, "coding").unwrap(), (90, 0));
+        let budget = super::TaskBudgetInput {
+            time_minutes: Some(120),
+            token_budget: Some(50_000),
+        };
+        assert_eq!(
+            resolve_budget(Some(&budget), "companion").unwrap(),
+            (120, 50_000)
+        );
+        let unlimited = super::TaskBudgetInput {
+            time_minutes: Some(0),
+            token_budget: Some(0),
+        };
+        assert_eq!(resolve_budget(Some(&unlimited), "coding").unwrap(), (0, 0));
+        let too_long = super::TaskBudgetInput {
+            time_minutes: Some(u64::MAX),
+            token_budget: None,
+        };
+        assert!(resolve_budget(Some(&too_long), "coding").is_err());
+    }
+
+    #[test]
+    fn git_mode_defaults_to_branch_for_coding_and_off_for_companion() {
+        assert_eq!(resolve_git_mode(None, "companion").unwrap(), "off");
+        assert_eq!(resolve_git_mode(None, "coding").unwrap(), "branch");
+        assert_eq!(
+            resolve_git_mode(Some("files-only"), "coding").unwrap(),
+            "files-only"
+        );
+        assert!(resolve_git_mode(Some("rebase"), "coding").is_err());
+    }
+
+    #[test]
+    fn tool_timeout_reads_settings_with_safe_fallback() {
+        let mut settings = crate::app_settings::AppSettings::default();
+        assert_eq!(
+            tool_timeout_duration(&settings),
+            Duration::from_secs(20 * 60)
+        );
+        settings.agent_tool_timeout_minutes = 45;
+        assert_eq!(
+            tool_timeout_duration(&settings),
+            Duration::from_secs(45 * 60)
+        );
+        settings.agent_tool_timeout_minutes = 0;
+        assert_eq!(
+            tool_timeout_duration(&settings),
+            Duration::from_secs(20 * 60)
+        );
+        settings.agent_tool_timeout_minutes = u64::MAX;
+        assert_eq!(
+            tool_timeout_duration(&settings),
+            Duration::from_secs(24 * 60 * 60)
+        );
+    }
+
+    #[test]
+    fn liveness_decides_which_deadline_bounds_the_next_line() {
+        let now = tokio::time::Instant::now();
+        let budget = now + Duration::from_secs(60 * 60);
+        let tool_started = now - Duration::from_secs(5);
+        let tool_timeout = Duration::from_secs(20 * 60);
+        // 空闲：10 分钟 idle 与预算取较早。
+        assert_eq!(
+            line_deadline(now, budget, Liveness::Idle, tool_timeout),
+            now + AGENT_IDLE_TIMEOUT
+        );
+        // 工具运行：单列 20 分钟上限（从工具启动算起），且仍受预算约束。
+        let tool_deadline =
+            line_deadline(now, budget, Liveness::ToolRun(tool_started), tool_timeout);
+        assert_eq!(tool_deadline, tool_started + tool_timeout);
+        let tight_budget = now + Duration::from_secs(60);
+        assert_eq!(
+            line_deadline(
+                now,
+                tight_budget,
+                Liveness::ToolRun(tool_started),
+                tool_timeout
+            ),
+            tight_budget
+        );
+        // 等待用户：不受 idle 与工具上限约束，只受预算约束。
+        assert_eq!(
+            line_deadline(now, budget, Liveness::AwaitingUser, tool_timeout),
+            budget.min(now + Duration::from_secs(60))
+        );
+        // 契约等待：预算冻结，只用周期唤醒重估状态。
+        assert_eq!(
+            line_deadline(now, budget, Liveness::AwaitingContract, tool_timeout),
+            now + super::WAIT_RECHECK
+        );
+    }
+
+    #[test]
+    fn timeouts_classify_budget_tool_idle_and_wake() {
+        let now = tokio::time::Instant::now();
+        let budget = now + Duration::from_secs(60 * 60);
+        let tool_timeout = Duration::from_secs(20 * 60);
+        // 空闲超时与预算超时分开归类。
+        assert_eq!(
+            classify_line_timeout(
+                now + AGENT_IDLE_TIMEOUT,
+                budget,
+                Liveness::Idle,
+                tool_timeout
+            ),
+            TimeoutKind::Idle
+        );
+        assert_eq!(
+            classify_line_timeout(
+                now + Duration::from_secs(61 * 60),
+                budget,
+                Liveness::Idle,
+                tool_timeout
+            ),
+            TimeoutKind::Budget
+        );
+        // 工具超时单独归类；等待用户期间的超时是唤醒而不是失败。
+        let tool_started = now;
+        assert_eq!(
+            classify_line_timeout(
+                tool_started + tool_timeout,
+                budget,
+                Liveness::ToolRun(tool_started),
+                tool_timeout
+            ),
+            TimeoutKind::Tool
+        );
+        assert_eq!(
+            classify_line_timeout(
+                now + super::WAIT_RECHECK,
+                budget,
+                Liveness::AwaitingUser,
+                tool_timeout
+            ),
+            TimeoutKind::Wake
+        );
+        assert_eq!(
+            classify_line_timeout(
+                now + super::WAIT_RECHECK,
+                budget,
+                Liveness::AwaitingContract,
+                tool_timeout
+            ),
+            TimeoutKind::Wake
+        );
+        // 预算优先于工具上限（触发优雅收尾而非直接杀任务）。
+        let past_budget = now + BUDGET_GRACE;
+        assert_eq!(
+            classify_line_timeout(
+                past_budget,
+                past_budget,
+                Liveness::ToolRun(now),
+                tool_timeout
+            ),
+            TimeoutKind::Budget
+        );
+    }
+
     #[test]
     fn conversation_ids_cannot_escape_storage() {
         assert!(valid_id("550e8400-e29b-41d4-a716-446655440000"));
@@ -1571,6 +2731,170 @@ mod tests {
             assert!(!valid_id(id));
         }
         assert!(!valid_id(&"a".repeat(81)));
+    }
+
+    #[test]
+    fn budget_wrap_up_steer_signals_reason_budget() {
+        // doc/design/18 §9：sidecar 以 reason==="budget" 为权威收尾信号。
+        let command = budget_wrap_up_command();
+        assert_eq!(command["type"], "steer");
+        assert_eq!(command["mode"], "guidance");
+        assert_eq!(command["reason"], "budget");
+        assert!(command["text"].as_str().unwrap().contains("收尾"));
+    }
+
+    #[test]
+    fn auto_resume_only_fires_once_per_chain_for_coding_tasks() {
+        let plan = AutoResumeInput {
+            workspace: None,
+            prompt: "目标".into(),
+            unified: false,
+            knowledge_scope: None,
+            policy: None,
+            budget: None,
+            project_id: None,
+            verify_command: None,
+            git_mode: "branch",
+        };
+        // companion/核对/通行证任务没有续跑计划（plan 为 None）。
+        assert!(!auto_resume_allowed(None, true, false, false));
+        assert!(auto_resume_allowed(Some(&plan), true, false, false));
+        // 设置关闭、用户取消、任务链已自动续跑过都会阻断（防循环）。
+        assert!(!auto_resume_allowed(Some(&plan), false, false, false));
+        assert!(!auto_resume_allowed(Some(&plan), true, true, false));
+        assert!(!auto_resume_allowed(Some(&plan), true, false, true));
+    }
+
+    #[test]
+    fn auto_resume_request_ids_stay_valid_unique_and_bounded() {
+        let previous = "550e8400-e29b-41d4-a716-446655440000";
+        let first = auto_resume_request_id(previous);
+        let second = auto_resume_request_id(previous);
+        assert!(valid_id(&first));
+        assert!(valid_id(&second));
+        assert_ne!(first, second);
+        // 超长原 id 截断后仍保持在 80 字符内。
+        let long = "a".repeat(80);
+        assert!(valid_id(&auto_resume_request_id(&long)));
+    }
+
+    fn chain_record(
+        id: &str,
+        status: &str,
+        resume_of: Option<&str>,
+    ) -> crate::agent::journal::TaskRecord {
+        crate::agent::journal::TaskRecord {
+            request_id: id.into(),
+            conversation_id: "conversation".into(),
+            status: status.into(),
+            started_at: 1,
+            updated_at: 2,
+            steps: Vec::new(),
+            resume_of: resume_of.map(str::to_string),
+            milestones: Vec::new(),
+            notices: Vec::new(),
+            usage: crate::agent::journal::UsageTotals::default(),
+            receipt_status: None,
+            auto_resumed: false,
+            contract_pending: false,
+            contract_id: None,
+        }
+    }
+
+    #[test]
+    fn auto_resume_rides_the_existing_resume_chain_to_its_root() {
+        let records = vec![
+            chain_record("root", "failed", None),
+            chain_record("child", "failed", Some("root")),
+            chain_record("grandchild", "failed", Some("child")),
+        ];
+        let input = AgentStartInput {
+            request_id: "next".into(),
+            conversation_id: "conversation".into(),
+            knowledge_scope: None,
+            cwd: None,
+            prompt: "目标".into(),
+            unified: false,
+            import_history: false,
+            attachment_action: None,
+            context_id: None,
+            screenshot: None,
+            include_screenshot: None,
+            verification_of: None,
+            proactive_message_id: None,
+            resume_of: Some("grandchild".into()),
+            task_kind: Some("coding".into()),
+            policy: None,
+            budget: None,
+            project_id: None,
+            verify_command: None,
+            git_mode: None,
+        };
+        let plan = resolve_resumption(&input, &records).unwrap();
+        // resume_root 贯穿整条链，检查点防重复写入由 sidecar 按 root 处理。
+        assert_eq!(plan.resume_root.as_deref(), Some("root"));
+        assert_eq!(plan.resumed.as_ref().unwrap().request_id, "grandchild");
+        assert_eq!(plan.conversation_id, "conversation");
+        // 运行中的任务不能作为续跑目标。
+        let running = vec![chain_record("root", "running", None)];
+        assert!(resolve_resumption(&input, &running).is_err());
+    }
+
+    #[test]
+    fn task_log_reads_truncates_and_reports_missing_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path();
+        assert!(read_task_log_at(workspace, "req-a").unwrap().is_none());
+        std::fs::create_dir_all(workspace.join(".piko")).unwrap();
+        std::fs::write(workspace.join(".piko").join("task-req-a.md"), "进度记录").unwrap();
+        let (content, truncated) = read_task_log_at(workspace, "req-a").unwrap().unwrap();
+        assert_eq!(content, "进度记录");
+        assert!(!truncated);
+        // 超限截断：保留完整字符且不越过上限。
+        let big = "汉".repeat(200_000);
+        std::fs::write(workspace.join(".piko").join("task-req-b.md"), &big).unwrap();
+        let (content, truncated) = read_task_log_at(workspace, "req-b").unwrap().unwrap();
+        assert!(truncated);
+        assert!(content.len() <= TASK_LOG_LIMIT);
+        assert!(big.starts_with(&content));
+        assert_eq!(content.chars().last(), Some('汉'));
+    }
+
+    #[test]
+    fn task_steps_merge_archive_on_demand() {
+        let directory = tempfile::tempdir().unwrap();
+        let agent_dir = directory.path();
+        let journal = crate::agent::journal::TaskJournal::new(agent_dir);
+        journal.start("request", "conversation", 1).unwrap();
+        journal
+            .event(
+                "request",
+                &json!({"type":"tool-start", "toolCallId":"live-1", "tool":"read"}),
+                2,
+            )
+            .unwrap();
+        let archived = vec![crate::agent::journal::TaskStep {
+            id: "old-1".into(),
+            tool: "bash".into(),
+            status: "completed".into(),
+            verification: None,
+        }];
+        crate::storage::write(
+            &agent_dir.join("steps-archive").join("request.json"),
+            &archived,
+        )
+        .unwrap();
+        // 默认只读常驻段，但归档规模仍然上报。
+        let (steps, archived_count) = task_steps_at(agent_dir, "request", false).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(archived_count, 1);
+        // includeArchive 合并归档段在前（时间序）。
+        let (steps, archived_count) = task_steps_at(agent_dir, "request", true).unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].id, "old-1");
+        assert_eq!(steps[1].id, "live-1");
+        assert_eq!(archived_count, 1);
+        assert!(task_steps_at(agent_dir, "missing", false).is_err());
     }
 }
 

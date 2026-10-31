@@ -63,6 +63,146 @@
       "favorite": "收藏",
       "unfavorite": "取消收藏",
       "copySource": "复制源码"
+    },
+    "task": {
+      "steer": {
+        "modeLabel": "插话方式",
+        "guidance": "补充",
+        "redirect": "转向",
+        "guidanceHint": "在下一个里程碑边界注入，不收回自动授权",
+        "redirectHint": "立即注入并收回未决授权",
+        "pendingNotice": "上一条插话尚未送达，请稍候再试。",
+        "queueBadge": "排队中 {count} 条"
+      },
+      "policy": {
+        "cautious": "谨慎（全部操作先确认）",
+        "standard": "标准（文件自动，命令先确认）",
+        "trusted": "信任（命令也自动，危险命令除外）"
+      },
+      "policyHint": {
+        "cautious": "每一步写文件与命令都先征求同意。",
+        "standard": "工作区内写文件自动执行，命令与工作区外写入先确认。",
+        "trusted": "常用命令也自动执行；高危命令与工作区外写入仍会确认。"
+      },
+      "git": {
+        "branch": "新建任务分支并按里程碑提交",
+        "files-only": "不建分支，仅提交任务触碰的文件",
+        "off": "不使用 git 安全网"
+      },
+      "milestone": {
+        "aria": "执行里程碑",
+        "started": "执行中",
+        "completed": "已完成",
+        "failed": "失败",
+        "skipped": "已跳过",
+        "toolDetail": "操作明细 · {count} 项",
+        "preparation": "启动阶段操作 · {count} 项"
+      },
+      "receipt": {
+        "ariaLabel": "任务回执",
+        "statusCompleted": "任务已完成",
+        "statusSuspended": "任务已挂起收尾",
+        "milestones": "里程碑状态",
+        "files": "改动文件",
+        "openFile": "在编辑器打开",
+        "copyPath": "复制路径",
+        "copied": "已复制",
+        "copyFailed": "复制失败，请手动选择路径复制。",
+        "verify": "验收结果",
+        "verifyPassed": "通过",
+        "verifyFailed": "未通过",
+        "outputTruncated": "\n…输出已截断",
+        "branch": "分支",
+        "commits": "提交",
+        "openQuestions": "遗留疑问",
+        "notices": "黄旗记录",
+        "toolEvidence": "查看工具证据",
+        "inspect": "只读核对本轮结果",
+        "reject": "打回重跑",
+        "feedbackLabel": "打回反馈",
+        "feedbackPlaceholder": "说明哪里不对或补充要求，提交后会以本任务为基础自动续跑。",
+        "sendFeedback": "发送反馈并续跑",
+        "cancelFeedback": "取消",
+        "accept": "接受并关闭"
+      },
+      "contract": {
+        "ariaLabel": "任务契约待确认",
+        "title": "任务契约",
+        "milestones": "里程碑",
+        "milestoneTitle": "里程碑标题",
+        "milestoneAcceptance": "该里程碑的验收描述",
+        "addMilestone": "添加里程碑",
+        "removeMilestone": "删除里程碑",
+        "verifyCommand": "验收命令",
+        "timeMinutes": "时间预算（分钟，0 为不限）",
+        "policy": "自主档位",
+        "gitMode": "git 模式",
+        "dirtyHint": "工作区有未提交改动时，宿主会改为仅提交本任务触碰的文件，不会动你的其他改动。",
+        "risks": "风险提示",
+        "approve": "确认并开始执行",
+        "reject": "放弃任务"
+      },
+      "queue": {
+        "mode": "排队为下一个任务",
+        "modeHint": "当前任务结束后自动发送为新的任务",
+        "sendAria": "排队新任务",
+        "badge": "队列中 {count}",
+        "aria": "排队任务",
+        "remove": "移除排队任务",
+        "full": "排队已达上限（5 条），请等任务结束后再发送。"
+      },
+      "log": {
+        "title": "任务日志",
+        "loading": "正在读取任务日志…",
+        "empty": "任务还没有日志。",
+        "loadFailed": "任务日志读取失败，请重试。",
+        "truncated": "日志过长，仅显示前 256KB。",
+        "annotationLabel": "任务批注",
+        "annotationPlaceholder": "写下批注，将作为补充要求发送…",
+        "annotationSend": "发送批注",
+        "annotationHint": "批注将在下一里程碑边界生效。",
+        "annotationClosed": "任务已结束，批注未发送。"
+      },
+      "steps": {
+        "button": "查看完整流水",
+        "loading": "正在读取完整流水…",
+        "loadFailed": "流水读取失败，请重试。",
+        "archived": "含 {count} 条归档",
+        "empty": "没有已记录的工具步骤。"
+      },
+      "history": {
+        "contractInterrupted": "任务在等待契约确认时中断",
+        "restart": "重新发起",
+        "restartMissing": "缺少原始任务信息，无法重新发起。"
+      }
+    },
+    "project": {
+      "menuLabel": "项目",
+      "new": "新建项目",
+      "pickTitle": "选择项目目录",
+      "loading": "正在读取项目…",
+      "empty": "还没有项目，选择目录即可新建。",
+      "listFailed": "项目列表读取失败，仍可选择工作目录。",
+      "createFailed": "新建项目失败，请重试。"
+    },
+    "schedule": {
+      "aria": "定时委托",
+      "title": "定时委托",
+      "promptLabel": "任务提示词",
+      "promptPlaceholder": "到点后要交给 Piko 的事…",
+      "projectLabel": "项目",
+      "currentWorkspace": "当前工作目录",
+      "timeLabel": "执行时间",
+      "policyHint": "自主档位沿用项目默认配置。",
+      "submit": "创建定时委托",
+      "created": "定时委托已创建。",
+      "createFailed": "定时委托创建失败，请重试。",
+      "invalidTime": "请填写提示词并选择将来的时间。",
+      "listFailed": "定时委托读取失败，请重试。",
+      "pendingTitle": "待执行",
+      "pendingEmpty": "暂无待执行的定时委托。",
+      "cancel": "取消",
+      "cancelFailed": "取消失败，请重试。"
     }
   },
   "settings": {

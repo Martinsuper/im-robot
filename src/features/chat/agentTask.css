@@ -20,3 +20,56 @@
 .bubble-favorites__title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .bubble-favorites__actions { display: inline-flex; gap: 4px; }
 .bubble-favorites__actions button { padding: 4px 6px; }
+/* Delegated-task milestone timeline (doc/design/18). */
+.agent-activity__timeline { margin: 8px 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.agent-activity__milestone { display: flex; gap: 8px; padding: 6px 8px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 10px; opacity: .78; }
+.agent-activity__milestone--current { opacity: 1; border-color: #58796d; background: var(--piko-soft, #edf5ef); }
+.agent-activity__milestone--failed { border-color: #b0684f; }
+.agent-activity__milestone-icon { flex: 0 0 auto; font-size: 12px; line-height: 1.5; color: var(--piko-muted, #62736a); }
+.agent-activity__milestone--current .agent-activity__milestone-icon, .agent-activity__milestone--completed .agent-activity__milestone-icon { color: #58796d; }
+.agent-activity__milestone--failed .agent-activity__milestone-icon, .agent-activity__milestone--skipped .agent-activity__milestone-icon { color: #b0684f; }
+.agent-activity__milestone-body { min-width: 0; flex: 1 1 auto; }
+.agent-activity__milestone-body strong { display: block; font-size: 12px; color: inherit; }
+.agent-activity__milestone-body p { margin: 2px 0 4px; color: var(--piko-muted, #62736a); }
+.agent-activity__notices { margin: 6px 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.agent-activity__notice { padding: 5px 8px; border-radius: 8px; border: 1px solid var(--piko-line, #d9e1dd); color: var(--piko-muted, #62736a); }
+.agent-activity__notice--warn { border-color: #b2934f; color: #7c5f2a; background: rgba(178, 147, 79, .12); }
+/* Project switcher (doc 04 §4.6). */
+.bubble-projects { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 6px; padding: 8px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 10px; background: var(--piko-soft, #edf5ef); font-size: 12px; max-height: 160px; overflow: auto; }
+.bubble-projects p { margin: 0; color: var(--piko-muted, #62736a); font-size: 11px; }
+.bubble-projects__create { display: inline-flex; align-items: center; gap: 4px; border: 1px dashed var(--piko-line, #d9e1dd); border-radius: 8px; padding: 4px 8px; background: var(--piko-fill, #fff); color: inherit; cursor: pointer; }
+.bubble-projects__create:disabled { opacity: .5; cursor: default; }
+.bubble-projects__item { border: 1px solid var(--piko-line, #d9e1dd); border-radius: 8px; padding: 4px 8px; background: var(--piko-fill, #fff); color: inherit; cursor: pointer; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bubble-projects__item.is-active { border-color: #58796d; font-weight: 700; }
+/* P2（doc 18 §9）：guidance 队列徽标与任务排队。 */
+.bubble-queue-badge { display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 999px; background: var(--piko-soft, #edf5ef); color: var(--piko-muted, #62736a); font-size: 11px; white-space: nowrap; }
+.bubble-task-queue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 11px; }
+.bubble-task-queue__item { display: inline-flex; align-items: center; gap: 4px; max-width: 260px; padding: 3px 8px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 999px; background: var(--piko-fill, #fff); }
+.bubble-task-queue__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--piko-muted, #62736a); }
+.bubble-task-queue__item button { border: none; background: none; padding: 0 2px; color: inherit; cursor: pointer; }
+/* 任务日志查看与批注。 */
+.agent-activity__tasklog { padding: 8px 10px; margin: 8px 0; border: 1px dashed var(--piko-line, #d9e1dd); border-radius: 10px; }
+.agent-activity__tasklog summary { cursor: pointer; }
+.agent-activity__tasklog p { margin: 6px 0; color: var(--piko-muted, #62736a); }
+.agent-activity__tasklog pre { max-height: 220px; margin: 6px 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.agent-activity__tasklog-annotate { display: grid; gap: 4px; margin-top: 8px; }
+.agent-activity__tasklog-annotate textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 8px; padding: 6px 8px; font-size: 12px; font-family: inherit; color: inherit; background: var(--piko-fill, #fff); }
+.agent-activity__tasklog-annotate p { margin: 0; font-size: 11px; }
+/* 定时委托（doc 18 §9）。 */
+.bubble-schedule { display: grid; gap: 6px; margin-bottom: 6px; padding: 8px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 10px; background: var(--piko-soft, #edf5ef); font-size: 12px; }
+.bubble-schedule__toggle { display: inline-flex; align-items: center; gap: 4px; justify-self: start; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 8px; padding: 4px 8px; background: var(--piko-fill, #fff); color: inherit; cursor: pointer; }
+.bubble-schedule__form { display: grid; gap: 6px; }
+.bubble-schedule__form label { display: grid; gap: 3px; font-size: 11px; color: var(--piko-muted, #62736a); }
+.bubble-schedule__form textarea, .bubble-schedule__form select, .bubble-schedule__form input { border: 1px solid var(--piko-line, #d9e1dd); border-radius: 8px; padding: 5px 8px; font-size: 12px; font-family: inherit; color: inherit; background: var(--piko-fill, #fff); }
+.bubble-schedule__form small { color: var(--piko-muted, #62736a); font-size: 11px; }
+.bubble-schedule__form button { justify-self: start; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 8px; padding: 5px 10px; background: var(--piko-fill, #fff); color: inherit; cursor: pointer; }
+.bubble-schedule__form button:disabled { opacity: .5; cursor: default; }
+.bubble-schedule__form p { margin: 0; font-size: 11px; }
+.bubble-schedule__pending { display: grid; gap: 4px; padding-top: 6px; border-top: 1px solid var(--piko-line, #d9e1dd); }
+.bubble-schedule__pending strong { font-size: 11px; }
+.bubble-schedule__pending p { margin: 0; color: var(--piko-muted, #62736a); font-size: 11px; }
+.bubble-schedule__item { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.bubble-schedule__item span:first-child { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bubble-schedule__item time { flex: 0 0 auto; color: var(--piko-muted, #62736a); }
+.bubble-schedule__item button { padding: 2px 8px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 8px; background: var(--piko-fill, #fff); color: inherit; cursor: pointer; }
+

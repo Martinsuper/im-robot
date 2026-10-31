@@ -222,6 +222,8 @@ pub(crate) fn run() {
             enable_pet_background_drag(app.handle());
             enable_bubble_background_drag(app.handle());
             watch_reminders(app.handle());
+            // P2 §9：定时委托的 SUPERVISOR 轮询线程（自适应到期轮询 + 崩溃对账）。
+            crate::scheduled_tasks::watch_scheduled_tasks(app.handle());
             watch_calendar_events(app.handle());
             watch_focus_timer(app.handle());
             watch_ambient_nudges(app.handle());
@@ -355,6 +357,11 @@ pub(crate) fn run() {
             crate::conversation_views::conversation_forget_view,
             crate::conversation_views::conversation_delete,
             agent::agent_get_diagnostics,
+            agent::agent_read_task_log,
+            agent::agent_get_task_steps,
+            crate::scheduled_tasks::scheduled_task_list,
+            crate::scheduled_tasks::scheduled_task_create,
+            crate::scheduled_tasks::scheduled_task_cancel,
             memory::vault::memory_vault_status,
             memory::vault::memory_vault_open_directory,
             memory::vault::memory_vault_configure,
@@ -411,6 +418,11 @@ pub(crate) fn run() {
             agent::agent_cancel,
             agent::agent_approve,
             agent::agent_steer,
+            agent::agent_confirm_contract,
+            crate::project_registry::project_list,
+            crate::project_registry::project_create,
+            crate::project_registry::project_update,
+            crate::project_registry::project_delete,
             chat::chat_start,
             chat::chat_cancel,
             chat_session::commands::get_bubble_chat_history,

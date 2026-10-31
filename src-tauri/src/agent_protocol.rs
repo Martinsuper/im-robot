@@ -1,7 +1,7 @@
 //! Versioned private wire boundary; business logic consumes validated events only.
 use serde_json::{json, Value};
 
-pub(super) const VERSION: u64 = 1;
+pub(super) const VERSION: u64 = 2;
 
 /// This table also generates agent/wire-schema.mjs; version and required fields have one owner.
 pub(super) const EVENT_FIELDS: &[(&str, &[&str])] = &[
@@ -17,6 +17,12 @@ pub(super) const EVENT_FIELDS: &[(&str, &[&str])] = &[
     ("app-tool", &["callId", "name"]),
     ("failed", &["message"]),
     ("protocol-error", &["message"]),
+    // Delegated task events (doc/design/18-delegated-task-protocol.md).
+    ("contract-proposed", &["contractId"]),
+    ("milestone", &["milestoneId", "status"]),
+    ("notice", &["level", "text"]),
+    ("receipt", &["status"]),
+    ("usage", &[]),
 ];
 
 pub(super) fn command(mut value: Value) -> Value {
@@ -50,10 +56,10 @@ mod tests {
     #[test]
     fn rejects_stale_malformed_and_incompatible_events() {
         for value in [
-            json!({"type":"completed","protocolVersion":2,"requestId":"current"}),
+            json!({"type":"completed","protocolVersion":3,"requestId":"current"}),
             json!({"type":"completed","protocolVersion":1,"requestId":"old"}),
             json!({"type":"delta","protocolVersion":1,"requestId":"current"}),
-            json!({"type":"unknown","protocolVersion":1,"requestId":"current"}),
+            json!({"type":"unknown","protocolVersion":2,"requestId":"current"}),
             json!(null),
         ] {
             assert!(event(&value.to_string(), "current").is_err());
@@ -70,5 +76,24 @@ mod tests {
             command(json!({"type":"cancel"}))["protocolVersion"],
             VERSION
         );
+    }
+
+    #[test]
+    fn accepts_delegated_task_events() {
+        for value in [
+            json!({"type":"contract-proposed","contractId":"c1","protocolVersion":VERSION,"requestId":"current"}),
+            json!({"type":"milestone","milestoneId":"m1","status":"started","protocolVersion":VERSION,"requestId":"current"}),
+            json!({"type":"notice","level":"warn","text":"installed dependency","protocolVersion":VERSION,"requestId":"current"}),
+            json!({"type":"usage","inputTokens":120,"protocolVersion":VERSION,"requestId":"current"}),
+            json!({"type":"receipt","status":"completed","protocolVersion":VERSION,"requestId":"current"}),
+        ] {
+            assert!(event(&value.to_string(), "current").is_ok(), "{value}");
+        }
+        assert!(event(
+            &json!({"type":"milestone","milestoneId":"m1","protocolVersion":VERSION,"requestId":"current"})
+                .to_string(),
+            "current"
+        )
+        .is_err());
     }
 }

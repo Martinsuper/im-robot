@@ -1,5 +1,5 @@
 // Generated from Rust agent_protocol.rs; do not edit.
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const EVENT_FIELDS = {
   "app-tool": [
     "callId",
@@ -14,14 +14,28 @@ export const EVENT_FIELDS = {
   ],
   "cancelled": [],
   "completed": [],
+  "contract-proposed": [
+    "contractId"
+  ],
   "delta": [
     "text"
   ],
   "failed": [
     "message"
   ],
+  "milestone": [
+    "milestoneId",
+    "status"
+  ],
+  "notice": [
+    "level",
+    "text"
+  ],
   "protocol-error": [
     "message"
+  ],
+  "receipt": [
+    "status"
   ],
   "started": [],
   "steering-accepted": [
@@ -34,5 +48,6 @@ export const EVENT_FIELDS = {
   "tool-start": [
     "tool",
     "toolCallId"
-  ]
+  ],
+  "usage": []
 };

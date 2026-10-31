@@ -1,11 +1,54 @@
 //! System notifications with native macOS authorization and observable delivery errors.
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 #[cfg(not(target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
 
 static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+/// 委托任务通知（04 §4.7）：同任务同级别 5 分钟内不重复。
+const TASK_NOTIFY_TTL: Duration = Duration::from_secs(5 * 60);
+static TASK_THROTTLE: LazyLock<Mutex<HashMap<String, Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn should_task_notify_at(map: &mut HashMap<String, Instant>, key: &str, now: Instant) -> bool {
+    if map.len() > 256 {
+        map.retain(|_, at| now.duration_since(*at) < TASK_NOTIFY_TTL);
+    }
+    match map.get(key) {
+        Some(at) if now.duration_since(*at) < TASK_NOTIFY_TTL => false,
+        _ => {
+            map.insert(key.to_string(), now);
+            true
+        }
+    }
+}
+
+/// 任务状态迁移通知：等待确认与终态触达（respect quiet_mode = minimal）。
+pub(crate) fn task_event(app: &AppHandle, request_id: &str, level: &str, title: &str, body: &str) {
+    if crate::settings::read_settings(app).quiet_mode == "minimal" {
+        return;
+    }
+    let allowed = match TASK_THROTTLE.lock() {
+        Ok(mut map) => {
+            should_task_notify_at(&mut map, &format!("{request_id}:{level}"), Instant::now())
+        }
+        Err(_) => false,
+    };
+    if !allowed {
+        return;
+    }
+    let app = app.clone();
+    let title = title.to_string();
+    let body = body.to_string();
+    // 原生通知桥会阻塞等待系统回调；交给监督线程，避免拖慢任务事件循环。
+    crate::background::SUPERVISOR.spawn_effect("agent-notify", move |_| {
+        let _ = send(&app, &title, &body);
+    });
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,5 +257,29 @@ mod tests {
     fn invalid_notification_text_never_reaches_the_native_api() {
         assert!(native::send("invalid\0title", "body").is_err());
         assert!(native::send("title", "invalid\0body").is_err());
+    }
+}
+
+#[cfg(test)]
+mod throttle_tests {
+    use super::*;
+    #[test]
+    fn same_task_level_is_throttled_within_ttl_only() {
+        let mut map = HashMap::new();
+        let now = Instant::now();
+        assert!(should_task_notify_at(&mut map, "r1:confirm", now));
+        assert!(!should_task_notify_at(
+            &mut map,
+            "r1:confirm",
+            now + TASK_NOTIFY_TTL - Duration::from_millis(1)
+        ));
+        assert!(should_task_notify_at(
+            &mut map,
+            "r1:confirm",
+            now + TASK_NOTIFY_TTL
+        ));
+        // 不同任务或不同级别互不影响。
+        assert!(should_task_notify_at(&mut map, "r1:done", now));
+        assert!(should_task_notify_at(&mut map, "r2:confirm", now));
     }
 }

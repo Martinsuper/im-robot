@@ -374,6 +374,13 @@ mod tests {
             updated_at,
             steps: Vec::new(),
             resume_of: None,
+            milestones: Vec::new(),
+            notices: Vec::new(),
+            usage: crate::agent::journal::UsageTotals::default(),
+            receipt_status: None,
+            auto_resumed: false,
+            contract_pending: false,
+            contract_id: None,
         }
     }
 
@@ -539,6 +546,13 @@ mod closure_tests {
             updated_at: at,
             steps: vec![],
             resume_of: parent.map(str::to_string),
+            milestones: Vec::new(),
+            notices: Vec::new(),
+            usage: crate::agent::journal::UsageTotals::default(),
+            receipt_status: None,
+            auto_resumed: false,
+            contract_pending: false,
+            contract_id: None,
         }
     }
     #[test]

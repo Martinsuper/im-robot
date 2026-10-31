@@ -1,0 +1,52 @@
+/* Contract confirmation card mirrors .action-confirmation (App.css) conventions. */
+.contract-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px solid rgba(87, 121, 109, .2);
+  border-radius: 10px;
+  color: #526476;
+  background: #eef3e9;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.contract-card p { margin: 0; white-space: pre-line; }
+.contract-card > strong { color: #34495e; font-size: 12px; }
+.contract-card h4 { margin: 6px 0 2px; font-size: 11px; color: #34495e; }
+.contract-card__goal { color: #34495e; }
+.contract-card__milestones { display: grid; gap: 4px; }
+.contract-card__milestone { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: 4px; align-items: center; }
+.contract-card input {
+  min-width: 0;
+  border: 1px solid rgba(87, 121, 109, .28);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: inherit;
+  background: #fff;
+}
+.contract-card button {
+  border: 0;
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: #fff;
+  background: #58796d;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.contract-card button.is-secondary { color: #58796d; background: rgba(255, 255, 255, .72); }
+.contract-card button:disabled { opacity: .55; cursor: default; }
+.contract-card__add { justify-self: start; }
+.contract-card__remove { background: rgba(255, 255, 255, .72); color: #a05a4a; padding: 4px 6px; }
+.contract-card__field { display: grid; gap: 3px; }
+.contract-card__field--narrow { max-width: 200px; }
+.contract-card__group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 6px 8px; border: 1px solid rgba(87, 121, 109, .16); border-radius: 8px; }
+.contract-card__group legend { padding: 0 4px; font-size: 10px; color: #6c8478; }
+.contract-card__group label { display: inline-flex; align-items: center; gap: 4px; }
+.contract-card__group small { flex-basis: 100%; color: #6c8478; }
+.contract-card__group input[type="radio"] { min-width: 0; }
+.contract-card__risks { margin: 2px 0 0; padding-left: 16px; color: #8a5a3a; }
+.contract-card__actions { display: flex; gap: 6px; margin-top: 2px; }

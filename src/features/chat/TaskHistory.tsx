@@ -1,22 +1,18 @@
 import { TaskDiagnostics } from "./TaskDiagnostics";
+import { TaskStepsPanel } from "./TaskStepsPanel";
 import { useEffect, useState } from "react";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { toUserMessage } from "../../lib/errors";
 import "./taskHistory.css";
 import { useTranslation } from "../i18n/I18nProvider";
-import { summarizeSteps } from "./taskOutcomeModel";
+import { contractInterrupted, summarizeSteps, toTaskRecords, type TaskRecord } from "./taskOutcomeModel";
 
-type TaskStep = { id: string; tool: string; status: string };
-export type TaskRecord = {
-  requestId: string; conversationId: string; status: string;
-  startedAt: number; updatedAt: number; steps: TaskStep[];
-};
 const labels: Record<string, string> = {
   running: "执行中", waiting: "等待确认", completed: "已结束", failed: "失败",
   cancelled: "已取消", interrupted: "已中断", unknown: "结果未知",
 };
 
-export function TaskHistory({ busy, onInspect, onResume }: { busy: boolean; onInspect?: (record: TaskRecord) => void; onResume?: (record: TaskRecord) => void }) {
+export function TaskHistory({ busy, onInspect, onResume, onRestart }: { busy: boolean; onInspect?: (record: TaskRecord) => void; onResume?: (record: TaskRecord) => void; onRestart?: (record: TaskRecord) => void }) {
   const { t }=useTranslation();
   const [resolved,setResolved]=useState<string[]>([]);
   const [records, setRecords] = useState<TaskRecord[]>([]);
@@ -26,7 +22,7 @@ export function TaskHistory({ busy, onInspect, onResume }: { busy: boolean; onIn
     if (!isTauriRuntime) return;
     let disposed = false;
     void runCommand("agent_list_tasks").then((items) => {
-      if (!disposed) { setRecords(Array.isArray(items) ? items : []); setError(""); }
+      if (!disposed) { setRecords(toTaskRecords(items)); setError(""); }
     }).catch((cause) => {
       if (!disposed) setError(toUserMessage(cause, "任务记录读取失败，请重试"));
     });
@@ -41,12 +37,15 @@ export function TaskHistory({ busy, onInspect, onResume }: { busy: boolean; onIn
     <button type="button" onClick={() => setRevision((value) => value + 1)}>刷新任务记录</button>
     {records.slice(0, 10).map((record) => {
       const counts = summarizeSteps(record.steps.map((step) => step.status));
+      const contractWait = contractInterrupted(record);
       return <section key={record.requestId} aria-label={`任务 ${record.requestId}`}>
       <strong>{labels[record.status] || record.status}</strong>
       <span> · {new Date(record.startedAt * 1000).toLocaleString()} · {record.requestId.slice(0, 8)}</span>
-      {["interrupted", "failed", "cancelled"].includes(record.status) && <p>可能已有部分操作完成。请先检查实际结果，再决定如何继续。</p>}
+      {contractWait && <p role="status">{t("chat.task.history.contractInterrupted", "任务在等待契约确认时中断")}</p>}
+      {["interrupted", "failed", "cancelled"].includes(record.status) && !contractWait && <p>可能已有部分操作完成。请先检查实际结果，再决定如何继续。</p>}
       {onInspect && (["interrupted", "failed", "cancelled"].includes(record.status) || (record.status === "completed" && record.steps.length > 0)) && <button type="button" disabled={busy} onClick={() => onInspect(record)}>只读核对结果</button>}
-      {onResume && (["interrupted", "failed", "cancelled"].includes(record.status) || record.steps.some((step) => ["failed", "unknown"].includes(step.status))) && <button type="button" disabled={busy} onClick={() => onResume(record)}>安全续跑</button>}
+      {onResume && !contractWait && (["interrupted", "failed", "cancelled"].includes(record.status) || record.steps.some((step) => ["failed", "unknown"].includes(step.status))) && <button type="button" disabled={busy} onClick={() => onResume(record)}>安全续跑</button>}
+      {onRestart && contractWait && <button type="button" disabled={busy} onClick={() => onRestart(record)}>{t("chat.task.history.restart", "重新发起")}</button>}
       {["failed","interrupted"].includes(record.status) && !resolved.includes(record.requestId) && <button type="button" disabled={busy} onClick={()=>{
         if (!window.confirm(t("soul.settings.resolveConfirm"))) return;
         void runCommand("soul_resolve_task",{taskId:record.requestId}).then(()=>setResolved((items)=>[...items,record.requestId])).catch((cause)=>setError(toUserMessage(cause,t("soul.settings.conflict"))));
@@ -55,6 +54,7 @@ export function TaskHistory({ busy, onInspect, onResume }: { busy: boolean; onIn
       {record.steps.length ? <ol>{record.steps.map((step) => <li key={step.id}>
         {step.tool} · {step.status === "completed" ? "工具已返回" : labels[step.status] || step.status}
       </li>)}</ol> : <p>没有已记录的工具步骤；这不代表操作一定未发生。</p>}
+      <TaskStepsPanel requestId={record.requestId} />
       {["interrupted", "failed", "cancelled"].includes(record.status) && <TaskDiagnostics terminal={{ requestId: record.requestId, status: record.status === "cancelled" ? "cancelled" : "failed" }} />}
     </section>;
     })}

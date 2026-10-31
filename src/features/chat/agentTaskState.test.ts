@@ -46,6 +46,71 @@ describe("task UI projection", () => {
     const next = agentTaskReducer(state, { type: "begin", requestId: "next" });
     expect(next).toEqual({ ...initialAgentTaskState, requestId: "next", busy: true });
   });
+
+  it("projects the delegated task contract and clears it once the user decides", () => {
+    const state = event(begin(), { type: "contract-proposed", contractId: "c1", contract: { goal: "交付功能", milestones: [{ id: "m1", title: "实现", acceptance: "测试通过" }], verifyCommand: "npm test", timeMinutes: 30, risks: ["改动面大"] } });
+    expect(state.status).toBe("等待你确认任务契约");
+    expect(state.pendingContract).toMatchObject({ contractId: "c1", contract: { goal: "交付功能", verifyCommand: "npm test", timeMinutes: 30, risks: ["改动面大"] } });
+    expect(state.pendingContract?.contract.milestones[0]).toEqual({ id: "m1", title: "实现", acceptance: "测试通过" });
+    const done = event(state, { type: "cancelled" });
+    expect(done.pendingContract).toBeNull();
+  });
+
+  it("folds milestone events into a timeline and attributes tools to the running milestone", () => {
+    let state = event(begin(), { type: "milestone", milestoneId: "m1", status: "started", title: "准备" });
+    state = event(state, { type: "tool-start", toolCallId: "t1", tool: "read" });
+    state = event(state, { type: "milestone", milestoneId: "m1", status: "completed", note: "验收通过" });
+    state = event(state, { type: "milestone", milestoneId: "m2", status: "started", title: "实现" });
+    state = event(state, { type: "milestone", milestoneId: "m2", status: "started" });
+    expect(state.milestones).toEqual([
+      { id: "m1", status: "completed", title: "准备", note: "验收通过" },
+      { id: "m2", status: "started", title: "实现", note: undefined },
+    ]);
+    expect(state.status).toBe("正在执行：实现");
+    expect(state.tools[0].milestoneId).toBe("m1");
+  });
+
+  it("keeps notices with the latest last and drops empty ones", () => {
+    let state = event(begin(), { type: "notice", level: "warn", text: "安装了依赖" });
+    state = event(state, { type: "notice", level: "info", text: "  " });
+    state = event(state, { type: "notice", level: "info", text: "新增了计划外文件" });
+    expect(state.notices).toEqual([{ level: "warn", text: "安装了依赖" }, { level: "info", text: "新增了计划外文件" }]);
+  });
+
+  it("records the receipt before the terminal event and keeps it for the outcome card", () => {
+    let state = event(begin(), { type: "milestone", milestoneId: "m1", status: "started", title: "准备" });
+    state = event(state, { type: "receipt", status: "completed", summary: "全部完成", receipt: {
+      milestones: [{ id: "m1", title: "准备", status: "completed" }],
+      filesChanged: [{ path: "src/a.ts", added: 3, removed: 1 }],
+      verify: [{ command: "npm test", ok: true, output: "ok" }],
+      branch: "piko/task-abcd", commits: ["ab12"], openQuestions: [],
+    } });
+    const done = event(state, { type: "completed" });
+    expect(done.terminal).toMatchObject({ status: "completed" });
+    expect(done.receipt).toMatchObject({ status: "completed", summary: "全部完成",
+      receipt: { branch: "piko/task-abcd", commits: ["ab12"], filesChanged: [{ path: "src/a.ts", added: 3, removed: 1 }] } });
+    expect(done.milestones).toHaveLength(1);
+  });
+
+  it("restores delegated events from a snapshot replay", () => {
+    const snapshot = { requestId: "current", conversationId: "conversation", cwd: null,
+      prompt: "重构模块", response: "", eventSequence: 6,
+      events: [
+        { type: "contract-proposed" as const, requestId: "current", contractId: "c1", contract: { goal: "重构", milestones: [] } },
+        { type: "milestone" as const, requestId: "current", milestoneId: "m1", status: "started", title: "准备" },
+        { type: "notice" as const, requestId: "current", level: "warn", text: "安装依赖" },
+        { type: "receipt" as const, requestId: "current", status: "suspended", receipt: { branch: "piko/task-x" } },
+      ] };
+    const restored = agentTaskReducer(initialAgentTaskState, { type: "restore", snapshot });
+    expect(restored.pendingContract?.contractId).toBe("c1");
+    expect(restored.milestones[0]).toMatchObject({ id: "m1", status: "started" });
+    expect(restored.notices[0]).toEqual({ level: "warn", text: "安装依赖" });
+    expect(restored.receipt?.receipt.branch).toBe("piko/task-x");
+    const done = agentTaskReducer(restored, { type: "event", event: { type: "cancelled", requestId: "current" } });
+    expect(done.busy).toBe(false);
+    expect(done.pendingContract).toBeNull();
+    expect(done.receipt?.receipt.branch).toBe("piko/task-x");
+  });
 });
 
 it("restores a Rust task projection with its pending approvals and terminal state", () => {

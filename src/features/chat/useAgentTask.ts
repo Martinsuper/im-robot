@@ -14,6 +14,7 @@ export function useAgentTask() {
     }
     return {
       setAgentBusy: setter("busy"),
+      setAgentPendingContract: setter("pendingContract"),
       beginAgentTask: (requestId: string) => dispatch({ type: "begin", requestId }),
       restoreAgentTask: (snapshot: AgentTaskSnapshot) => dispatch({ type: "restore", snapshot }),
       resetAgentTask: () => dispatch({ type: "reset" }),
@@ -22,5 +23,7 @@ export function useAgentTask() {
   }, []);
   return { agentBusy: state.busy, agentStatus: state.status, agentTools: state.tools,
     taskTerminal: state.terminal, agentApprovals: state.approvals,
-    workspaceRequired: state.workspaceRequired, ...actions };
+    workspaceRequired: state.workspaceRequired,
+    agentPendingContract: state.pendingContract, agentMilestones: state.milestones,
+    agentNotices: state.notices, agentReceipt: state.receipt, ...actions };
 }

@@ -134,6 +134,8 @@ fn defaults_to_balanced_quiet_mode() {
     assert!(!settings.break_reminder_quiet_hours_enabled);
     assert_eq!(settings.break_reminder_quiet_hours_start, "22:00");
     assert_eq!(settings.break_reminder_quiet_hours_end, "08:00");
+    // P2 §9：崩溃自动续跑默认开启。
+    assert!(settings.agent_auto_resume_enabled);
 }
 
 #[test]

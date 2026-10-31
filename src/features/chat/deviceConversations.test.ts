@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { deviceConversations } from "./deviceConversations";
-import type { TaskRecord } from "./TaskHistory";
+import type { TaskRecord } from "./taskOutcomeModel";
 
 const device = `passport-${"a".repeat(24)}`;
 function record(requestId: string, updatedAt: number, conversationId = device): TaskRecord {

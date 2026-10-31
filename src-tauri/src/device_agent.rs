@@ -89,7 +89,7 @@ fn preview(draft: &Value, device_confirmation: bool) -> (String, bool) {
     };
     let renderable = complete.chars().all(|c| {
         (c.is_ascii() && (!c.is_control() || c == '\n'))
-            || include_str!("../../firmware/passport/main/font-characters.txt").contains(c)
+            || include_str!("../resources/passport/font-characters.txt").contains(c)
     });
     if device_confirmation
         && allowed
@@ -107,8 +107,7 @@ fn preview(draft: &Value, device_confirmation: bool) -> (String, bool) {
                     .take(180)
                     .map(|c| {
                         if (c.is_ascii() && (!c.is_control() || c == '\n'))
-                            || include_str!("../../firmware/passport/main/font-characters.txt")
-                                .contains(c)
+                            || include_str!("../resources/passport/font-characters.txt").contains(c)
                         {
                             c
                         } else {

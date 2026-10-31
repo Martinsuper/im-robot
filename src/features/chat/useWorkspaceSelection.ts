@@ -22,7 +22,8 @@ export function useWorkspaceSelection(
       if (typeof path !== "string") return;
       if (required && requestId)
         await runCommand("agent_select_workspace", { requestId, path });
-      setConversation((current) => ({ ...current, cwd: path }));
+      // 手选目录脱离项目绑定；项目切换走 ChatContextMenu 的项目列表。
+      setConversation((current) => ({ ...current, cwd: path, projectId: undefined, projectName: undefined }));
     } catch (error) {
       toast.error(toUserMessage(error, "选择目录失败"));
     }

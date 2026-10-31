@@ -35,6 +35,12 @@ pub(crate) struct AppSettings {
     pub(crate) html_preview_enabled: bool,
     #[serde(default)]
     pub(crate) agent_auto_approve_commands: bool,
+    /// 单个工具调用的活性上限（04 §4.4，默认 20 分钟）；idle 超时只在不等工具/审批/契约时计数。
+    #[serde(default = "default_agent_tool_timeout_minutes")]
+    pub(crate) agent_tool_timeout_minutes: u64,
+    /// P2 §9：coding 任务 sidecar 崩溃后自动续跑（同一任务链最多一次），默认开启。
+    #[serde(default = "default_agent_auto_resume_enabled")]
+    pub(crate) agent_auto_resume_enabled: bool,
     /// 全局快捷键（02 §3.3 / 06）：打开对话窗口。格式如 "CmdOrCtrl+Shift+Space"。
     #[serde(default = "default_global_shortcut")]
     pub(crate) global_shortcut: String,
@@ -95,6 +101,8 @@ impl Default for AppSettings {
             credential_error: None,
             html_preview_enabled: false,
             agent_auto_approve_commands: false,
+            agent_tool_timeout_minutes: default_agent_tool_timeout_minutes(),
+            agent_auto_resume_enabled: default_agent_auto_resume_enabled(),
             global_shortcut: default_global_shortcut(),
             onboarding_completed: false,
             onboarding_version: String::new(),
@@ -116,6 +124,14 @@ fn default_theme() -> String {
 
 fn default_global_shortcut() -> String {
     "CmdOrCtrl+Shift+Space".to_string()
+}
+
+fn default_agent_tool_timeout_minutes() -> u64 {
+    20
+}
+
+fn default_agent_auto_resume_enabled() -> bool {
+    true
 }
 
 fn default_break_reminders_enabled() -> bool {

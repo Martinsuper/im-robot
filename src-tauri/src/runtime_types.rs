@@ -77,14 +77,33 @@ pub(crate) enum StreamChatOutcome {
 )]
 pub(crate) enum PetVisualEvent {
     AttachmentReady,
-    ReminderFired { message: String },
-    CalendarEventDue { message: String },
+    ReminderFired {
+        message: String,
+    },
+    CalendarEventDue {
+        message: String,
+    },
     AmbientNudge,
-    BreakReminder { message: String },
+    BreakReminder {
+        message: String,
+    },
     IdleStarted,
     IdleEnded,
     FocusStarted,
     FocusCompleted,
+    /// 委托任务的状态迁移（04 §4.7）：PetWindow 映射到 working/confirming/success/error 模式。
+    Task {
+        phase: TaskPhase,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum TaskPhase {
+    Working,
+    Confirming,
+    Success,
+    Error,
 }
 
 pub(crate) fn append_session_chat_history(

@@ -232,3 +232,21 @@
 .conversation-tabs__detached { display: flex; height: 100%; align-items: center; justify-content: center; flex-wrap: wrap; align-content: center; gap: 10px; padding: 24px; color: var(--piko-muted); font-size: 12px; }
 .conversation-tabs__detached p { flex-basis: 100%; text-align: center; }
 .conversation-tabs__detached button { border: 1px solid var(--piko-line); border-radius: 8px; background: var(--piko-fill); padding: 9px 12px; color: var(--piko-accent); }
+
+/* Steering mode toggle for delegated coding tasks (doc/design/18 §2). */
+.bubble-steer-mode { display: inline-flex; gap: 2px; }
+.bubble-steer-mode button {
+  width: auto;
+  height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(87, 121, 109, .16);
+  border-radius: 8px;
+  color: #58796d;
+  background: #edf4ef;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bubble-steer-mode button.is-active { color: #fff; border-color: #58796d; background: #58796d; }

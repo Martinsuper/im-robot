@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { toUserMessage } from "../../lib/errors";
 import { deviceConversations, type RecentConversation } from "./deviceConversations";
+import { toTaskRecords } from "./taskOutcomeModel";
 
 import { ConversationDeleteButton } from "./ConversationDeleteButton";
 
@@ -23,7 +24,7 @@ export function DeviceConversationHistory({ openIds, onOpen, onDelete, deleteTar
         const [entries, records] = await Promise.all([
           runCommand("list_chat_history"),
           // Failed tasks may have no saved answer. Their optional metadata must not hide saved chats.
-          runCommand("agent_list_tasks").catch(() => []),
+          runCommand("agent_list_tasks").then(toTaskRecords).catch(() => []),
         ]);
         if (!disposed && current === generation) {
           setHistory([...live.values(), ...deviceConversations(records, entries).filter(item => !live.has(item.id))]);

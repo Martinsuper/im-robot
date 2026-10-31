@@ -102,8 +102,15 @@ pub fn soul_report_activity(
         .app_handle()
         .get_webview_window("pet")
         .and_then(|pet| pet.is_visible().ok());
-    snapshot.agent_busy = None;
-    snapshot.awaiting_confirmation = None;
+    // 04 §4.7：agent_busy/awaiting_confirmation 接运行时真值；前端上报仅在运行时不可用时回退。
+    let agent = window
+        .app_handle()
+        .state::<crate::agent::AgentRuntime>()
+        .activity();
+    if let Some((busy, waiting)) = agent {
+        snapshot.agent_busy = Some(busy);
+        snapshot.awaiting_confirmation = Some(waiting);
+    }
     activity_state
         .report_from(window.label(), snapshot, now())
         .map_err(|error| error.to_string())

@@ -5,7 +5,7 @@ import { toUserMessage } from "../../lib/errors";
 
 export function TaskDiagnostics({ terminal }: { terminal: TaskTerminal | null }) {
   const [text, setText] = useState("");
-  if (!terminal || terminal.status === "completed") return null;
+  if (!terminal) return null;
   async function load() {
     try {
       const result = (await runCommand("agent_get_diagnostics", { requestId: terminal!.requestId })) as { text?: string; truncated?: boolean };

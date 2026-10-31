@@ -63,6 +63,146 @@
       "favorite": "Favorite",
       "unfavorite": "Unfavorite",
       "copySource": "Copy source"
+    },
+    "task": {
+      "steer": {
+        "modeLabel": "Interjection mode",
+        "guidance": "Add",
+        "redirect": "Redirect",
+        "guidanceHint": "Injects at the next milestone boundary without revoking approvals",
+        "redirectHint": "Injects immediately and revokes pending approvals",
+        "pendingNotice": "The previous interjection has not been delivered yet. Try again shortly.",
+        "queueBadge": "{count} queued"
+      },
+      "policy": {
+        "cautious": "Cautious (confirm everything)",
+        "standard": "Standard (auto file edits, confirm commands)",
+        "trusted": "Trusted (auto commands except dangerous ones)"
+      },
+      "policyHint": {
+        "cautious": "Every file edit and command asks first.",
+        "standard": "In-workspace file edits run automatically; commands and outside writes ask first.",
+        "trusted": "Common commands also run automatically; dangerous ones and outside writes still ask."
+      },
+      "git": {
+        "branch": "Create a task branch and commit per milestone",
+        "files-only": "No branch; commit only files touched by the task",
+        "off": "Skip the git safety net"
+      },
+      "milestone": {
+        "aria": "Milestone progress",
+        "started": "Running",
+        "completed": "Done",
+        "failed": "Failed",
+        "skipped": "Skipped",
+        "toolDetail": "Details · {count} steps",
+        "preparation": "Startup steps · {count} items"
+      },
+      "receipt": {
+        "ariaLabel": "Task receipt",
+        "statusCompleted": "Task completed",
+        "statusSuspended": "Task wrapped up and suspended",
+        "milestones": "Milestone status",
+        "files": "Changed files",
+        "openFile": "Open in editor",
+        "copyPath": "Copy path",
+        "copied": "Copied",
+        "copyFailed": "Copy failed. Select the path and copy manually.",
+        "verify": "Verification",
+        "verifyPassed": "Passed",
+        "verifyFailed": "Failed",
+        "outputTruncated": "\n…output truncated",
+        "branch": "Branch",
+        "commits": "Commits",
+        "openQuestions": "Open questions",
+        "notices": "Yellow flags",
+        "toolEvidence": "View tool evidence",
+        "inspect": "Read-only check of this run",
+        "reject": "Send back",
+        "feedbackLabel": "Feedback for the re-run",
+        "feedbackPlaceholder": "Describe what is wrong or add requirements; submitting resumes this task automatically.",
+        "sendFeedback": "Send feedback and resume",
+        "cancelFeedback": "Cancel",
+        "accept": "Accept & close"
+      },
+      "contract": {
+        "ariaLabel": "Task contract awaiting confirmation",
+        "title": "Task contract",
+        "milestones": "Milestones",
+        "milestoneTitle": "Milestone title",
+        "milestoneAcceptance": "Acceptance description",
+        "addMilestone": "Add milestone",
+        "removeMilestone": "Remove milestone",
+        "verifyCommand": "Verify command",
+        "timeMinutes": "Time budget (minutes, 0 = unlimited)",
+        "policy": "Autonomy level",
+        "gitMode": "git mode",
+        "dirtyHint": "If the workspace has uncommitted changes, the host commits only files touched by this task and leaves your other changes alone.",
+        "risks": "Risks",
+        "approve": "Confirm & start",
+        "reject": "Discard task"
+      },
+      "queue": {
+        "mode": "Queue as next task",
+        "modeHint": "Sends automatically as a new task once the current one ends",
+        "sendAria": "Queue new task",
+        "badge": "{count} in queue",
+        "aria": "Queued tasks",
+        "remove": "Remove queued task",
+        "full": "Queue is full (5 max). Send after the current task ends."
+      },
+      "log": {
+        "title": "Task log",
+        "loading": "Loading task log…",
+        "empty": "No task log yet.",
+        "loadFailed": "Failed to read the task log. Try again.",
+        "truncated": "Log truncated to the first 256KB.",
+        "annotationLabel": "Task annotation",
+        "annotationPlaceholder": "Write a note; it will be sent as guidance…",
+        "annotationSend": "Send annotation",
+        "annotationHint": "The annotation takes effect at the next milestone boundary.",
+        "annotationClosed": "The task has ended; the annotation was not sent."
+      },
+      "steps": {
+        "button": "View full steps",
+        "loading": "Loading full steps…",
+        "loadFailed": "Failed to load the step ledger. Try again.",
+        "archived": "Includes {count} archived",
+        "empty": "No recorded tool steps."
+      },
+      "history": {
+        "contractInterrupted": "Task interrupted while waiting for contract confirmation",
+        "restart": "Restart",
+        "restartMissing": "Original task details are missing; cannot restart."
+      }
+    },
+    "project": {
+      "menuLabel": "Projects",
+      "new": "New project",
+      "pickTitle": "Choose a project folder",
+      "loading": "Loading projects…",
+      "empty": "No projects yet. Pick a folder to create one.",
+      "listFailed": "Could not load projects. You can still pick a working folder.",
+      "createFailed": "Could not create the project. Try again."
+    },
+    "schedule": {
+      "aria": "Scheduled delegation",
+      "title": "Scheduled delegation",
+      "promptLabel": "Task prompt",
+      "promptPlaceholder": "What to hand to Piko at the scheduled time…",
+      "projectLabel": "Project",
+      "currentWorkspace": "Current workspace",
+      "timeLabel": "Run at",
+      "policyHint": "Autonomy follows the project default.",
+      "submit": "Create scheduled task",
+      "created": "Scheduled task created.",
+      "createFailed": "Failed to create the scheduled task. Try again.",
+      "invalidTime": "Enter a prompt and pick a future time.",
+      "listFailed": "Failed to load scheduled tasks. Try again.",
+      "pendingTitle": "Pending",
+      "pendingEmpty": "No pending scheduled tasks.",
+      "cancel": "Cancel",
+      "cancelFailed": "Failed to cancel. Try again."
     }
   },
   "settings": {

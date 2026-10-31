@@ -1,7 +1,7 @@
 /** Private Rust ↔ Node protocol. Unversioned commands remain supported for CLI clients. */
 import { PROTOCOL_VERSION, EVENT_FIELDS } from "./wire-schema.mjs";
 export { PROTOCOL_VERSION };
-const commands = new Set(["start", "steer", "approval", "app-result", "cancel"]);
+const commands = new Set(["start", "steer", "approval", "app-result", "cancel", "contract"]);
 const nonempty = (value) => typeof value === "string" && value.trim().length > 0;
 
 export function parseCommand(line, activeRequestId) {
@@ -26,6 +26,8 @@ export function parseCommand(line, activeRequestId) {
     throw new Error("无效的操作确认");
   } else if (input.type === "app-result" && !nonempty(input.callId)) {
     throw new Error("无效的工具调用标识");
+  } else if (input.type === "contract" && !nonempty(input.contractId)) {
+    throw new Error("无效的任务契约");
   }
   return input;
 }

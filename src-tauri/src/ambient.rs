@@ -130,13 +130,19 @@ pub(crate) fn watch_idle_detection(app: &AppHandle) {
                     .map(|requests| !requests.is_empty())
                     .unwrap_or(false);
                 let focus_is_active = app.state::<FocusTimer>().is_active();
+                // 04 §4.7：委托任务运行期间宠物不再误入 resting。
+                let agent_is_busy = app
+                    .state::<crate::agent::AgentRuntime>()
+                    .activity()
+                    .map(|(busy, _)| busy)
+                    .unwrap_or(false);
                 let idle = app.state::<IdleDetection>();
                 if let Ok(mut was_idle) = idle.0.lock() {
                     let (is_idle, event) = next_idle_state(
                         *was_idle,
                         &settings,
                         idle_seconds,
-                        chat_is_active || focus_is_active,
+                        chat_is_active || focus_is_active || agent_is_busy,
                     );
                     *was_idle = is_idle;
                     if let Some(event) = event {

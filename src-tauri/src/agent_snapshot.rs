@@ -78,6 +78,12 @@ impl TaskSnapshot {
                     self.cwd = Some(cwd.into());
                 }
             }
+            // 委托任务（doc/design/18）：宿主在写入 contract 命令后发布，撤销等待中的契约卡片。
+            "contract-resolved" => {
+                self.events.retain(|old| {
+                    old["type"] != "contract-proposed" || old["contractId"] != event["contractId"]
+                });
+            }
             "completed" | "failed" | "cancelled" => self.clear_pending(),
             _ => {}
         }
@@ -91,6 +97,8 @@ impl TaskSnapshot {
                 "approval" | "approval-expired" | "approval-resolved" => {
                     old["approvalId"] != event["approvalId"]
                 }
+                "contract-proposed" => old["contractId"] != event["contractId"],
+                "milestone" => old["milestoneId"] != event["milestoneId"],
                 _ => false,
             }
         });
@@ -136,7 +144,7 @@ impl TaskSnapshot {
         self.events.retain(|old| {
             !matches!(
                 old["type"].as_str(),
-                Some("approval" | "action-proposed" | "workspace-required")
+                Some("approval" | "action-proposed" | "workspace-required" | "contract-proposed")
             )
         });
     }
@@ -229,5 +237,106 @@ mod tests {
         assert_eq!(state.events.len(), RECENT_TOOLS * 2);
         assert!(!state.events.iter().any(|e| e["toolCallId"] == "0"));
         assert_eq!(state.events.last().unwrap()["eventSequence"], 200);
+    }
+
+    #[test]
+    fn delegated_task_events_keep_latest_state_and_clear_with_resolution() {
+        let mut state = snapshot();
+        record(
+            &mut state,
+            json!({"type":"milestone","milestoneId":"m1","status":"started","title":"搭建骨架"}),
+        );
+        record(
+            &mut state,
+            json!({"type":"milestone","milestoneId":"m1","status":"completed"}),
+        );
+        record(
+            &mut state,
+            json!({"type":"milestone","milestoneId":"m2","status":"started"}),
+        );
+        record(&mut state, json!({"type":"usage","inputTokens":1}));
+        record(&mut state, json!({"type":"usage","inputTokens":5}));
+        record(
+            &mut state,
+            json!({"type":"notice","level":"warn","text":"x"}),
+        );
+        record(
+            &mut state,
+            json!({"type":"notice","level":"info","text":"y"}),
+        );
+        record(&mut state, json!({"type":"receipt","status":"completed"}));
+        record(&mut state, json!({"type":"receipt","status":"suspended"}));
+        record(
+            &mut state,
+            json!({"type":"contract-proposed","contractId":"c1"}),
+        );
+        record(
+            &mut state,
+            json!({"type":"contract-proposed","contractId":"c1"}),
+        );
+        let milestones = |state: &TaskSnapshot| -> Vec<(String, String)> {
+            state
+                .events
+                .iter()
+                .filter(|e| e["type"] == "milestone")
+                .map(|e| {
+                    (
+                        e["milestoneId"].as_str().unwrap_or("").to_string(),
+                        e["status"].as_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            milestones(&state),
+            [
+                ("m1".to_string(), "completed".to_string()),
+                ("m2".to_string(), "started".to_string())
+            ]
+        );
+        let latest = |state: &TaskSnapshot, kind: &str| {
+            state
+                .events
+                .iter()
+                .rev()
+                .find(|e| e["type"] == kind)
+                .cloned()
+        };
+        assert_eq!(
+            state.events.iter().filter(|e| e["type"] == "usage").count(),
+            1
+        );
+        assert_eq!(latest(&state, "usage").unwrap()["inputTokens"], 5);
+        assert_eq!(latest(&state, "notice").unwrap()["text"], "y");
+        assert_eq!(latest(&state, "receipt").unwrap()["status"], "suspended");
+        assert_eq!(
+            state
+                .events
+                .iter()
+                .filter(|e| e["type"] == "contract-proposed")
+                .count(),
+            1
+        );
+        // 宿主写入 contract 命令后发布 contract-resolved，等待中的契约卡片随之撤销。
+        record(
+            &mut state,
+            json!({"type":"contract-resolved","contractId":"c1","approved":true}),
+        );
+        assert!(!state
+            .events
+            .iter()
+            .any(|e| e["type"] == "contract-proposed"));
+        record(
+            &mut state,
+            json!({"type":"contract-proposed","contractId":"c2"}),
+        );
+        record(&mut state, json!({"type":"cancelled"}));
+        assert!(state.terminal());
+        assert!(!state
+            .events
+            .iter()
+            .any(|e| e["type"] == "contract-proposed"));
+        // 里程碑是结构性历史，终态后仍保留供回执展示。
+        assert_eq!(milestones(&state).len(), 2);
     }
 }

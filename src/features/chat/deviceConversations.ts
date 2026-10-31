@@ -1,4 +1,4 @@
-import type { TaskRecord } from "./TaskHistory";
+import type { TaskRecord } from "./taskOutcomeModel";
 
 export type RecentConversation = { id: string; title: string };
 type History = { id: string; prompt: string; createdAt: number; conversationId?: string | null };

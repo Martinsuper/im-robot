@@ -10,12 +10,16 @@ import { useWorkspaceSelection } from "./useWorkspaceSelection";
 import { useStableEvent } from "../../hooks/useStableEvent";
 import { HtmlFavoriteDialog } from "./HtmlFavoriteDialog";
 import { AgentActivity } from "./AgentActivity";
+import { ContractCard } from "./ContractCard";
 import { TaskHistory } from "./TaskHistory";
 import { TaskDiagnostics } from "./TaskDiagnostics";
 import { TaskOutcome } from "./TaskOutcome";
 import { useAgentTask } from "./useAgentTask";
 import { connectAgentTask } from "./agentTaskRecovery";
-import { CONVERSATION_STORAGE, loadConversation, type AgentEvent, type AgentTaskSnapshot, type Conversation } from "./agentTypes";
+import { invokeV2 } from "./agentWire";
+import { dropQueuedTask, enqueueQueuedTask, takeQueueHead, type QueuedTask } from "./taskQueues";
+import type { TaskRecord } from "./taskOutcomeModel";
+import { CONVERSATION_STORAGE, loadConversation, POLICY_PRESETS, type AgentEvent, type AgentPolicy, type AgentStartInputV2, type AgentTaskSnapshot, type ContractObject, type Conversation, type GitMode, type SteerMode } from "./agentTypes";
 import {
   CollapsibleReply,
   HistoryItem,
@@ -25,13 +29,15 @@ import {
   WelcomeState,
   textForSpeech,
 } from "./ChatPresentation";
-import { ArrowDown, ArrowUp, ExternalLink, CornerDownLeft, Mic, PanelRight, Paperclip, Pin, Plus, ScanLine, Square } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink, CornerDownLeft, ListPlus, Mic, PanelRight, Paperclip, Pin, Plus, ScanLine, Square } from "lucide-react";
 import { FormEvent, lazy, Suspense, type CSSProperties, type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { ActionConfirmationCard, getConfirmationChoices } from "./ActionConfirmationCard";
+import { useTranslation } from "../i18n/I18nProvider";
 import { getBubbleCompanionMessage } from "./bubbleMessage";
 import type { ActionDraft, ChatEvent } from "./chatTypes";
 import type { AttachmentAction, AttachmentPreview, ChatHistoryEntry, PanelTab, ScreenshotPreview } from "../../types/appTypes";
@@ -79,6 +85,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
   activeTabRef.current = active;
   const attachmentContext = useMemo(() => tabId ? { contextId: tabId } : undefined, [tabId]);
   const toast = useToast();
+  const { t } = useTranslation();
   const surface = useConversationSurface((error) => toast.error(toUserMessage(error, "窗口切换失败，请重试。")));
   const { settings: sharedSettings, applyServer } = useAppSettings();
   const [workspaceOpen, setWorkspaceOpen] = useState(initialWorkspaceOpen);
@@ -179,12 +186,25 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
   const contextReset = useRef<Promise<unknown>>(Promise.resolve());
   conversationRef.current = conversation;
   const { agentBusy, agentStatus, agentTools, taskTerminal, agentApprovals, workspaceRequired,
-    setAgentBusy, beginAgentTask, resetAgentTask, restoreAgentTask, applyAgentEvent } = useAgentTask();
+    agentPendingContract, agentMilestones, agentNotices, agentReceipt,
+    setAgentBusy, beginAgentTask, resetAgentTask, restoreAgentTask, applyAgentEvent, setAgentPendingContract } = useAgentTask();
   const [verificationOf, setVerificationOf] = useState<string>();
   const [resumeOf, setResumeOf] = useState<string>();
+  const [steerMode, setSteerMode] = useState<SteerMode>("redirect");
+  const [contractBusy, setContractBusy] = useState(false);
+  const [taskKind, setTaskKind] = useState<"companion" | "coding">("companion");
+  const contractCardRef = useRef<HTMLDivElement>(null);
+  // 委托任务判定：start 时记录 taskKind；恢复的旧快照则以协议 v2 事件的出现为准。
+  const codingTask = taskKind === "coding" || agentMilestones.length > 0 || Boolean(agentPendingContract);
   const [sendingSteering, setSendingSteering] = useState(false);
   const steeringPending = useRef(false);
   const agentBusyRef = useRef(false);
+  // P2（doc 18 §9）：guidance 在途的本地排队与 busy 期间的新任务排队（内存态，每会话独立）。
+  const [guidanceQueue, setGuidanceQueue] = useState<string[]>([]);
+  const guidanceQueueRef = useRef<string[]>([]);
+  const [taskQueue, setTaskQueue] = useState<QueuedTask[]>([]);
+  const taskQueueRef = useRef<QueuedTask[]>([]);
+  const [queueNext, setQueueNext] = useState(false);
   const displayedRequestId = useRef<string | undefined>(undefined);
   const businessAction = useRef(false);
   const businessCardRef = useRef<HTMLDivElement>(null);
@@ -354,12 +374,86 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
   const voiceSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const voiceSamplesRef = useRef<Float32Array[]>([]);
   const voiceSampleRateRef = useRef(WHISPER_SAMPLE_RATE);
+  // sendPrompt 是每次渲染重建的函数；订阅回调经此引用最新实现，避免闭包读到过期附件状态。
+  const sendPromptRef = useRef(sendPrompt);
+  sendPromptRef.current = sendPrompt;
+  /** guidance steer 发送：置位在途标志后异步下发；失败回滚并尝试续发队列。 */
+  const sendGuidanceSteer = useStableEvent((text: string) => {
+    const target = activeRequestId.current;
+    if (!target) return;
+    steeringPending.current = true; setSendingSteering(true);
+    void runCommand("agent_steer", { requestId: target, text, mode: "guidance" as SteerMode }).catch((error) => {
+      steeringPending.current = false; setSendingSteering(false);
+      toast.error(toUserMessage(error, "补充要求未送达，请重试"));
+      pumpGuidanceQueue();
+    });
+  });
+  /** 前一条 guidance 被 steering-accepted 后按序发送下一条（doc 18 §9）。 */
+  const pumpGuidanceQueue = useStableEvent(() => {
+    if (steeringPending.current || !guidanceQueueRef.current.length) return;
+    const [head, ...rest] = guidanceQueueRef.current;
+    guidanceQueueRef.current = rest;
+    setGuidanceQueue(rest);
+    sendGuidanceSteer(head);
+  });
+  const enqueueQueuedPrompt = useStableEvent((text: string) => {
+    const result = enqueueQueuedTask(taskQueueRef.current, text, crypto.randomUUID());
+    if (!result.accepted) {
+      toast.error(t("chat.task.queue.full", "排队已达上限（5 条），请等任务结束后再发送。"));
+      return;
+    }
+    taskQueueRef.current = result.queue;
+    setTaskQueue(result.queue);
+  });
+  const removeQueuedTask = useStableEvent((id: string) => {
+    taskQueueRef.current = dropQueuedTask(taskQueueRef.current, id);
+    setTaskQueue(taskQueueRef.current);
+  });
+  /** 任务终态后自动发送队首；队列是内存态，不参与快照恢复。 */
+  const pumpTaskQueue = useStableEvent(() => {
+    const { head, queue } = takeQueueHead(taskQueueRef.current);
+    if (!head) return;
+    taskQueueRef.current = queue;
+    setTaskQueue(queue);
+    void sendPromptRef.current(head.text, null, null, true);
+  });
+  /** 时间线批注：作为 guidance steer 发送，固定“【批注】”前缀区分来源。 */
+  const annotateTask = useStableEvent((text: string) => {
+    const body = `【批注】${text}`;
+    if (!activeRequestId.current) {
+      toast.info(t("chat.task.log.annotationClosed", "任务已结束，批注未发送。"));
+      return;
+    }
+    if (steeringPending.current) {
+      guidanceQueueRef.current = [...guidanceQueueRef.current, body];
+      setGuidanceQueue(guidanceQueueRef.current);
+      return;
+    }
+    sendGuidanceSteer(body);
+  });
+  /** 契约等待中断的任务：sidecar 已死，续跑无意义，以原 prompt/原目录发起新任务。 */
+  const restartTask = useStableEvent((record: TaskRecord) => {
+    if (agentBusyRef.current) return;
+    const prompt = (record.prompt || "").trim();
+    if (!prompt) {
+      toast.info(t("chat.task.history.restartMissing", "缺少原始任务信息，无法重新发起。"));
+      return;
+    }
+    setVerificationOf(undefined); setResumeOf(undefined);
+    const next = { ...conversationRef.current, cwd: record.cwd || conversationRef.current.cwd, knowledgeScope: undefined, importHistory: false, turnIds: [] };
+    conversationRef.current = next; setConversation(next); setChatHistory([]);
+    void sendPromptRef.current(prompt, null, null);
+  });
   const confirmationChoices = pendingAction ? getConfirmationChoices(pendingAction) : [];
   useEffect(() => {
     if (!pendingAction) return;
     const buttons = Array.from(businessCardRef.current?.querySelectorAll("button") || []);
     (buttons.find((button) => button.textContent?.includes("确认执行")) || buttons[0])?.scrollIntoView?.({ block: "center" });
   }, [pendingAction]);
+  useEffect(() => {
+    if (!agentPendingContract) return;
+    contractCardRef.current?.scrollIntoView?.({ block: "center" });
+  }, [agentPendingContract]);
   const skeletonLineCount = pendingPromptSummary.length > 80 ? 4 : pendingPromptSummary.length > 24 ? 3 : 2;
   const skeletonLines = Array.from({ length: skeletonLineCount }, (_, index) => {
     if (index === 0) return "bubble-skeleton__line--wide";
@@ -373,24 +467,24 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
       : "正在生成回复";
 
   const topbarStatus = useMemo(() => {
-    if (agentApprovals.length || pendingAction) return { label: "等待你确认", pulse: false };
+    if (agentApprovals.length || pendingAction || agentPendingContract) return { label: "等待你确认", pulse: false };
     if (workspaceRequired) return { label: "等待选择文件夹", pulse: false };
     if (memoryActivity) return { label: memoryActivity, pulse: false };
     if (isSpeaking) return { label: "朗读中", pulse: false };
     if (agentBusy) return { label: agentStatus || "正在处理…", pulse: true };
     if (isThinking) return { label: "思考中…", pulse: true };
     return { label: "在线", pulse: false };
-  }, [isThinking, isSpeaking, memoryActivity, agentBusy, agentStatus, agentApprovals.length, pendingAction, workspaceRequired]);
+  }, [isThinking, isSpeaking, memoryActivity, agentBusy, agentStatus, agentApprovals.length, pendingAction, workspaceRequired, agentPendingContract]);
 
   useEffect(() => {
     if (!tabId || !onTabState || !viewLoaded || !taskStateLoaded) return;
     onTabState(tabId, {
       title: (chatHistory[0]?.prompt || currentPrompt || "新对话").slice(0, 24),
       busy: agentBusy || isThinking,
-      waiting: Boolean(agentApprovals.length || pendingAction || workspaceRequired),
+      waiting: Boolean(agentApprovals.length || pendingAction || workspaceRequired || agentPendingContract),
       status: replyStatus || "idle",
     });
-  }, [tabId, onTabState, viewLoaded, taskStateLoaded, currentPrompt, chatHistory, agentBusy, isThinking, agentApprovals.length, pendingAction, workspaceRequired, replyStatus]);
+  }, [tabId, onTabState, viewLoaded, taskStateLoaded, currentPrompt, chatHistory, agentBusy, isThinking, agentApprovals.length, pendingAction, workspaceRequired, agentPendingContract, replyStatus]);
   const hasCurrentTurn = Boolean(currentPrompt || message || pendingAction || showReplySkeleton || agentTools.length || workspaceRequired);
   const showWelcome = !hasCurrentTurn && chatHistory.length === 0 && !historyError;
 
@@ -702,11 +796,15 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
       if (event.type === "approval" && event.approvalId) {
         setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false);
       }
+      if (event.type === "contract-proposed") {
+        setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false);
+      }
       if (event.type === "steering-accepted") {
         steeringPending.current = false; setSendingSteering(false);
         setPrompt((current) => current.trim() === event.text?.trim() ? "" : current);
         setPendingAction(undefined); businessAction.current = false;
         setCurrentPrompt((current) => `${current}\n补充要求：${event.text || ""}`);
+        pumpGuidanceQueue();
       }
       if (event.type === "workspace-required") {
         setShowReplySkeleton(false); clearSkeletonHideTimer(); setIsThinking(false);
@@ -729,6 +827,9 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
         if (event.type === "completed") setReplyStatus("done");
         onChatEvent({ payload: event.type === "failed" ? { type: "failed", requestId: event.requestId, message: event.message || "处理失败" } : { type: event.type, requestId: event.requestId } });
         activeRequestId.current = undefined; setRequestId(undefined);
+        // 终态后（doc 18 §9）：排队的补充要求随任务失效；排队的新任务自动接续发送。
+        if (guidanceQueueRef.current.length) { guidanceQueueRef.current = []; setGuidanceQueue([]); }
+        pumpTaskQueue();
       }
       },
     });
@@ -744,7 +845,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
       connection.dispose();
       void unlisten.then((dispose) => dispose());
     };
-  }, [hideSkeletonSoon, applyAgentEvent, restoreAgentTask, setAgentBusy, tabId, refreshChatHistory]);
+  }, [hideSkeletonSoon, applyAgentEvent, restoreAgentTask, setAgentBusy, tabId, refreshChatHistory, pumpGuidanceQueue, pumpTaskQueue]);
 
   useEffect(() => {
     if (!isTauriRuntime) return;
@@ -805,7 +906,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
     }
   }, [message, showReplySkeleton, currentPrompt, chatHistory.length, agentApprovals.length, workspaceRequired, pendingAction]);
 
-  async function sendPrompt(currentPromptValue: string, inspectionTarget: string | null = verificationOf ?? null, resumeTarget: string | null = resumeOf ?? null) {
+  async function sendPrompt(currentPromptValue: string, inspectionTarget: string | null = verificationOf ?? null, resumeTarget: string | null = resumeOf ?? null, keepDraft = false) {
     try {
       await contextReset.current;
       await viewReady.current;
@@ -858,7 +959,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
     setContextNotice("");
     activeRequestId.current = currentRequestId;
     setRequestId(currentRequestId);
-    setPrompt("");
+    setPrompt(keepDraft ? prompt : "");
 
     if (!isTauriRuntime) {
       previewReplyTimer.current = window.setTimeout(() => {
@@ -874,20 +975,26 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
     }
 
     beginAgentTask(currentRequestId); agentBusyRef.current = true;
-    void agentReady.current.then(() => runCommand("agent_start", {
-      input: {
-        requestId: currentRequestId,
-        conversationId: nextConversation.id, knowledgeScope: nextConversation.knowledgeScope, cwd: nextConversation.cwd || undefined, unified: true, importHistory: nextConversation.importHistory,
-        prompt: requestPrompt,
-        attachmentAction: attachment ? attachmentAction : undefined,
-        ...attachmentContext,
-        screenshot: tabId ? screenshot : undefined,
-        includeScreenshot: Boolean(screenshot),
-        verificationOf: inspectionTarget || undefined,
-        resumeOf: resumeTarget || undefined,
-        proactiveMessageId: replyingTo || undefined,
-      },
-    })).catch((error) => {
+    setSteerMode("redirect");
+    // 绑定了项目的会话按委托式编码任务启动（doc 04 §4.6）；验收命令与档位由宿主按项目配置裁决。
+    const projectStart: AgentStartInputV2 = nextConversation.projectId
+      ? { taskKind: "coding", projectId: nextConversation.projectId }
+      : {};
+    setTaskKind(projectStart.taskKind ?? "companion");
+    const startInput = {
+      requestId: currentRequestId,
+      conversationId: nextConversation.id, knowledgeScope: nextConversation.knowledgeScope, cwd: nextConversation.cwd || undefined, unified: true, importHistory: nextConversation.importHistory,
+      prompt: requestPrompt,
+      attachmentAction: attachment ? attachmentAction : undefined,
+      ...attachmentContext,
+      screenshot: tabId ? screenshot : undefined,
+      includeScreenshot: Boolean(screenshot),
+      verificationOf: inspectionTarget || undefined,
+      resumeOf: resumeTarget || undefined,
+      proactiveMessageId: replyingTo || undefined,
+      ...projectStart,
+    };
+    void agentReady.current.then(() => runCommand("agent_start", { input: startInput })).catch((error) => {
       applyAgentEvent({ type: "failed", requestId: currentRequestId });
       agentBusyRef.current = false;
       setPrompt(requestPrompt);
@@ -895,6 +1002,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
       setShowReplySkeleton(false);
       setReplyStatus("failed");
       setReplyError(toUserMessage(error, "网络好像不太稳定"));
+      pumpTaskQueue();
     });
   }
 
@@ -902,9 +1010,33 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
     if (!viewLoaded || handoffPending) return;
     if (agentBusyRef.current) {
       const text = prompt.trim();
-      if (!text || steeringPending.current || !activeRequestId.current) return;
+      if (!text || !activeRequestId.current) return;
+      // 排队模式（doc 18 §9）：busy 期间的新任务入本地队列，终态后自动发送队首。
+      if (queueNext) {
+        enqueueQueuedPrompt(text);
+        setPrompt("");
+        return;
+      }
+      // guidance 在途时入本地队列按序发送（前一条 steering-accepted 后发下一条）。
+      if (steerMode === "guidance") {
+        if (steeringPending.current) {
+          guidanceQueueRef.current = [...guidanceQueueRef.current, text];
+          setGuidanceQueue(guidanceQueueRef.current);
+          setPrompt("");
+          return;
+        }
+        sendGuidanceSteer(text);
+        return;
+      }
+      // redirect：保持立即注入/在途拒绝语义，不排队。
+      if (steeringPending.current) {
+        toast.info(t("chat.task.steer.pendingNotice", "上一条插话尚未送达，请稍候再试。"));
+        return;
+      }
       steeringPending.current = true; setSendingSteering(true);
-      void runCommand("agent_steer", { requestId: activeRequestId.current, text }).catch((error) => { steeringPending.current = false; setSendingSteering(false); toast.error(toUserMessage(error, "补充要求未送达，请重试")); });
+      // mode 为协议 v2 字段（doc 18 §2）；generated 契约收录前用交叉类型透传。
+      const steerArgs: { requestId: string; text: string } & { mode: SteerMode } = { requestId: activeRequestId.current, text, mode: "redirect" };
+      void runCommand("agent_steer", steerArgs).catch((error) => { steeringPending.current = false; setSendingSteering(false); toast.error(toUserMessage(error, "补充要求未送达，请重试")); });
       return;
     }
     if (!prompt.trim() && !attachment && !screenshot) return;
@@ -939,6 +1071,37 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
     try {
       await runCommand("agent_approve", { requestId: activeRequestId.current, approvalId: id, allowed });
     } catch (error) { toast.error(toUserMessage(error, "确认失败")); }
+  }
+  /** 契约裁决（doc 18 §2 contract 命令）：approved=false 时任务以 cancelled 收场。 */
+  async function resolveContract(approved: boolean, contract: ContractObject, policy: AgentPolicy, gitMode: GitMode) {
+    const target = agentPendingContract;
+    const targetRequestId = activeRequestId.current;
+    if (!target || !targetRequestId || contractBusy) return;
+    setContractBusy(true);
+    try {
+      await invokeV2("agent_confirm_contract", {
+        requestId: targetRequestId, contractId: target.contractId, approved, contract, gitMode, policy,
+      });
+      setAgentPendingContract(null);
+    } catch (error) {
+      toast.error(toUserMessage(error, "契约确认失败，请重试"));
+    } finally {
+      setContractBusy(false);
+    }
+  }
+  /** 回执里的路径相对项目根目录；拼上工作目录交给系统关联编辑器打开。 */
+  function openReceiptFile(path: string) {
+    const base = conversationRef.current.cwd;
+    const absolute = /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("/");
+    const target = base && !absolute ? `${base.replace(/[\\/]+$/, "")}/${path}` : path;
+    openPath(target).catch((error) => toast.error(toUserMessage(error, "打开文件失败")));
+  }
+  /** 打回：以 resume_of=原任务 + 反馈文本发起续跑。 */
+  function rejectReceipt(receiptRequestId: string, feedback: string) {
+    if (agentBusyRef.current) return;
+    setVerificationOf(undefined);
+    setResumeOf(receiptRequestId);
+    void sendPrompt(feedback, null, receiptRequestId);
   }
   function inspectTask(requestId: string) {
     if (agentBusyRef.current) return;
@@ -997,6 +1160,9 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
     conversationRef.current = next; setConversation(next); setChatHistory([]); setCurrentPrompt(""); setMessage("");
     resetAgentTask();
     setReplyStatus(null); setReplyError(""); setPendingAction(undefined);
+    guidanceQueueRef.current = []; setGuidanceQueue([]);
+    taskQueueRef.current = []; setTaskQueue([]);
+    setQueueNext(false);
   }
 
   async function copyResult() {
@@ -1381,7 +1547,7 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
         setAwayFromBottom(away);
       }}>
         {historyError && <p role="alert">{historyError} <button type="button" onClick={refreshChatHistory}>重试加载历史</button></p>}
-        <TaskHistory busy={agentBusy} onInspect={(record) => inspectTask(record.requestId)} onResume={resumeTask} />
+        <TaskHistory busy={agentBusy} onInspect={(record) => inspectTask(record.requestId)} onResume={resumeTask} onRestart={restartTask} />
         {verificationOf && <section className="task-history" aria-label="只读核对模式">
           <strong>正在只读核对结果</strong>
           <p>后续提问继续核对，不执行命令或修改。需要继续处理时，请先结束核对，再明确提出操作要求。</p>
@@ -1501,9 +1667,15 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
                 onOpenPanel={() => openWorkspace()}
               />
             )}
-            <TaskOutcome key={taskTerminal?.requestId || "pending"} terminal={taskTerminal} tools={agentTools} busy={agentBusy} onInspect={inspectTask} />
+            {agentPendingContract && <div ref={contractCardRef}><ContractCard pending={agentPendingContract} disabled={contractBusy}
+              onConfirm={(contract, policy, gitMode) => void resolveContract(true, contract, policy, gitMode)}
+              onReject={() => void resolveContract(false, agentPendingContract.contract, POLICY_PRESETS.standard, "branch")} /></div>}
+            <TaskOutcome key={taskTerminal?.requestId || "pending"} terminal={taskTerminal} tools={agentTools} busy={agentBusy} receipt={agentReceipt}
+              onInspect={inspectTask} onOpenFile={openReceiptFile} onResumeWithFeedback={rejectReceipt} />
             <TaskDiagnostics key={`diagnostics-${taskTerminal?.requestId || "pending"}`} terminal={taskTerminal} />
             <AgentActivity tools={agentTools} approvals={agentApprovals} workspaceRequired={workspaceRequired} status={agentStatus}
+              milestones={agentMilestones} notices={agentNotices}
+              requestId={requestId ?? taskTerminal?.requestId} onAnnotate={(text) => annotateTask(text)}
               onApprove={(id, allowed) => void approveTool(id, allowed)} onChooseWorkspace={() => void chooseWorkspace()} onCancelWorkspace={() => void cancelWorkspace()} />
             {(replyStatus === "failed" || replyStatus === "cancelled") ? (
               <ReplyStatusCard
@@ -1581,6 +1753,8 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
       </label>}
       <ChatContextMenu cwd={conversation.cwd} disabled={!isTauriRuntime || agentBusy}
           open={contextOpen} onToggle={() => setContextOpen(!contextOpen)} onChoose={() => void chooseWorkspace()}
+          projectId={conversation.projectId} projectName={conversation.projectName}
+          onSelectProject={(project) => setConversation((current) => ({ ...current, cwd: project.path, projectId: project.id, projectName: project.name }))}
           favoritesOpen={favoritesOpen} onToggleFavorites={() => setFavoritesOpen(open => !open)}
           favoritesButtonRef={favoritesButtonRef} favorites={favorites}
           onSelect={id => { setSelectedFavoriteId(id); setFavoritesOpen(false); }}
@@ -1614,6 +1788,14 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
             </div>
           </div>
         )}
+        {taskQueue.length > 0 && <div className="bubble-task-queue" aria-label={t("chat.task.queue.aria", "排队任务")}>
+          <span className="bubble-queue-badge">{t("chat.task.queue.badge", "队列中 {count}").replace("{count}", String(taskQueue.length))}</span>
+          {taskQueue.map((item) => <span key={item.id} className="bubble-task-queue__item">
+            <span className="bubble-task-queue__text">{item.text}</span>
+            <button type="button" aria-label={`${t("chat.task.queue.remove", "移除排队任务")}：${item.text}`}
+              onClick={() => removeQueuedTask(item.id)}>✕</button>
+          </span>)}
+        </div>}
         <form className={`prompt-form${isDraggingFile ? " prompt-form--dragging" : ""}`} onSubmit={submit}>
           <div className="prompt-tools" aria-label="输入工具">
             <button type="button" onClick={() => void chooseAttachment()} disabled={!viewLoaded || handoffPending} aria-label="选择文件" title="选择文件">
@@ -1632,7 +1814,22 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
             >
               {isListening ? <Square size={14} /> : <Mic size={17} />}
             </button>
-            {agentBusy && <button type="submit" aria-label="补充要求" title="补充当前任务要求" disabled={!prompt.trim() || sendingSteering}><ArrowUp size={17} /></button>}
+            {agentBusy && codingTask && <div className="bubble-steer-mode" role="group" aria-label={t("chat.task.steer.modeLabel", "插话方式")}>
+              <button type="button" className={steerMode === "guidance" ? "is-active" : ""} aria-pressed={steerMode === "guidance"}
+                title={t("chat.task.steer.guidanceHint", "在下一个里程碑边界注入，不收回自动授权")}
+                onClick={() => setSteerMode("guidance")}>{t("chat.task.steer.guidance", "补充")}</button>
+              <button type="button" className={steerMode === "redirect" ? "is-active" : ""} aria-pressed={steerMode === "redirect"}
+                title={t("chat.task.steer.redirectHint", "立即注入并收回未决授权")}
+                onClick={() => setSteerMode("redirect")}>{t("chat.task.steer.redirect", "转向")}</button>
+            </div>}
+            {agentBusy && <button type="button" className={queueNext ? "is-active" : ""} aria-pressed={queueNext}
+              title={t("chat.task.queue.modeHint", "当前任务结束后自动发送为新的任务")}
+              aria-label={t("chat.task.queue.mode", "排队为下一个任务")}
+              onClick={() => setQueueNext((value) => !value)}><ListPlus size={15} /></button>}
+            {guidanceQueue.length > 0 && <span className="bubble-queue-badge" role="status">{t("chat.task.steer.queueBadge", "排队中 {count} 条").replace("{count}", String(guidanceQueue.length))}</span>}
+            {agentBusy && <button type="submit" aria-label={queueNext ? t("chat.task.queue.sendAria", "排队新任务") : "补充要求"}
+              title={queueNext ? t("chat.task.queue.modeHint", "当前任务结束后自动发送为新的任务") : "补充当前任务要求"}
+              disabled={!prompt.trim() || (!queueNext && sendingSteering)}><ArrowUp size={17} /></button>}
           </div>
           <textarea
             rows={2}

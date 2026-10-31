@@ -15,6 +15,10 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => listenMock(...args),
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => runCommandMock(...args),
+}));
+
 vi.mock("../app/appRuntime", () => ({
   isTauriRuntime: true,
   runCommand: (...args: unknown[]) => runCommandMock(...args),
@@ -59,6 +63,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(() => Promise.resolve()),
+  openPath: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@tauri-apps/plugin-notification", () => ({
@@ -112,6 +117,12 @@ function installListenMock() {
 
 function emitChat(payload: ChatEvent) {
   for (const handler of handlersByEvent.get("chat-event") ?? []) {
+    handler({ payload });
+  }
+}
+
+function emitAgent(payload: Record<string, unknown>) {
+  for (const handler of handlersByEvent.get("agent-event") ?? []) {
     handler({ payload });
   }
 }
@@ -801,6 +812,263 @@ describe("BubbleWindow 聊天事件流竞态", () => {
     fireEvent.click(await screen.findByRole("button", { name: /之前的问题/ }));
     await screen.findByText("之前的回答");
     expect(screen.queryByText("历史文件读取失败")).toBeNull();
+  });
+
+  // --- 委托式任务（doc/design/18）：契约卡片、里程碑、回执与转向 ---
+
+  it("renders the contract card on contract-proposed and confirms through agent_confirm_contract", async () => {
+    queueUuids(["req-contract"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("重构登录模块");
+    await act(async () => {
+      emitAgent({ type: "contract-proposed", requestId: "req-contract", eventSequence: 1, contractId: "c1",
+        contract: { goal: "重构登录模块", milestones: [{ id: "m1", title: "梳理", acceptance: "方案确认" }], verifyCommand: "npm test", timeMinutes: 60 } });
+    });
+    expect(await screen.findByText("任务契约")).toBeTruthy();
+    const card = within(screen.getByLabelText("任务契约待确认"));
+    expect(card.getByText("重构登录模块")).toBeTruthy();
+    expect((card.getByLabelText("里程碑标题") as HTMLInputElement).value).toBe("梳理");
+    fireEvent.click(screen.getByRole("button", { name: "确认并开始执行" }));
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_confirm_contract", expect.objectContaining({
+      requestId: "req-contract", contractId: "c1", approved: true,
+    })));
+    const call = runCommandMock.mock.calls.find(([command]) => command === "agent_confirm_contract");
+    expect(call![1].policy).toEqual({ workspaceFiles: "auto", shell: "confirm", outsideWorkspace: "confirm" });
+    expect(call![1].gitMode).toBe("branch");
+    expect(call![1].contract.milestones).toHaveLength(1);
+    // 确认后卡片立即收起
+    await waitFor(() => expect(screen.queryByText("任务契约")).toBeNull());
+  });
+
+  it("rejecting the contract sends approved=false and keeps the task cancellable", async () => {
+    queueUuids(["req-reject"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("重构登录模块");
+    await act(async () => {
+      emitAgent({ type: "contract-proposed", requestId: "req-reject", eventSequence: 1, contractId: "c2",
+        contract: { goal: "重构", milestones: [], verifyCommand: "", timeMinutes: 0 } });
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "放弃任务" }));
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_confirm_contract", expect.objectContaining({
+      requestId: "req-reject", contractId: "c2", approved: false,
+    })));
+  });
+
+  it("sends the steer mode with agent_steer and shows the toggle only for coding tasks", async () => {
+    queueUuids(["req-steer"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("帮我改代码");
+    await act(async () => {
+      emitAgent({ type: "milestone", requestId: "req-steer", eventSequence: 1, milestoneId: "m1", status: "started", title: "实现" });
+    });
+    const input = screen.getByLabelText("发送给 Piko 的问题");
+    fireEvent.change(input, { target: { value: "改用状态机" } });
+    fireEvent.click(screen.getByRole("group", { name: "插话方式" }).querySelectorAll("button")[0]); // 补充 (guidance)
+    await act(async () => { fireEvent.submit(input.closest("form")!); });
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_steer", { requestId: "req-steer", text: "改用状态机", mode: "guidance" }));
+    await act(async () => {
+      emitAgent({ type: "steering-accepted", requestId: "req-steer", eventSequence: 2, text: "改用状态机" });
+    });
+    fireEvent.click(screen.getByRole("group", { name: "插话方式" }).querySelectorAll("button")[1]); // 转向 (redirect)
+    fireEvent.change(input, { target: { value: "停下来，方向不对" } });
+    await act(async () => { fireEvent.submit(input.closest("form")!); });
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_steer", { requestId: "req-steer", text: "停下来，方向不对", mode: "redirect" }));
+  });
+
+  it("keeps companion tasks free of the steer toggle", async () => {
+    queueUuids(["req-chat"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("讲个笑话");
+    await act(async () => { emitChat({ type: "started", requestId: "req-chat", working: true }); });
+    expect(screen.queryByRole("group", { name: "插话方式" })).toBeNull();
+    const input = screen.getByLabelText("发送给 Piko 的问题");
+    fireEvent.change(input, { target: { value: "再长一点" } });
+    await act(async () => { fireEvent.submit(input.closest("form")!); });
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_steer", { requestId: "req-chat", text: "再长一点", mode: "redirect" }));
+  });
+
+  it("warns instead of silently dropping an interjection while one is still in flight", async () => {
+    queueUuids(["req-hold"]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const defaults = runCommandMock.getMockImplementation()!;
+    runCommandMock.mockImplementation((command: string, ...args: unknown[]) => command === "agent_steer"
+      ? new Promise(() => undefined) : defaults(command, ...args));
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("重构登录模块");
+    await act(async () => {
+      emitAgent({ type: "milestone", requestId: "req-hold", eventSequence: 1, milestoneId: "m1", status: "started", title: "实现" });
+    });
+    const input = screen.getByLabelText("发送给 Piko 的问题");
+    fireEvent.change(input, { target: { value: "第一条插话" } });
+    await act(async () => { fireEvent.submit(input.closest("form")!); });
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_steer", expect.objectContaining({ text: "第一条插话" })));
+    fireEvent.change(input, { target: { value: "第二条插话" } });
+    await act(async () => { fireEvent.submit(input.closest("form")!); });
+    await waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining("上一条插话尚未送达")));
+    expect(runCommandMock.mock.calls.filter(([command]) => command === "agent_steer")).toHaveLength(1);
+    warn.mockRestore();
+  });
+
+  it("renders the receipt card and resumes on reject-with-feedback", async () => {
+    queueUuids(["req-receipt", "req-feedback"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("实现导出功能");
+    await act(async () => {
+      emitAgent({ type: "milestone", requestId: "req-receipt", eventSequence: 1, milestoneId: "m1", status: "started", title: "实现" });
+      emitAgent({ type: "receipt", requestId: "req-receipt", eventSequence: 2, status: "completed", summary: "全部验收通过", receipt: {
+        milestones: [{ id: "m1", title: "实现", status: "completed" }],
+        filesChanged: [{ path: "src/export.ts", added: 30, removed: 2 }],
+        verify: [{ command: "npm test", ok: true, output: "pass" }],
+        branch: "piko/task-9abc", commits: ["9abc123"], openQuestions: [],
+      } });
+      emitAgent({ type: "completed", requestId: "req-receipt", eventSequence: 3 });
+    });
+    expect(await screen.findByText("任务已完成")).toBeTruthy();
+    expect(screen.getByText("全部验收通过")).toBeTruthy();
+    expect(screen.getByText("src/export.ts")).toBeTruthy();
+    expect(screen.getByText("piko/task-9abc")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "打回重跑" }));
+    fireEvent.change(screen.getByLabelText("打回反馈"), { target: { value: "导出缺了 CSV 格式" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送反馈并续跑" }));
+    await waitFor(() => expect(chatStartInputCalls()).toHaveLength(2));
+    const resumeCalls = runCommandMock.mock.calls.filter(([command]) => command === "agent_start");
+    expect(resumeCalls[1]?.[1].input).toMatchObject({ requestId: "req-feedback", prompt: "导出缺了 CSV 格式", resumeOf: "req-receipt" });
+  });
+
+  it("starts delegated coding tasks with projectId and taskKind when a project is bound", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => key === "piko-unified-conversation-v1"
+        ? JSON.stringify({ id: "proj-conversation", cwd: "/repo/im-robot", projectId: "p1", projectName: "im-robot", importHistory: true, turnIds: [] }) : null,
+      setItem: vi.fn(),
+    });
+    queueUuids(["req-coded"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("修一下分页 bug");
+    await waitFor(() => expect(chatStartInputCalls()).toHaveLength(1));
+    const input = runCommandMock.mock.calls.find(([command]) => command === "agent_start")?.[1].input;
+    expect(input.taskKind).toBe("coding");
+    expect(input.projectId).toBe("p1");
+  });
+
+  it("queues guidance interjections while one is in flight and sends them in order after acceptance", async () => {
+    queueUuids(["req-guidance"]);
+    const defaults = runCommandMock.getMockImplementation()!;
+    runCommandMock.mockImplementation((command: string, ...args: unknown[]) => command === "agent_steer"
+      ? new Promise(() => undefined) : defaults(command, ...args));
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("重构登录模块");
+    await act(async () => {
+      emitAgent({ type: "milestone", requestId: "req-guidance", eventSequence: 1, milestoneId: "m1", status: "started", title: "实现" });
+    });
+    const input = screen.getByLabelText("发送给 Piko 的问题");
+    fireEvent.click(screen.getByRole("group", { name: "插话方式" }).querySelectorAll("button")[0]); // 补充 (guidance)
+    fireEvent.change(input, { target: { value: "先补测试" } });
+    await act(async () => { fireEvent.submit(input.closest("form")!); });
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_steer", expect.objectContaining({ text: "先补测试", mode: "guidance" })));
+    // 在途期间第二条进入本地队列并显示徽标，不再弹 toast 拒绝。
+    fireEvent.change(input, { target: { value: "再把日志补上" } });
+    await act(async () => { fireEvent.submit(input.closest("form")!); });
+    expect(screen.getByText("排队中 1 条")).toBeTruthy();
+    expect(runCommandMock.mock.calls.filter(([command]) => command === "agent_steer")).toHaveLength(1);
+    // 前一条 steering-accepted 后按序发送队首。
+    await act(async () => {
+      emitAgent({ type: "steering-accepted", requestId: "req-guidance", eventSequence: 2, text: "先补测试" });
+    });
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_steer", expect.objectContaining({ text: "再把日志补上", mode: "guidance" })));
+    expect(screen.queryByText("排队中 1 条")).toBeNull();
+  });
+
+  it("queues new tasks while busy and auto-sends the head after the current task ends", async () => {
+    queueUuids(["req-busy"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("第一个任务");
+    await act(async () => { emitChat({ type: "started", requestId: "req-busy", working: true }); });
+    const input = screen.getByLabelText("发送给 Piko 的问题");
+    fireEvent.click(screen.getByRole("button", { name: "排队为下一个任务" }));
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "第二个任务" } });
+      fireEvent.submit(input.closest("form")!);
+    });
+    expect(screen.getByText("队列中 1")).toBeTruthy();
+    expect(chatStartInputCalls()).toHaveLength(1); // 未立即开始新任务，也没有当作插话发送
+    expect(runCommandMock.mock.calls.filter(([command]) => command === "agent_steer")).toHaveLength(0);
+    // 排队项可删除。
+    fireEvent.click(screen.getByRole("button", { name: "移除排队任务：第二个任务" }));
+    expect(screen.queryByText("队列中 1")).toBeNull();
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "第三个任务" } });
+      fireEvent.submit(input.closest("form")!);
+    });
+    expect(screen.getByText("队列中 1")).toBeTruthy();
+    await act(async () => { emitAgent({ type: "completed", requestId: "req-busy", eventSequence: 1 }); });
+    await waitFor(() => expect(chatStartInputCalls()).toHaveLength(2));
+    expect(chatStartInputCalls()[1]).toMatchObject({ prompt: "第三个任务" });
+    expect(screen.queryByText("队列中 1")).toBeNull();
+  });
+
+  it("caps the task queue at five entries and says so instead of dropping silently", async () => {
+    queueUuids(["req-cap"]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("长任务");
+    await act(async () => {
+      emitAgent({ type: "milestone", requestId: "req-cap", eventSequence: 1, milestoneId: "m1", status: "started", title: "实现" });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "排队为下一个任务" }));
+    const input = screen.getByLabelText("发送给 Piko 的问题");
+    for (const text of ["一", "二", "三", "四", "五", "六"]) {
+      await act(async () => {
+        fireEvent.change(input, { target: { value: text } });
+        fireEvent.submit(input.closest("form")!);
+      });
+    }
+    expect(screen.getByText("队列中 5")).toBeTruthy();
+    await waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining("排队已达上限")));
+    warn.mockRestore();
+  });
+
+  it("sends log annotations as a guidance steer with the annotation prefix", async () => {
+    queueUuids(["req-note"]);
+    render(<BubbleWindow />);
+    await waitFor(() => expect(historyRefreshCount()).toBe(1));
+    await submitPrompt("实现导出功能");
+    await act(async () => {
+      emitAgent({ type: "milestone", requestId: "req-note", eventSequence: 1, milestoneId: "m1", status: "started", title: "实现" });
+    });
+    fireEvent.click(screen.getByText("任务日志"));
+    const note = await screen.findByLabelText("任务批注");
+    fireEvent.change(note, { target: { value: "注意超时处理" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送批注" }));
+    await waitFor(() => expect(runCommandMock).toHaveBeenCalledWith("agent_steer", { requestId: "req-note", text: "【批注】注意超时处理", mode: "guidance" }));
+  });
+
+  it("restarts a contract-interrupted history task as a brand-new task without resume", async () => {
+    queueUuids(["req-restart"]);
+    const defaults = runCommandMock.getMockImplementation()!;
+    runCommandMock.mockImplementation((command: string, ...args: unknown[]) => {
+      if (command === "agent_list_tasks") {
+        return Promise.resolve([{ requestId: "old-task", conversationId: "", status: "interrupted", startedAt: 1, updatedAt: 2,
+          steps: [], contractPending: true, prompt: "重构登录模块", cwd: "/repo/im-robot" }]);
+      }
+      return defaults(command, ...args);
+    });
+    render(<BubbleWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: "重新发起" }));
+    await waitFor(() => expect(chatStartInputCalls()).toHaveLength(1));
+    const input = runCommandMock.mock.calls.find(([command]) => command === "agent_start")?.[1].input;
+    expect(input).toMatchObject({ prompt: "重构登录模块", cwd: "/repo/im-robot" });
+    expect(input.resumeOf).toBeUndefined();
+    expect(input.verificationOf).toBeUndefined();
   });
 
 });

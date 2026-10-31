@@ -8,3 +8,9 @@
 .task-outcome summary { cursor: pointer; margin: 8px 0; }
 .task-outcome__evidence { margin: 8px 0; }
 .task-outcome pre { max-height: 120px; margin: 4px 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.task-outcome button.is-secondary { color: #58796d; background: rgba(255, 255, 255, .72); border: 1px solid var(--piko-line, #d9e1dd); }
+.task-outcome__milestones { list-style: none; padding-left: 0; }
+.task-outcome li span, .task-outcome__milestones li span { color: var(--piko-muted, #62736a); }
+.task-outcome__notice--warn { color: #7c5f2a; }
+.task-outcome__feedback { display: grid; gap: 6px; margin: 8px 0; }
+.task-outcome__feedback textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 8px; padding: 6px 8px; font-size: 12px; font-family: inherit; color: inherit; background: var(--piko-fill, #fff); }
