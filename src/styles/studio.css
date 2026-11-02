@@ -45,7 +45,8 @@
 .conversation-tabs--studio .panel-shell--embedded .workspace-header__heading strong { font-size: 25px; letter-spacing: -.5px; }
 .conversation-tabs--studio .panel-shell--embedded .workspace-header__heading span { display: none; }
 .conversation-tabs--studio .panel-shell--embedded > .panel-tabs { display: none; }
-.conversation-tabs--studio .panel-shell--embedded > .panel-workspace { grid-row: 2; padding: 0; }
+.conversation-tabs--studio .panel-shell--embedded > .update-host { grid-row: 2; }
+.conversation-tabs--studio .update-host > .panel-workspace { padding: 0; }
 .conversation-tabs--studio .workspace-header button { border: 0; background: transparent; padding: 6px; }
 .conversation-tabs--studio .workspace-header__collapse { display: none; }
 .schedule-calendar { padding: 0 0 18px; border-bottom: 1px solid var(--piko-line); }

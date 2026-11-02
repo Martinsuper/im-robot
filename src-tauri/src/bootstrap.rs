@@ -240,6 +240,7 @@ pub(crate) fn run() {
             typing_activity::start_keyboard_monitor(app.handle());
             typing_activity::watch_typing_rollover(app.handle());
             watch_work_rhythm(app.handle());
+            crate::app_updates::watch_update_checks(app.handle());
             crate::conversation_windows::restore(app.handle());
             crate::devices::restore_device_bridge(app.handle());
             Ok(())
@@ -289,6 +290,7 @@ pub(crate) fn run() {
             crate::pet_state::migrate_pet_state,
             app_updates::check_for_updates,
             app_updates::check_for_updates_extended,
+            app_updates::get_last_update_status,
             chat_session::commands::list_chat_history,
             chat_session::commands::list_chat_sessions,
             chat_session::commands::delete_chat_session,
@@ -342,6 +344,8 @@ pub(crate) fn run() {
             speech::transcribe_voice_input,
             settings::commands::update_html_preview_enabled,
             settings::commands::update_agent_auto_approve_commands,
+            settings::commands::update_auto_check_updates,
+            settings::commands::update_skipped_update_version,
             companion::generate_pet_companion_response,
             providers::commands::list_models,
             agent::agent_start,

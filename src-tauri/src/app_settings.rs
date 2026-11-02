@@ -35,6 +35,12 @@ pub(crate) struct AppSettings {
     pub(crate) html_preview_enabled: bool,
     #[serde(default)]
     pub(crate) agent_auto_approve_commands: bool,
+    /// 启动后延时首查、之后每天联网检查一次 GitHub Releases；发现新版本仅提醒，不自动安装。
+    #[serde(default = "default_auto_check_updates")]
+    pub(crate) auto_check_updates: bool,
+    /// 用户选择「跳过此版本」的版本号；自动检查命中后保持静默，手动检查不受影响。
+    #[serde(default)]
+    pub(crate) skipped_update_version: String,
     /// 单个工具调用的活性上限（04 §4.4，默认 20 分钟）；idle 超时只在不等工具/审批/契约时计数。
     #[serde(default = "default_agent_tool_timeout_minutes")]
     pub(crate) agent_tool_timeout_minutes: u64,
@@ -101,6 +107,8 @@ impl Default for AppSettings {
             credential_error: None,
             html_preview_enabled: false,
             agent_auto_approve_commands: false,
+            auto_check_updates: default_auto_check_updates(),
+            skipped_update_version: String::new(),
             agent_tool_timeout_minutes: default_agent_tool_timeout_minutes(),
             agent_auto_resume_enabled: default_agent_auto_resume_enabled(),
             global_shortcut: default_global_shortcut(),
@@ -131,6 +139,10 @@ fn default_agent_tool_timeout_minutes() -> u64 {
 }
 
 fn default_agent_auto_resume_enabled() -> bool {
+    true
+}
+
+fn default_auto_check_updates() -> bool {
     true
 }
 

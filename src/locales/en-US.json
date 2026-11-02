@@ -267,7 +267,10 @@
     "cancel": "Cancel download",
     "noAsset": "No installer is available for this platform. Open the release page.",
     "openRelease": "Open release page",
-    "openFile": "Open downloaded file"
+    "openFile": "Open downloaded file",
+    "viewDetails": "View details",
+    "skipVersion": "Skip this version",
+    "autoCheckFailed": "Could not save the automatic update check setting"
   },
   "bubble": {
     "error": {},

@@ -85,6 +85,7 @@ export function SettingsTab() {
     settings.agentAutoApproveCommands ?? false,
   );
   const [savingCommandPermission, setSavingCommandPermission] = useState(false);
+  const [autoCheckUpdates, setAutoCheckUpdates] = useState(settings.autoCheckUpdates);
 
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [shortcutDraft, setShortcutDraft] = useState<string | null>(null);
@@ -119,6 +120,7 @@ export function SettingsTab() {
 
     setQuietMode(settings.quietMode);
     setAgentAutoApproveCommands(settings.agentAutoApproveCommands ?? false);
+    setAutoCheckUpdates(settings.autoCheckUpdates);
   }, [settings]);
 
   // 语音模型、启动与通知状态。
@@ -404,6 +406,30 @@ export function SettingsTab() {
       );
     } finally {
       setSavingCommandPermission(false);
+    }
+  }
+
+  /** 「关于与更新 → 自动检查更新」：乐观保存，失败回滚并提示。 */
+  async function updateAutoCheckUpdates(enabled: boolean) {
+    setAutoCheckUpdates(enabled);
+    try {
+      const next = await runCommand(
+        "update_auto_check_updates",
+        { enabled },
+        {
+          ...settings,
+          autoCheckUpdates: enabled,
+        },
+      );
+      applyServer(parseAppSettings(next));
+    } catch (error) {
+      setAutoCheckUpdates(settings.autoCheckUpdates);
+      toast.error(
+        toUserMessage(
+          error,
+          t("update.autoCheckFailed", "自动检查更新设置保存失败"),
+        ),
+      );
     }
   }
 
@@ -924,6 +950,22 @@ export function SettingsTab() {
         <details className="settings-subgroup">
           <summary>关于与更新</summary>
           <div className="settings-subgroup__body">
+            <section className="panel-card">
+              <h2>自动检查更新</h2>
+              <label className="setting-toggle">
+                <input
+                  type="checkbox"
+                  checked={autoCheckUpdates}
+                  onChange={(event) =>
+                    void updateAutoCheckUpdates(event.currentTarget.checked)
+                  }
+                />
+                <span>每天联网检查一次新版本</span>
+              </label>
+              <p className="settings-note">
+                开启后，Piko 启动稍后与每天各检查一次新版本，发现新版本时在面板顶部提醒你；下载与安装始终由你确认。对某个版本点「跳过此版本」后，该版本的自动提醒不再出现。
+              </p>
+            </section>
             <VersionSettings />
 
             <section className="panel-card">

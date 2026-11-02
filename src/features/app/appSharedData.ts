@@ -269,6 +269,8 @@ export const defaultAppSettings: AppSettings = {
   hasApiKey: false,
   htmlPreviewEnabled: false,
   agentAutoApproveCommands: false,
+  autoCheckUpdates: true,
+  skippedUpdateVersion: "",
   globalShortcut: "CmdOrCtrl+Shift+Space",
   onboardingCompleted: false,
   onboardingVersion: "",

@@ -35,6 +35,10 @@ export interface AppSettings {
   credentialError?: string;
   htmlPreviewEnabled: boolean;
   agentAutoApproveCommands: boolean;
+  /** 自动检查更新：每天联网检查一次 GitHub Releases，发现新版本仅提醒。 */
+  autoCheckUpdates: boolean;
+  /** 用户选择「跳过此版本」的版本号，自动提醒命中后静默。 */
+  skippedUpdateVersion: string;
   /** 全局快捷键（打开对话窗口）。格式如 CmdOrCtrl+Shift+Space。 */
   globalShortcut: string;
   onboardingCompleted: boolean;

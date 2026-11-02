@@ -141,6 +141,36 @@ pub(crate) fn update_agent_auto_approve_commands(
 }
 
 #[tauri::command]
+pub(crate) fn update_auto_check_updates(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
+    let mut settings = read_settings(&app);
+    settings.auto_check_updates = enabled;
+    persist_settings(&app, &settings)?;
+    for window in ["panel", "pet", "bubble"] {
+        let _ = app.emit_to(window, "settings-updated", &settings);
+    }
+    Ok(settings)
+}
+
+#[tauri::command]
+pub(crate) fn update_skipped_update_version(
+    app: AppHandle,
+    version: String,
+) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
+    let mut settings = read_settings(&app);
+    settings.skipped_update_version = version;
+    persist_settings(&app, &settings)?;
+    for window in ["panel", "pet", "bubble"] {
+        let _ = app.emit_to(window, "settings-updated", &settings);
+    }
+    Ok(settings)
+}
+
+#[tauri::command]
 pub(crate) fn update_html_preview_enabled(
     app: AppHandle,
     enabled: bool,

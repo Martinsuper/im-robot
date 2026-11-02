@@ -15,8 +15,13 @@ use tokio_util::sync::CancellationToken;
 const REPOSITORY: &str = "Martinsuper/im-robot";
 const RELEASE_API: &str = "https://api.github.com/repos/Martinsuper/im-robot/releases/latest";
 const MAX_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+// Semi-automatic updates: first check shortly after launch (avoiding the startup
+// burst), then once a day. Checks only remind; download/install stay user-driven.
+const AUTO_CHECK_FIRST_DELAY: Duration = Duration::from_secs(5 * 60);
+const AUTO_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 static ACTIVE_DOWNLOAD: LazyLock<Mutex<Option<(String, CancellationToken)>>> =
     LazyLock::new(|| Mutex::new(None));
+static LAST_STATUS: LazyLock<Mutex<Option<UpdateStatus>>> = LazyLock::new(|| Mutex::new(None));
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -188,6 +193,11 @@ fn status(release: &Value, os: &str, arch: &str) -> Result<UpdateStatus, String>
         asset_name: asset.and_then(|a| a["name"].as_str()).map(String::from),
     })
 }
+/// A check is worth surfacing only when an upgrade exists and the user has not
+/// skipped that exact version. Manual checks ignore the skip marker.
+fn should_notify(status: &UpdateStatus, skipped_version: &str) -> bool {
+    status.available && status.latest_version != skipped_version
+}
 #[tauri::command]
 pub(crate) async fn check_for_updates() -> Result<UpdateInfo, String> {
     let status = check_for_updates_extended().await?;
@@ -200,11 +210,60 @@ pub(crate) async fn check_for_updates() -> Result<UpdateInfo, String> {
 }
 #[tauri::command]
 pub(crate) async fn check_for_updates_extended() -> Result<UpdateStatus, String> {
-    status(
+    let status = status(
         &latest_release(&client()?).await?,
         std::env::consts::OS,
         std::env::consts::ARCH,
-    )
+    )?;
+    if let Ok(mut last) = LAST_STATUS.lock() {
+        *last = Some(status.clone());
+    }
+    Ok(status)
+}
+/// Last check result from the in-memory cache, no network. Covers webviews that
+/// subscribe after an auto-check already fired.
+#[tauri::command]
+pub(crate) fn get_last_update_status() -> Result<Option<UpdateStatus>, String> {
+    LAST_STATUS.lock().map_err(|e| e.to_string()).map(|last| last.clone())
+}
+/// Daily background check: remind via panel banner event and a system
+/// notification when a newer release exists. Failures stay silent and retry
+/// on the next cycle.
+pub(crate) fn watch_update_checks(app: &AppHandle) {
+    let app = app.clone();
+    crate::background::SUPERVISOR.spawn_async("update-auto-check", move |worker| async move {
+        if !worker.sleep(AUTO_CHECK_FIRST_DELAY).await {
+            return Ok(());
+        }
+        while !worker.cancelled() {
+            let settings = crate::settings::read_settings(&app);
+            if settings.auto_check_updates {
+                match check_for_updates_extended().await {
+                    Ok(status) => {
+                        worker.health(Ok(()));
+                        if should_notify(&status, &settings.skipped_update_version) {
+                            let _ = app.emit_to("bubble", "update-available", &status);
+                            let notify_app = app.clone();
+                            let body = format!(
+                                "发现新版本 v{}，打开面板即可下载安装。",
+                                status.latest_version
+                            );
+                            crate::background::SUPERVISOR
+                                .spawn_effect("update-notify", move |_| {
+                                    let _ =
+                                        crate::notifications::send(&notify_app, "Piko 有新版本", &body);
+                                });
+                        }
+                    }
+                    Err(error) => worker.health(Err(error)),
+                }
+            }
+            if !worker.sleep(AUTO_CHECK_INTERVAL).await {
+                break;
+            }
+        }
+        Ok(())
+    });
 }
 fn checksum(input: &str) -> Result<String, String> {
     let digest = input
@@ -471,6 +530,24 @@ mod tests {
             checksum(&format!("sha256:{}", "A".repeat(64))).unwrap(),
             "a".repeat(64)
         );
+    }
+    fn update_status(available: bool, latest: &str) -> UpdateStatus {
+        UpdateStatus {
+            current_version: "1.3.0".into(),
+            latest_version: latest.into(),
+            available,
+            release_url: String::new(),
+            release_notes: None,
+            download_url: None,
+            asset_name: None,
+        }
+    }
+    #[test]
+    fn notifies_only_unskipped_newer_versions() {
+        assert!(should_notify(&update_status(true, "1.4.0"), ""));
+        assert!(should_notify(&update_status(true, "1.4.0"), "1.3.9"));
+        assert!(!should_notify(&update_status(true, "1.4.0"), "1.4.0"));
+        assert!(!should_notify(&update_status(false, "9.9.9"), ""));
     }
 }
 

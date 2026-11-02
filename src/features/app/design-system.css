@@ -20,6 +20,12 @@
 .panel-tabs button.is-active { color: var(--panel-accent); background: var(--panel-accent-soft); box-shadow: none; font-weight: 650; }
 .panel-workspace { gap: 16px; padding-right: 4px; scrollbar-width: thin; }
 .panel-card, .companion-card { border: 1px solid var(--panel-line); background: var(--panel-fill); box-shadow: none; border-radius: 16px; padding: 20px; }
+/* 半自动更新横幅：与三个 .panel-workspace pane 共用工作区单元格，横幅占 auto 行。 */
+.update-host { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; }
+.panel-shell .update-host > .panel-workspace { grid-column: 1; grid-row: 2; }
+.update-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--panel-line); border-left: 3px solid var(--panel-accent); border-radius: 12px; background: var(--panel-fill); padding: 7px 8px 7px 14px; font-size: 13px; }
+.update-banner__actions { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.update-banner__actions .text-action { min-height: 30px; padding: 6px 8px; }
 .panel-shell h2 { font-size: 16px; line-height: 1.4; font-weight: 650; margin-bottom: 14px; }
 .panel-card p, .panel-card .empty-state { font-size: 12px; line-height: 1.7; }
 .panel-overview { gap: 0; border-block: 1px solid var(--panel-line); padding: 12px 0; order: 1; }

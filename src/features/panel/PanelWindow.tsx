@@ -6,6 +6,7 @@ import type { OnboardingStatus, PanelTab } from "../../types/appTypes";
 import { OnboardingWindow } from "../onboarding/OnboardingWindow";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { PanelHeader, PanelNavigation } from "./PanelChrome";
+import { UpdateBanner } from "./UpdateBanner";
 import { useAppSettings } from "../app/settingsStore";
 import { RecordsTab } from "./tabs/RecordsTab";
 import { SettingsTab } from "./tabs/SettingsTab";
@@ -81,9 +82,13 @@ export function PanelWindow({ activeTab, onTabChange, onClose }: {
         if (isTauriRuntime && event.button === 0 && !(event.target as HTMLElement).closest("button")) void getCurrentWindow().startDragging();
       }}><div className="workspace-header__heading"><strong>{tab === "today" ? "今天" : tab === "records" ? "记录" : "设置"}</strong><span>{workspaceDescriptions[tab]}</span></div><button type="button" onClick={onClose} aria-label="收起工作区" title="收起面板"><PanelRightClose size={16} /><span className="workspace-header__collapse">收起面板</span><span className="workspace-header__return">返回聊天</span></button></header> : <PanelHeader tab={tab} companionName={settings.companionName} />}
       <PanelNavigation tab={tab} onChange={setTab} />
-      {(["today", "records", "settings"] as const).map((value) => <div key={value} className="panel-workspace" hidden={tab !== value}>
-        {(visited.has(value) || tab === value) && (value === "today" ? <TodayTab /> : value === "records" ? <RecordsTab /> : <SettingsTab />)}
-      </div>)}
+      {/* 横幅与三个 Tab pane 共用工作区单元格：横幅占 auto 行，pane 仍在 1fr 行内同格堆叠。 */}
+      <div className="update-host">
+        <UpdateBanner onOpenSettings={() => setTab("settings")} />
+        {(["today", "records", "settings"] as const).map((value) => <div key={value} className="panel-workspace" hidden={tab !== value}>
+          {(visited.has(value) || tab === value) && (value === "today" ? <TodayTab /> : value === "records" ? <RecordsTab /> : <SettingsTab />)}
+        </div>)}
+      </div>
     </section>
   );
 }

@@ -267,7 +267,10 @@
     "cancel": "取消下载",
     "noAsset": "没有适用于当前平台的安装包，请打开发布页下载。",
     "openRelease": "打开下载页",
-    "openFile": "打开已下载文件"
+    "openFile": "打开已下载文件",
+    "viewDetails": "查看详情",
+    "skipVersion": "跳过此版本",
+    "autoCheckFailed": "自动检查更新设置保存失败"
   },
   "bubble": {
     "error": {},
