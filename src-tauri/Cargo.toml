@@ -43,7 +43,7 @@ reqwest = { version = "0.13", default-features = false, features = ["charset", "
 futures-util = "0.3"
 rodio = { version = "=0.21.1", default-features = false, features = ["playback"] }
 sherpa-onnx = { version = "1.13.2", default-features = false, features = ["static"], optional = true }
-bzip2 = { version = "0.4", optional = true }
+bzip2 = { version = "0.6", optional = true }
 tar = { version = "0.4", optional = true }
 tauri-plugin-notification = "^2"
 tauri-plugin-autostart = "^2"
