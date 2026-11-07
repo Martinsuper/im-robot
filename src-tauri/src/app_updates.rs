@@ -224,7 +224,10 @@ pub(crate) async fn check_for_updates_extended() -> Result<UpdateStatus, String>
 /// subscribe after an auto-check already fired.
 #[tauri::command]
 pub(crate) fn get_last_update_status() -> Result<Option<UpdateStatus>, String> {
-    LAST_STATUS.lock().map_err(|e| e.to_string()).map(|last| last.clone())
+    LAST_STATUS
+        .lock()
+        .map_err(|e| e.to_string())
+        .map(|last| last.clone())
 }
 /// Daily background check: remind via panel banner event and a system
 /// notification when a newer release exists. Failures stay silent and retry
@@ -248,11 +251,16 @@ pub(crate) fn watch_update_checks(app: &AppHandle) {
                                 "发现新版本 v{}，打开面板即可下载安装。",
                                 status.latest_version
                             );
-                            crate::background::SUPERVISOR
-                                .spawn_effect("update-notify", move |_| {
-                                    let _ =
-                                        crate::notifications::send(&notify_app, "Piko 有新版本", &body);
-                                });
+                            crate::background::SUPERVISOR.spawn_effect(
+                                "update-notify",
+                                move |_| {
+                                    let _ = crate::notifications::send(
+                                        &notify_app,
+                                        "Piko 有新版本",
+                                        &body,
+                                    );
+                                },
+                            );
                         }
                     }
                     Err(error) => worker.health(Err(error)),
