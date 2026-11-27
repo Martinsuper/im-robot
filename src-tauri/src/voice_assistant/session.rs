@@ -340,12 +340,10 @@ async fn run_agent_turn(app: &AppHandle, prompt: &str) -> Result<String, String>
                             publish(app, Stage::Thinking, "", "", "");
                         }
                     }
-                    Some(crate::device_voice::Update::Notice(text)) => {
-                        if pending.is_none() {
-                            publish(app, Stage::Speaking, "", &text, "");
-                            speak_text(app, &text).await?;
-                            publish(app, Stage::Thinking, "", "", "");
-                        }
+                    Some(crate::device_voice::Update::Notice(text)) if pending.is_none() => {
+                        publish(app, Stage::Speaking, "", &text, "");
+                        speak_text(app, &text).await?;
+                        publish(app, Stage::Thinking, "", "", "");
                     }
                     None => updates_open = false,
                     _ => (),

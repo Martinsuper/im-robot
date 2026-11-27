@@ -241,6 +241,7 @@ pub(crate) fn run() {
             typing_activity::watch_typing_rollover(app.handle());
             watch_work_rhythm(app.handle());
             crate::app_updates::watch_update_checks(app.handle());
+            #[cfg(feature = "speech-recognition")]
             crate::voice_assistant::watch_voice_assistant(app.handle());
             crate::conversation_windows::restore(app.handle());
             crate::devices::restore_device_bridge(app.handle());
@@ -343,7 +344,9 @@ pub(crate) fn run() {
             speech::get_speech_model_status,
             speech::download_speech_model,
             speech::transcribe_voice_input,
+            #[cfg(feature = "speech-recognition")]
             crate::voice_assistant::commands::get_voice_assistant_status,
+            #[cfg(feature = "speech-recognition")]
             crate::voice_assistant::commands::voice_assistant_trigger_listen,
             settings::commands::update_html_preview_enabled,
             settings::commands::update_agent_auto_approve_commands,

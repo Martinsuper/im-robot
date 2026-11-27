@@ -201,6 +201,7 @@
       "listFailed": "予約委任の読み取りに失敗しました。再試行してください。",
       "pendingTitle": "待機中",
       "pendingEmpty": "待機中の予約委任はありません。",
+      "queued": "再試行待ち",
       "cancel": "取り消す",
       "cancelFailed": "キャンセルに失敗しました。再試行してください。"
     }

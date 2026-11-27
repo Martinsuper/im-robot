@@ -201,6 +201,7 @@
       "listFailed": "定时委托读取失败，请重试。",
       "pendingTitle": "待执行",
       "pendingEmpty": "暂无待执行的定时委托。",
+      "queued": "排队中",
       "cancel": "取消",
       "cancelFailed": "取消失败，请重试。"
     }

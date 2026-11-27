@@ -71,5 +71,6 @@
 .bubble-schedule__item { display: flex; align-items: center; gap: 6px; font-size: 11px; }
 .bubble-schedule__item span:first-child { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bubble-schedule__item time { flex: 0 0 auto; color: var(--piko-muted, #62736a); }
+.bubble-schedule__item .bubble-schedule__queued { flex: 0 0 auto; font-style: normal; font-size: 10px; padding: 1px 6px; border-radius: 8px; background: var(--piko-fill-soft, #eef3ef); color: var(--piko-muted, #62736a); }
 .bubble-schedule__item button { padding: 2px 8px; border: 1px solid var(--piko-line, #d9e1dd); border-radius: 8px; background: var(--piko-fill, #fff); color: inherit; cursor: pointer; }
 

@@ -1,11 +1,9 @@
 import { defineConfig } from "@playwright/test";
-import fs from "node:fs";
+import { resolveChromiumExecutable } from "./scripts/playwright-browser-probe.mjs";
 // Use the Playwright-managed browser for reproducible rendering and teardown.
-// An explicit executable override remains available for local browser debugging.
-const chromeExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
-if (chromeExecutablePath && !fs.existsSync(chromeExecutablePath)) {
-  throw new Error("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH does not exist");
-}
+// An explicit override remains available for local debugging; on Windows we also
+// probe the default Playwright cache and system Chrome before falling back.
+const chromeExecutablePath = resolveChromiumExecutable();
 
 export default defineConfig({
   testDir: "./tests/e2e",

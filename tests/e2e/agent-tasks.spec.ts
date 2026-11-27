@@ -75,6 +75,7 @@ async function installAgentBackend(page: Page, taskRecords: unknown[] = []) {
           ai: { provider: "openai-compatible", baseUrl: "http://127.0.0.1:1234/v1", model: "ui-test", temperature: 0.7, timeoutSeconds: 30 },
         };
         if (command === "agent_list_tasks") return savedTasks;
+        if (command === "agent_read_task_log") return { exists: true, content: "步骤 1：读取 README.md\n步骤 2：写入 report.md", truncated: false };
         if (["get_bubble_chat_history", "conversation_chat_history"].includes(command)) return structuredClone(state.history);
         return null;
       },
@@ -119,6 +120,26 @@ test("reload restores interruption records without starting or approving a task"
   expect(await calls(page, "agent_start")).toHaveLength(0);
   expect(await calls(page, "agent_approve")).toHaveLength(0);
   expect(await calls(page, "agent_confirm_action")).toHaveLength(0);
+});
+
+test("restart after journal reload reuses the persisted prompt, cwd and shows the task log", async ({ page }) => {
+  await installAgentBackend(page, [{
+    requestId: "restart-request", conversationId: "previous-chat", status: "interrupted", startedAt: 1, updatedAt: 2,
+    steps: [{ id: "contract", tool: "contract", status: "unknown" }],
+    prompt: "整理报告并保存", cwd: "/tmp/piko-restart-workspace", contractPending: true,
+  }]);
+  await expect(page.getByText("任务记录 · 有中断任务待核对")).toBeVisible();
+  await expect(page.getByRole("button", { name: "重新发起" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "只读核对结果" })).toBeVisible();
+  await page.locator(".task-history .agent-activity__tasklog > summary").first().click();
+  await expect(page.getByText("步骤 2：写入 report.md")).toBeVisible();
+  expect(await calls(page, "agent_read_task_log")).toHaveLength(1);
+  await page.getByRole("button", { name: "重新发起" }).click();
+  await expect.poll(() => calls(page, "agent_start")).toHaveLength(1);
+  const input = (await calls(page, "agent_start"))[0].args.input as { prompt: string; cwd?: string; resumeOf?: string };
+  expect(input.prompt).toBe("整理报告并保存");
+  expect(input.cwd).toBe("/tmp/piko-restart-workspace");
+  expect(input.resumeOf).toBeUndefined();
 });
 
 test("inspection remains read-only through follow-ups until explicitly ended", async ({ page }) => {

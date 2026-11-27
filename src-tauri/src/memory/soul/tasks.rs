@@ -381,6 +381,8 @@ mod tests {
             auto_resumed: false,
             contract_pending: false,
             contract_id: None,
+            workspace: None,
+            restart_prompt: None,
         }
     }
 
@@ -553,6 +555,8 @@ mod closure_tests {
             auto_resumed: false,
             contract_pending: false,
             contract_id: None,
+            workspace: None,
+            restart_prompt: None,
         }
     }
     #[test]

@@ -122,8 +122,8 @@ pub(crate) fn validate_declarative_plugin(
     Ok(())
 }
 
-pub(crate) fn execute_wasm_plugin(
-    _app: &AppHandle,
+pub(crate) fn execute_wasm_plugin<R: tauri::Runtime>(
+    _app: &AppHandle<R>,
     directory: &Path,
     package: &DeclarativePluginPackage,
     tool: &str,

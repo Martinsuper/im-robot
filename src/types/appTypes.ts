@@ -196,7 +196,9 @@ export type PetVisualEvent =
   | { type: "idle-started" }
   | { type: "idle-ended" }
   | { type: "focus-started" }
-  | { type: "focus-completed" };
+  | { type: "focus-completed" }
+  /** 委托任务状态迁移（04 §4.7）；queued = 定时委托因配额/目录占用排队重试中。 */
+  | { type: "task"; phase: "working" | "confirming" | "success" | "error" | "queued" };
 
 export interface FocusSnapshot {
   status: "idle" | "running" | "paused";

@@ -960,6 +960,10 @@ pub(super) fn chat_cancel(
 // ============================================================================
 
 #[cfg(test)]
+#[path = "chat_http_tests.rs"]
+mod http_integration_tests;
+
+#[cfg(test)]
 mod soul_tests {
     use super::*;
     use memory::soul::{model::*, profile, store};

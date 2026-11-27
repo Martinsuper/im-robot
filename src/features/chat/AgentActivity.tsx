@@ -26,8 +26,9 @@ type TaskLogState =
   | { phase: "ready"; log: TaskLogResult }
   | { phase: "error"; message: string };
 
-/** 任务日志只读面板 + 批注（doc 18 §9）：批注提交即作为 guidance steer 发送。 */
-function TaskLogPanel({ requestId, onAnnotate }: { requestId: string; onAnnotate: (text: string) => void }) {
+/** 任务日志只读面板 + 批注（doc 18 §9）：批注提交即作为 guidance steer 发送。
+ * 历史任务（TaskHistory）只读展示时省略 onAnnotate，只保留日志内容。 */
+export function TaskLogPanel({ requestId, onAnnotate }: { requestId: string; onAnnotate?: (text: string) => void }) {
   const { t } = useTranslation();
   const [state, setState] = useState<TaskLogState>({ phase: "idle" });
   const [annotation, setAnnotation] = useState("");
@@ -42,7 +43,7 @@ function TaskLogPanel({ requestId, onAnnotate }: { requestId: string; onAnnotate
   }
   function submit() {
     const text = annotation.trim();
-    if (!text) return;
+    if (!text || !onAnnotate) return;
     onAnnotate(text);
     setAnnotation("");
   }
@@ -57,14 +58,14 @@ function TaskLogPanel({ requestId, onAnnotate }: { requestId: string; onAnnotate
       {state.log.truncated && <p>{t("chat.task.log.truncated", "日志过长，仅显示前 256KB。")}</p>}
       <pre>{state.log.content}</pre>
     </div>}
-    <div className="agent-activity__tasklog-annotate">
+    {onAnnotate && <div className="agent-activity__tasklog-annotate">
       <textarea rows={2} maxLength={2000} value={annotation}
         aria-label={t("chat.task.log.annotationLabel", "任务批注")}
         placeholder={t("chat.task.log.annotationPlaceholder", "写下批注，将作为补充要求发送…")}
         onChange={(event) => setAnnotation(event.target.value)} />
       <p>{t("chat.task.log.annotationHint", "批注将在下一里程碑边界生效。")}</p>
       <button type="button" disabled={!annotation.trim()} onClick={submit}>{t("chat.task.log.annotationSend", "发送批注")}</button>
-    </div>
+    </div>}
   </details>;
 }
 

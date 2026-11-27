@@ -376,7 +376,21 @@ async fn download_verified(
     id: &str,
 ) -> Result<DownloadedUpdate, String> {
     let client = client()?;
-    let expected = expected_digest(&client, &latest_release(&client).await?, url, name).await?;
+    let release = latest_release(&client).await?;
+    download_verified_from_release(&client, app, &release, url, name, id).await
+}
+
+/// 发布元数据已就绪后的下载与校验流程。拆出这一层的唯一目的是让集成测试可以
+/// 用 wiremock 顶替发布源，线上调用顺序与行为完全不变。
+async fn download_verified_from_release<R: tauri::Runtime>(
+    client: &reqwest::Client,
+    app: &AppHandle<R>,
+    release: &Value,
+    url: &str,
+    name: &str,
+    id: &str,
+) -> Result<DownloadedUpdate, String> {
+    let expected = expected_digest(client, release, url, name).await?;
     let response = client
         .get(url)
         .send()
@@ -562,7 +576,63 @@ mod tests {
 #[cfg(test)]
 mod download_tests {
     use super::*;
+    use serde_json::json;
     use std::io::{Read, Write};
+    use tauri::utils::config::AppDirectoriesOverride;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn release_with(url: &str, name: &str, digest: Option<String>) -> Value {
+        let mut asset = json!({"name": name, "browser_download_url": url});
+        if let Some(digest) = digest {
+            asset["digest"] = json!(digest);
+        }
+        json!({"tag_name": "v9.9.9", "assets": [asset]})
+    }
+
+    fn mock_app() -> (tempfile::TempDir, tauri::App<tauri::test::MockRuntime>) {
+        let directory = tempfile::tempdir().unwrap();
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Root(directory.path().into()));
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        (directory, app)
+    }
+
+    fn test_client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
+    /// 声明了 Content-Length 却在 body 中途关闭连接，模拟传输被掐断。
+    async fn truncated_response() -> (reqwest::Response, String) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let url = format!("http://{address}/asset");
+        // 第一次连接用于取 URL，第二次交给被测的下载流程。
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                let _ = socket.read(&mut request);
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: 64\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+                let _ = socket.write_all(b"short");
+            }
+        });
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(&url)
+            .send()
+            .await
+            .unwrap();
+        (response, url)
+    }
+
     async fn response(body: &'static [u8]) -> reqwest::Response {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -622,5 +692,110 @@ mod download_tests {
         .await
         .is_err());
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn non_200_asset_response_fails_the_verified_download() {
+        let server = MockServer::start().await;
+        let name = "Piko_x64.dmg";
+        let url = format!("{}/assets/{name}", server.uri());
+        Mock::given(method("GET"))
+            .and(path(format!("/assets/{name}")))
+            .respond_with(ResponseTemplate::new(503).set_body_string("busy"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let release = release_with(&url, name, Some(format!("sha256:{}", "a".repeat(64))));
+        let (_directory, app) = mock_app();
+        let error = download_verified_from_release(
+            &test_client(),
+            app.handle(),
+            &release,
+            &url,
+            name,
+            "dl-non-200",
+        )
+        .await
+        .unwrap_err();
+        assert!(!error.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tampered_asset_fails_checksum_and_leaves_no_file() {
+        let server = MockServer::start().await;
+        let name = "Piko_x64.dmg";
+        let url = format!("{}/assets/{name}", server.uri());
+        Mock::given(method("GET"))
+            .and(path(format!("/assets/{name}")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("tampered"))
+            .mount(&server)
+            .await;
+        let expected = format!("sha256:{:x}", Sha256::digest(b"installer"));
+        let release = release_with(&url, name, Some(expected));
+        let (directory, app) = mock_app();
+        let error = download_verified_from_release(
+            &test_client(),
+            app.handle(),
+            &release,
+            &url,
+            name,
+            "dl-tampered",
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("完整性校验失败"));
+        let updates = directory.path().join("caches").join("updates");
+        assert_eq!(std::fs::read_dir(&updates).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn interrupted_body_with_wrong_content_length_is_rejected() {
+        let name = "Piko_x64.dmg";
+        // 该 URL 由上面的裸 TCP 服务提供，发布元数据仍按地址匹配。
+        let (_probe, url) = truncated_response().await;
+        let expected = format!("sha256:{:x}", Sha256::digest(b"short"));
+        let release = release_with(&url, name, Some(expected));
+        let (directory, app) = mock_app();
+        assert!(download_verified_from_release(
+            &test_client(),
+            app.handle(),
+            &release,
+            &url,
+            name,
+            "dl-interrupted",
+        )
+        .await
+        .is_err());
+        let updates = directory.path().join("caches").join("updates");
+        assert_eq!(std::fs::read_dir(&updates).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn verified_asset_is_persisted_with_the_expected_bytes() {
+        let server = MockServer::start().await;
+        let name = "Piko_x64.dmg";
+        let url = format!("{}/assets/{name}", server.uri());
+        Mock::given(method("GET"))
+            .and(path(format!("/assets/{name}")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("installer"))
+            .mount(&server)
+            .await;
+        let expected = format!("sha256:{:x}", Sha256::digest(b"installer"));
+        let release = release_with(&url, name, Some(expected));
+        let (directory, app) = mock_app();
+        let downloaded = download_verified_from_release(
+            &test_client(),
+            app.handle(),
+            &release,
+            &url,
+            name,
+            "dl-ok",
+        )
+        .await
+        .unwrap();
+        assert_eq!(downloaded.downloaded_bytes, 9);
+        assert_eq!(downloaded.file_name, name);
+        assert_eq!(std::fs::read(&downloaded.file_path).unwrap(), b"installer");
+        let _ = directory;
     }
 }

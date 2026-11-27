@@ -1,7 +1,11 @@
-//! Task metadata only: never duplicate prompts, tool arguments, outputs or credentials.
+//! Task metadata only: never duplicate tool arguments, outputs or credentials.
 //!
 //! 04 §4.4：步骤上限 2048，超出滚动归档到 steps-archive/<任务 id>.json；
 //! fsync 批量节流（500ms 或每 8 条），终态强制落盘。
+//!
+//! P0-1（1.4.0）：记录任务所属 workspace，重启后仍能定位 `.piko` 任务日志；
+//! 委托任务额外保存原始任务描述（restartPrompt，上限 20k 字符）供"重新发起"，
+//! 仍不落工具参数、输出或凭据。
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -15,6 +19,8 @@ const MILESTONE_LIMIT: usize = 256;
 const NOTICE_LIMIT: usize = 32;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(500);
 const FLUSH_BATCH: u32 = 8;
+/// P0-1："重新发起"所需的原始任务描述上限（字符数），超出截断。
+const RESTART_PROMPT_LIMIT: usize = 20_000;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +49,13 @@ pub struct TaskRecord {
     pub contract_pending: bool,
     #[serde(default)]
     pub contract_id: Option<String>,
+    /// P0-1：任务启动时的工作目录（绝对路径）。重启后据此读取 `.piko` 任务日志。
+    #[serde(default)]
+    pub workspace: Option<String>,
+    /// P0-1：委托任务（coding）的原始任务描述，仅用于重启后"重新发起"。
+    /// 不记录工具参数、输出或凭据；超出上限截断。
+    #[serde(default)]
+    pub restart_prompt: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -143,15 +156,27 @@ impl TaskJournal {
 
     #[cfg(test)]
     pub fn start(&self, request_id: &str, conversation_id: &str, now: u64) -> Result<(), String> {
-        self.start_linked(request_id, conversation_id, now, None)
+        self.start_linked(request_id, conversation_id, now, None, None, None)
     }
+
+    /// P0-1：`workspace` 与 `restart_prompt` 只在启动时写入一次，供重启后读日志/重新发起。
     pub fn start_linked(
         &self,
         request_id: &str,
         conversation_id: &str,
         now: u64,
         resume_of: Option<String>,
+        workspace: Option<String>,
+        restart_prompt: Option<String>,
     ) -> Result<(), String> {
+        let restart_prompt = restart_prompt
+            .map(|prompt| {
+                prompt
+                    .chars()
+                    .take(RESTART_PROMPT_LIMIT)
+                    .collect::<String>()
+            })
+            .filter(|prompt| !prompt.trim().is_empty());
         self.update(|records| {
             if records.iter().any(|record| record.request_id == request_id) {
                 return Err("该任务标识已使用，请新建请求，避免重复执行".into());
@@ -171,6 +196,8 @@ impl TaskJournal {
                 auto_resumed: false,
                 contract_pending: false,
                 contract_id: None,
+                workspace,
+                restart_prompt,
             });
             // Keep recent records without discarding active tasks.
             if records.len() > 100 {
@@ -256,6 +283,7 @@ impl TaskJournal {
                 | "approval-expired"
                 | "action-proposed"
                 | "workspace-required"
+                | "workspace-resolved"
                 | "contract-proposed"
                 | "milestone"
                 | "notice"
@@ -396,6 +424,12 @@ impl TaskJournal {
             "contract-proposed" => {
                 record.contract_pending = true;
                 record.contract_id = event["contractId"].as_str().map(str::to_string);
+            }
+            // P0-1：用户在任务中途选定目录时，把最终工作目录写进记录。
+            "workspace-resolved" => {
+                if let Some(cwd) = event["cwd"].as_str().filter(|cwd| !cwd.trim().is_empty()) {
+                    record.workspace = Some(cwd.to_string());
+                }
             }
             "completed" | "failed" | "cancelled" => record.contract_pending = false,
             _ => {}
@@ -864,6 +898,102 @@ mod tests {
         // 记录不存在（被淘汰）时保守按“已使用”处理，防循环优先于续跑成功率。
         assert!(reopened.auto_resume_used("missing"));
         assert!(reopened.mark_auto_resumed("missing").is_err());
+    }
+
+    #[test]
+    fn workspace_and_restart_prompt_survive_restart() {
+        // P0-1：重启后仍能定位任务日志（workspace）并一键重新发起（restartPrompt）。
+        let directory = tempfile::tempdir().unwrap();
+        let journal = TaskJournal::new(directory.path());
+        journal
+            .start_linked(
+                "request",
+                "conversation",
+                1,
+                None,
+                Some("/work/app".into()),
+                Some("整理收件箱并总结".into()),
+            )
+            .unwrap();
+        let reopened = TaskJournal::new(directory.path());
+        let records = reopened.recover(None, 2).unwrap();
+        assert_eq!(records[0].workspace.as_deref(), Some("/work/app"));
+        assert_eq!(
+            records[0].restart_prompt.as_deref(),
+            Some("整理收件箱并总结")
+        );
+        // 空白描述不写入；超长描述按上限截断，避免 journal 无界增长。
+        reopened
+            .start_linked("blank", "conversation", 3, None, None, Some("   ".into()))
+            .unwrap();
+        reopened
+            .start_linked(
+                "long",
+                "conversation",
+                4,
+                None,
+                None,
+                Some("x".repeat(RESTART_PROMPT_LIMIT + 10)),
+            )
+            .unwrap();
+        let records = reopened.all().unwrap();
+        let by_id = |id: &str| {
+            records
+                .iter()
+                .find(|record| record.request_id == id)
+                .unwrap()
+        };
+        assert!(by_id("blank").restart_prompt.is_none());
+        assert_eq!(
+            by_id("long")
+                .restart_prompt
+                .as_deref()
+                .unwrap()
+                .chars()
+                .count(),
+            RESTART_PROMPT_LIMIT
+        );
+    }
+
+    #[test]
+    fn workspace_resolved_events_update_the_persisted_workspace() {
+        // P0-1：任务中途选定目录（Passport 流程）后，记录里的 workspace 同步更新。
+        let directory = tempfile::tempdir().unwrap();
+        let journal = TaskJournal::new(directory.path());
+        journal
+            .start_linked("request", "conversation", 1, None, None, None)
+            .unwrap();
+        journal
+            .event(
+                "request",
+                &json!({"type":"workspace-resolved","cwd":"/work/chosen"}),
+                2,
+            )
+            .unwrap();
+        assert_eq!(
+            journal
+                .current_record("request")
+                .unwrap()
+                .workspace
+                .as_deref(),
+            Some("/work/chosen")
+        );
+        // 取消选择（cwd 为 null）不得清空已有 workspace。
+        journal
+            .event(
+                "request",
+                &json!({"type":"workspace-resolved","cwd":Value::Null}),
+                3,
+            )
+            .unwrap();
+        assert_eq!(
+            journal
+                .current_record("request")
+                .unwrap()
+                .workspace
+                .as_deref(),
+            Some("/work/chosen")
+        );
     }
 
     #[test]

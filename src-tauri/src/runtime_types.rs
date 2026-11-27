@@ -104,6 +104,8 @@ pub(crate) enum TaskPhase {
     Confirming,
     Success,
     Error,
+    /// P0-2：定时委托因配额/目录占用进入排队重试。
+    Queued,
 }
 
 pub(crate) fn append_session_chat_history(

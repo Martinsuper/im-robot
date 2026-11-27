@@ -34,9 +34,10 @@ function isScheduledTask(value: unknown): value is ScheduledTaskRecord {
   return Boolean(entry) && typeof entry?.id === "string" && typeof entry?.prompt === "string";
 }
 
-/** 菜单里只展示/取消 pending 项；status 缺省视为 pending。 */
+/** 菜单里展示/取消"待执行"与"排队重试中"项；status 缺省视为 pending。 */
 function isPendingTask(item: ScheduledTaskRecord): boolean {
-  return (item.status ?? "pending") === "pending";
+  const status = item.status ?? "pending";
+  return status === "pending" || status === "queued";
 }
 
 /** `<input type="datetime-local">` 的取值与本地时间互转（与 TodayTab 同一模式）。 */
@@ -293,7 +294,10 @@ export function ChatContextMenu({
                   <p>{t("chat.schedule.pendingEmpty", "暂无待执行的定时委托。")}</p>
                 ) : scheduled.map((item) => (
                   <div key={item.id} className="bubble-schedule__item">
-                    <span title={item.prompt}>{item.prompt}</span>
+                    <span title={item.reason ?? item.prompt}>{item.prompt}</span>
+                    {item.status === "queued" && (
+                      <em className="bubble-schedule__queued">{t("chat.schedule.queued", "排队中")}</em>
+                    )}
                     <time>{formatScheduleTime(item.scheduledAt)}</time>
                     <button type="button" aria-label={`${t("chat.schedule.cancel", "取消")}：${item.prompt}`}
                       onClick={() => void cancelScheduled(item.id)}>
