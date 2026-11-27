@@ -28,6 +28,7 @@ mod screen_capture;
 mod speech;
 mod tts;
 mod tts_stream;
+mod voice_assistant;
 
 mod actions;
 mod agent;

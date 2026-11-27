@@ -1,5 +1,43 @@
 use super::{model::*, profile, store};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
+
+/// 配额账目自愈：历史版本可能造成 `total_used` 与 `category_used` 求和漂移
+/// （两值只在同一事务里共同写入，漂移只能来自旧版数据），使 check_ledger
+/// 永久 fail-closed 且没有任何用户可用的恢复路径。分类计数是更细粒度的
+/// 账本，这里以它为准对齐总量；JSON 损坏等真正不可读的状态仍交给
+/// check_ledger 保持 fail-closed。
+pub fn heal_quota_drift(conn: &mut Connection) -> Result<(), String> {
+    store::ensure_available(conn)?;
+    let quota: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT total_used,category_used FROM soul_quota WHERE singleton=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some((total_used, categories)) = quota else {
+        return Ok(());
+    };
+    let Ok(counts) =
+        serde_json::from_str::<std::collections::HashMap<ProactiveCategory, u32>>(&categories)
+    else {
+        return Ok(());
+    };
+    let sum = counts.values().map(|v| u64::from(*v)).sum::<u64>() as i64;
+    if sum == total_used {
+        return Ok(());
+    }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE soul_quota SET total_used=?1 WHERE singleton=1",
+        params![sum],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    eprintln!("[soul] 配额账目自愈：total_used {total_used} -> {sum}");
+    Ok(())
+}
 
 /// Validate persisted scheduler inputs without exposing payloads in diagnostics.
 /// An unreadable ledger is never represented as an empty queue.
@@ -148,6 +186,50 @@ pub fn inspect(conn: &Connection, boot_ok: bool) -> SoulDiagnostics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quota_drift_is_healed_but_corrupt_categories_stay_fail_closed() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        store::migrate(&mut conn).unwrap();
+        // 现场复刻的漂移：total_used=1 但分类求和=2。
+        conn.execute_batch(
+            "INSERT INTO soul_quota VALUES(1,'2026-10-22','Asia/Shanghai',100,86500,1,'{\"task_unresolved\":2}',100);",
+        )
+        .unwrap();
+        assert!(check_ledger(&conn).is_err(), "漂移数据必须先 fail-closed");
+        heal_quota_drift(&mut conn).unwrap();
+        let total: i64 = conn
+            .query_row(
+                "SELECT total_used FROM soul_quota WHERE singleton=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 2, "以分类账为准对齐总量");
+        assert!(check_ledger(&conn).is_ok(), "自愈后应恢复可用");
+
+        // 账目一致时自愈必须是 no-op。
+        heal_quota_drift(&mut conn).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT total_used FROM soul_quota WHERE singleton=1",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+
+        // 分类 JSON 本身损坏时自愈不冒险，交给 check_ledger 保持 fail-closed。
+        let mut conn = Connection::open_in_memory().unwrap();
+        store::migrate(&mut conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO soul_quota VALUES(1,'2026-10-22','Asia/Shanghai',100,86500,1,'[]',100);",
+        )
+        .unwrap();
+        heal_quota_drift(&mut conn).unwrap();
+        assert!(check_ledger(&conn).is_err());
+    }
 
     #[test]
     fn volatile_or_failed_boot_cannot_be_reported_as_available() {

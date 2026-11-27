@@ -2730,6 +2730,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "core-graphics 0.23.2",
+ "cpal",
  "futures-util",
  "getrandom 0.3.4",
  "iana-time-zone",
