@@ -1,7 +1,8 @@
 //! 定时委托（doc/design/18 §9）：`scheduled_tasks.json` 存 app_data_dir，
 //! SUPERVISOR 常驻线程自适应轮询到期项，经 start_agent 同路径拉起 coding 任务。
 //! 状态机 pending → fired →（任务终态回调）completed/failed/cancelled；
-//! 取消复用 agent_cancel 同路径；workspace 互斥冲突时优雅失败（failed + 原因）。
+//! P0-2：并发配额/目录占用导致的启动失败进入 queued，按退避上限有序重试，
+//! 重试耗尽才落 failed（带明确原因）；取消复用 agent_cancel 同路径。
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -15,6 +16,11 @@ const CONVERSATION_PREFIX: &str = "scheduled-";
 const WORKSPACE_HASH_BYTES: usize = 8;
 /// fired 状态的对账宽限：标记 fired 后启动任务在秒级完成，超过宽限仍无活动记录才按异常归类。
 const RECONCILE_GRACE_SECS: u64 = 120;
+/// P0-2：排队重试上限——首次启动失败后最多再排 5 次（含第 5 次失败即终态）。
+const MAX_QUEUE_ATTEMPTS: u32 = 5;
+/// P0-2：退避基数与上限（30s、60s、120s、240s、300s）。
+const QUEUE_BACKOFF_BASE_SECS: u64 = 30;
+const QUEUE_BACKOFF_MAX_SECS: u64 = 300;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +43,12 @@ pub(crate) struct ScheduledTask {
     pub(crate) fired_request_id: Option<String>,
     #[serde(default)]
     pub(crate) reason: Option<String>,
+    /// P0-2：已尝试拉起次数（0 = 尚未尝试）；重试用尽后转 failed。
+    #[serde(default)]
+    pub(crate) attempts: u32,
+    /// P0-2：queued 状态下一次允许拉起的时间（unix 秒）。
+    #[serde(default)]
+    pub(crate) next_attempt_at: u64,
     pub(crate) created_at: u64,
     #[serde(default)]
     pub(crate) updated_at: u64,
@@ -207,6 +219,8 @@ fn create_at(path: &Path, input: ScheduledTaskInput, now: u64) -> Result<Schedul
         status: "pending".into(),
         fired_request_id: None,
         reason: None,
+        attempts: 0,
+        next_attempt_at: 0,
         created_at: now,
         updated_at: now,
     };
@@ -215,7 +229,8 @@ fn create_at(path: &Path, input: ScheduledTaskInput, now: u64) -> Result<Schedul
     Ok(task)
 }
 
-/// pending → cancelled；fired 任务返回原状态由调用方走 agent_cancel，终态回调迁移状态。
+/// pending → cancelled；queued（排队重试中）同样可取消；fired 任务返回原状态由调用方走
+/// agent_cancel，终态回调迁移状态。
 fn cancel_at(path: &Path, id: &str, now: u64) -> Result<ScheduledTask, String> {
     let _transaction = crate::storage::transaction();
     let mut tasks = load(path)?;
@@ -224,9 +239,10 @@ fn cancel_at(path: &Path, id: &str, now: u64) -> Result<ScheduledTask, String> {
         .find(|task| task.id == id)
         .ok_or("定时任务不存在")?;
     match task.status.as_str() {
-        "pending" => {
+        "pending" | "queued" => {
             task.status = "cancelled".into();
             task.reason = Some("用户取消".into());
+            task.next_attempt_at = 0;
             task.updated_at = now;
         }
         "fired" => {}
@@ -237,17 +253,81 @@ fn cancel_at(path: &Path, id: &str, now: u64) -> Result<ScheduledTask, String> {
     Ok(cancelled)
 }
 
-/// 纯函数：把到期 pending 项标记为 fired 并生成运行 request_id（防重复拉起先落盘）。
+/// P0-2：第 `attempts` 次重试的退避秒数（30s 起指数翻倍，封顶 5 分钟）。
+fn retry_backoff(attempts: u32) -> u64 {
+    let exponent = attempts.saturating_sub(1).min(4);
+    QUEUE_BACKOFF_BASE_SECS
+        .saturating_mul(1u64 << exponent)
+        .min(QUEUE_BACKOFF_MAX_SECS)
+}
+
+/// P0-2：启动失败是否值得排队重试——并发配额与目录占用会随其他任务结束而消失；
+/// 参数非法、模型未配置等确定性错误重试无意义，直接失败。
+fn retryable_start_error(reason: &str) -> bool {
+    [
+        "已有任务正在执行",
+        "最多同时执行两个任务",
+        "另一个任务正在使用此目录",
+    ]
+    .iter()
+    .any(|needle| reason.contains(needle))
+}
+
+/// P0-2：可重试失败 → queued（带退避），按序等待下一轮拉起；
+/// 重试耗尽 → failed，reason 记录最后一次失败原因。返回是否仍在排队。
+fn queue_retry_at(path: &Path, id: &str, reason: &str, now: u64) -> Result<bool, String> {
+    let _transaction = crate::storage::transaction();
+    let mut tasks = load(path)?;
+    let Some(task) = tasks.iter_mut().find(|task| task.id == id) else {
+        return Ok(false);
+    };
+    if task.status != "fired" {
+        return Ok(false);
+    }
+    task.attempts = task.attempts.saturating_add(1);
+    task.updated_at = now;
+    let reason: String = reason.chars().take(200).collect();
+    if task.attempts >= MAX_QUEUE_ATTEMPTS {
+        task.status = "failed".into();
+        task.reason = Some(format!(
+            "排队重试 {} 次后仍失败：{reason}",
+            MAX_QUEUE_ATTEMPTS - 1
+        ));
+        task.next_attempt_at = 0;
+        save(path, &tasks)?;
+        return Ok(false);
+    }
+    task.status = "queued".into();
+    task.reason = Some(format!("排队等待重试（第 {} 次）：{reason}", task.attempts));
+    task.next_attempt_at = now.saturating_add(retry_backoff(task.attempts));
+    save(path, &tasks)?;
+    Ok(true)
+}
+
+/// 纯函数：把到期 pending 项与退避到期的 queued 项标记为 fired 并生成运行 request_id
+/// （防重复拉起先落盘）。重试使用独立的 request_id，避免与 journal 已有记录冲突。
 fn collect_due(tasks: &mut [ScheduledTask], now: u64) -> Vec<ScheduledTask> {
     let mut due = Vec::new();
     for task in tasks {
-        if task.status == "pending" && task.scheduled_at <= now {
-            task.status = "fired".into();
-            task.fired_request_id = Some(format!("sched-{}", task.id));
-            task.updated_at = now;
-            due.push(task.clone());
+        let ready = match task.status.as_str() {
+            "pending" => task.scheduled_at <= now,
+            "queued" => task.next_attempt_at <= now,
+            _ => false,
+        };
+        if !ready {
+            continue;
         }
+        task.status = "fired".into();
+        task.fired_request_id = Some(if task.attempts == 0 {
+            format!("sched-{}", task.id)
+        } else {
+            format!("sched-{}-r{}", task.id, task.attempts)
+        });
+        task.updated_at = now;
+        due.push(task.clone());
     }
+    // 按计划时间、创建时间排序：排队中的任务按序重试，不被后创建的抢先。
+    due.sort_by_key(|task| (task.scheduled_at, task.created_at));
     due
 }
 
@@ -395,6 +475,31 @@ async fn fire(app: &AppHandle, task: ScheduledTask) {
         }
         Err(error) => {
             let reason = error.chars().take(200).collect::<String>();
+            // P0-2：配额/目录占用进入排队，按退避有序重试；其余错误直接失败。
+            if retryable_start_error(&reason) {
+                if let Ok(path) = file_path(app) {
+                    match queue_retry_at(&path, &task.id, &reason, crate::common::unix_timestamp())
+                    {
+                        Ok(true) => {
+                            let _ = app.emit("scheduled-tasks-updated", ());
+                            // 宠物状态反馈：phase=queued（前端 PetWindow 映射后展示「排队中」）。
+                            crate::agent::task_pet(app, crate::runtime_types::TaskPhase::Queued);
+                            let detail =
+                                format!("第 {} 次重试：{reason}", task.attempts.saturating_add(1));
+                            crate::notifications::task_event(
+                                app,
+                                &request_id,
+                                "info",
+                                "定时任务排队中",
+                                &detail,
+                            );
+                            return;
+                        }
+                        Ok(false) => {}
+                        Err(error) => eprintln!("[scheduled-tasks] {error}"),
+                    }
+                }
+            }
             if let Ok(path) = file_path(app) {
                 let _ = fail_at(&path, &task.id, &reason, crate::common::unix_timestamp());
             }
@@ -454,14 +559,18 @@ fn reconcile_stale(app: &AppHandle, path: &Path, now: u64) -> Result<(), String>
     Ok(())
 }
 
-/// 下次轮询间隔（参考 reminder scheduler 的自适应轮询）：最近的到期项驱动，1-60 秒。
+/// 下次轮询间隔（参考 reminder scheduler 的自适应轮询）：最近的到期项或排队重试驱动，1-60 秒。
 fn next_poll_delay(path: &Path) -> u64 {
     let now = crate::common::unix_timestamp();
     load(path)
         .unwrap_or_default()
         .iter()
-        .filter(|task| task.status == "pending")
-        .map(|task| task.scheduled_at.saturating_sub(now).clamp(1, 60))
+        .filter_map(|task| match task.status.as_str() {
+            "pending" => Some(task.scheduled_at.saturating_sub(now)),
+            "queued" => Some(task.next_attempt_at.saturating_sub(now)),
+            _ => None,
+        })
+        .map(|delay| delay.clamp(1, 60))
         .min()
         .unwrap_or(60)
 }
@@ -633,10 +742,146 @@ mod tests {
             status: "pending".into(),
             fired_request_id: None,
             reason: None,
+            attempts: 0,
+            next_attempt_at: 0,
             created_at: 1,
             updated_at: 1,
         };
         assert!(scheduled_conversation_id(&orphan).is_err());
+    }
+
+    #[test]
+    fn retryable_start_errors_are_limited_to_quota_and_workspace_conflicts() {
+        // P0-2：只有会随其他任务结束而消失的失败值得排队；确定性错误直接失败。
+        for reason in [
+            "此会话已有任务正在执行，请等待结束或新建会话。",
+            "最多同时执行两个任务，请等待一个任务结束后再发送。",
+            "另一个任务正在使用此目录，请等待它结束或选择其他目录。",
+        ] {
+            assert!(retryable_start_error(reason), "{reason}");
+        }
+        for reason in [
+            "请先在模型设置中配置模型和 API 地址",
+            "定时任务缺少项目与工作目录",
+            "无效的自主权档位，仅支持 cautious/standard/trusted",
+        ] {
+            assert!(!retryable_start_error(reason), "{reason}");
+        }
+    }
+
+    #[test]
+    fn backoff_grows_exponentially_and_is_capped() {
+        assert_eq!(retry_backoff(1), 30);
+        assert_eq!(retry_backoff(2), 60);
+        assert_eq!(retry_backoff(3), 120);
+        assert_eq!(retry_backoff(4), 240);
+        assert_eq!(retry_backoff(5), 300);
+        assert_eq!(retry_backoff(99), QUEUE_BACKOFF_MAX_SECS);
+    }
+
+    #[test]
+    fn quota_failures_queue_with_backoff_then_refire_in_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("scheduled_tasks.json");
+        let first = task_with_workspace(directory.path(), 100);
+        let mut tasks = load(&path).unwrap();
+        collect_due(&mut tasks, 100);
+        save(&path, &tasks).unwrap();
+        // 首次拉起失败（会话/目录占用）→ 排队而非丢弃。
+        assert!(queue_retry_at(&path, &first.id, "另一个任务正在使用此目录", 110).unwrap());
+        let queued = load(&path).unwrap().remove(0);
+        assert_eq!(queued.status, "queued");
+        assert_eq!(queued.attempts, 1);
+        assert_eq!(queued.next_attempt_at, 140);
+        assert!(queued
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("排队等待重试（第 1 次）"));
+        // 退避未到期不重试。
+        let mut tasks = load(&path).unwrap();
+        assert!(collect_due(&mut tasks, 139).is_empty());
+        // 到期后以独立 request_id 重新拉起，避免与 journal 记录冲突。
+        let mut tasks = load(&path).unwrap();
+        let retried = collect_due(&mut tasks, 140);
+        save(&path, &tasks).unwrap();
+        assert_eq!(retried.len(), 1);
+        assert_eq!(retried[0].status, "fired");
+        assert_eq!(
+            retried[0].fired_request_id,
+            Some(format!("sched-{}-r1", first.id))
+        );
+        // 第二次失败继续退避：60 秒。
+        assert!(queue_retry_at(&path, &first.id, "最多同时执行两个任务", 150).unwrap());
+        let second = load(&path).unwrap().remove(0);
+        assert_eq!(second.attempts, 2);
+        assert_eq!(second.next_attempt_at, 210);
+    }
+
+    #[test]
+    fn queued_retries_run_in_schedule_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("scheduled_tasks.json");
+        let early = task_with_workspace(directory.path(), 100);
+        let late = task_with_workspace(directory.path(), 200);
+        let mut tasks = load(&path).unwrap();
+        collect_due(&mut tasks, 200);
+        save(&path, &tasks).unwrap();
+        for task in [&early, &late] {
+            assert!(queue_retry_at(&path, &task.id, "最多同时执行两个任务", 210).unwrap());
+        }
+        let mut tasks = load(&path).unwrap();
+        let due = collect_due(&mut tasks, 240);
+        assert_eq!(
+            due.iter().map(|task| task.id.as_str()).collect::<Vec<_>>(),
+            [early.id.as_str(), late.id.as_str()]
+        );
+    }
+
+    #[test]
+    fn exhausted_queue_retries_become_a_clear_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("scheduled_tasks.json");
+        let task = task_with_workspace(directory.path(), 100);
+        let mut tasks = load(&path).unwrap();
+        collect_due(&mut tasks, 100);
+        save(&path, &tasks).unwrap();
+        let mut now = 110;
+        for _ in 1..MAX_QUEUE_ATTEMPTS {
+            assert!(queue_retry_at(&path, &task.id, "最多同时执行两个任务", now).unwrap());
+            // 推进到该次退避的到期时刻，模拟 watcher 到点重新拉起。
+            now = load(&path).unwrap()[0].next_attempt_at;
+            let mut tasks = load(&path).unwrap();
+            assert_eq!(collect_due(&mut tasks, now).len(), 1);
+            save(&path, &tasks).unwrap();
+        }
+        // 第 MAX_QUEUE_ATTEMPTS 次失败后不再排队，落一条明确的失败记录。
+        assert!(!queue_retry_at(&path, &task.id, "最多同时执行两个任务", now).unwrap());
+        let failed = load(&path).unwrap().remove(0);
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.attempts, MAX_QUEUE_ATTEMPTS);
+        let reason = failed.reason.as_deref().unwrap();
+        assert!(reason.contains("排队重试"), "{reason}");
+        assert!(reason.contains("最多同时执行两个任务"), "{reason}");
+        // 终态后不再被轮询拉起。
+        let mut tasks = load(&path).unwrap();
+        assert!(collect_due(&mut tasks, now + 10_000).is_empty());
+    }
+
+    #[test]
+    fn queued_tasks_stay_cancellable() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("scheduled_tasks.json");
+        let task = task_with_workspace(directory.path(), 100);
+        let mut tasks = load(&path).unwrap();
+        collect_due(&mut tasks, 100);
+        save(&path, &tasks).unwrap();
+        assert!(queue_retry_at(&path, &task.id, "另一个任务正在使用此目录", 110).unwrap());
+        let cancelled = cancel_at(&path, &task.id, 120).unwrap();
+        assert_eq!(cancelled.status, "cancelled");
+        assert_eq!(cancelled.reason.as_deref(), Some("用户取消"));
+        let mut tasks = load(&path).unwrap();
+        assert!(collect_due(&mut tasks, 1_000).is_empty());
     }
 
     #[test]

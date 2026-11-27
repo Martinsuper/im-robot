@@ -4,7 +4,7 @@ import { FileOperations } from "./file-operations.mjs";
 import { createInterface } from "node:readline";
 import { mkdir, readFile, writeFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { ApprovalGate, needsApproval, taskNeedsApproval, isWithin } from "./permissions.mjs";
+import { ApprovalGate, needsApproval, taskNeedsApproval, isWithin, isDangerousCommand } from "./permissions.mjs";
 import { executePrompt } from "./execution.mjs";
 import { AppToolBridge, applicationTools } from "./app-tools.mjs";
 import { execFile } from "node:child_process";
@@ -204,6 +204,8 @@ async function runDelegatedTask(input, context) {
     if (command) {
       if (/(?:^|[\s;&|(])(?:sudo\s+)?(?:npm|pnpm|yarn|bun|pip3?|poetry|uv|conda|cargo|gem|brew|apt(?:-get)?|choco|winget)\s+(?:install|i|add|sync)\b/.test(command)) notice("warn", `安装依赖：${command.slice(0, 160)}`);
       if (/\bgit\s+(?:-C\s+\S+\s+)?(?:branch|checkout|switch|worktree)\b/.test(command) && /(?:\s-[bBdD]\b|\s-[bBdD]$|--delete)/.test(command)) notice("warn", `创建或删除分支：${command.slice(0, 160)}`);
+      // 高危命令黄旗（04 §4.3）：命中启发式即上报，与审批事件一并留痕（journal notice → 任务记录）。
+      if (isDangerousCommand(command)) notice("warn", `高危命令需确认：${command.slice(0, 160)}`);
     }
     if (["write", "edit"].includes(event.toolName) && typeof event.args?.path === "string") {
       const target = path.resolve(workspace, event.args.path);

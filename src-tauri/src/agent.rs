@@ -682,22 +682,45 @@ fn read_task_log_at(workspace: &Path, request_id: &str) -> Result<Option<(String
     Ok(Some((String::from_utf8_lossy(&bytes).into_owned(), false)))
 }
 
-/// 前端日志查看/批注（doc/design/18 §9）：工作目录取任务快照。
+/// 任务日志读取（doc/design/18 §9）：工作目录先取任务快照，重启后回退 journal 持久化的 workspace。
+fn task_workspace(
+    app: &AppHandle,
+    runtime: &AgentRuntime,
+    request_id: &str,
+) -> Result<Option<String>, String> {
+    let snapshot = runtime
+        .1
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(request_id)
+        .and_then(|snapshot| snapshot.cwd.clone());
+    if snapshot.is_some() {
+        return Ok(snapshot);
+    }
+    let agent_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("agent");
+    Ok(TaskJournal::new(&agent_dir)
+        .all()?
+        .into_iter()
+        .find(|record| record.request_id == request_id)
+        .and_then(|record| record.workspace))
+}
+
+/// 前端日志查看/批注（doc/design/18 §9）：工作目录取任务快照，重启后回退 journal。
 #[tauri::command]
 pub fn agent_read_task_log(
+    app: AppHandle,
     runtime: State<'_, AgentRuntime>,
     request_id: String,
 ) -> Result<Value, String> {
     if !valid_id(&request_id) {
         return Err("无效的任务标识".into());
     }
-    let workspace = runtime
-        .1
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .get(&request_id)
-        .and_then(|snapshot| snapshot.cwd.clone())
-        .ok_or("任务不存在或工作目录不可用")?;
+    let workspace =
+        task_workspace(&app, &runtime, &request_id)?.ok_or("任务不存在或工作目录不可用")?;
     match read_task_log_at(Path::new(&workspace), &request_id)? {
         Some((content, truncated)) => {
             Ok(json!({"exists": true, "content": content, "truncated": truncated}))
@@ -770,12 +793,18 @@ pub async fn agent_list_tasks(
         crate::common::unix_timestamp(),
     )?;
     // 内存快照里有原任务的 prompt/cwd，供前端"重新发起"使用（doc 18 §9）；
-    // 快照不持久化，重启后字段缺失由前端降级处理。
+    // P0-1：重启后快照缺失时回退 journal 持久化的 workspace 与 restartPrompt。
     let snapshots = runtime.1.lock().map_err(|_| "任务快照状态不可用")?;
     Ok(records
         .into_iter()
         .map(|record| {
             let mut value = serde_json::to_value(&record).unwrap_or(Value::Null);
+            if let Some(cwd) = &record.workspace {
+                value["cwd"] = json!(cwd);
+            }
+            if let Some(prompt) = &record.restart_prompt {
+                value["prompt"] = json!(prompt);
+            }
             if let Some((_, snapshot)) = snapshots
                 .iter()
                 .find(|(_, snapshot)| snapshot.request_id == record.request_id)
@@ -784,6 +813,10 @@ pub async fn agent_list_tasks(
                 if let Some(cwd) = &snapshot.cwd {
                     value["cwd"] = json!(cwd);
                 }
+            }
+            // restartPrompt 是 journal 内部字段，已并入 prompt，不再重复下发。
+            if let Some(object) = value.as_object_mut() {
+                object.remove("restartPrompt");
             }
             value
         })
@@ -900,8 +933,8 @@ fn resolve_start_project(
     Ok(Some(project))
 }
 
-/// 宠物任务事件（04 §4.7）：复用 pet-visual-event 通道，phase ∈ working/confirming/success/error。
-fn task_pet(app: &AppHandle, phase: crate::runtime_types::TaskPhase) {
+/// 宠物任务事件（04 §4.7）：复用 pet-visual-event 通道，phase ∈ working/confirming/success/error/queued。
+pub(crate) fn task_pet(app: &AppHandle, phase: crate::runtime_types::TaskPhase) {
     let _ = app.emit_to(
         "pet",
         "pet-visual-event",
@@ -1458,11 +1491,16 @@ async fn start_agent_with_voice(
         "taskKind":task_kind, "policy":policy_json,
         "budget":{"timeMinutes":budget_minutes,"tokenBudget":token_budget},
         "projectId":input.project_id, "verifyCommand":input.verify_command, "gitMode":git_mode });
+    // P0-1：journal 持久化 workspace；委托任务另存原始任务描述，重启后可一键重新发起。
     journal.start_linked(
         &input.request_id,
         &conversation_id,
         crate::common::unix_timestamp(),
         input.resume_of.clone(),
+        selected_workspace
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
+        (task_kind == "coding").then(|| history_prompt.clone()),
     )?;
     if let Err(error) = write_command(&stdin, command).await {
         journal.event(
@@ -2821,6 +2859,8 @@ mod tests {
             auto_resumed: false,
             contract_pending: false,
             contract_id: None,
+            workspace: None,
+            restart_prompt: None,
         }
     }
 

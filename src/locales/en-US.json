@@ -201,6 +201,7 @@
       "listFailed": "Failed to load scheduled tasks. Try again.",
       "pendingTitle": "Pending",
       "pendingEmpty": "No pending scheduled tasks.",
+      "queued": "Queued",
       "cancel": "Cancel",
       "cancelFailed": "Failed to cancel. Try again."
     }

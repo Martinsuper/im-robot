@@ -45,13 +45,38 @@ export async function resolveWithinWorkspace(cwd, target) {
 
 // 高危命令启发式（尽力而为）：shell=auto 下仍强制审批。shell 内容无法静态可靠分类，
 // 这里只覆盖最常见的破坏性前缀、发布操作与系统路径写入；PRD 04 §4.3 已明示其局限。
+// Windows 与 POSIX 共用同一张表：命中即审批 + 黄旗 notice，跨平台判定风格保持一致。
 const DANGEROUS_PATTERNS = [
+  // —— POSIX ——
   /(?:^|[;&|`(]\s*|\$\(\s*)(?:sudo|doas)\s+/i,
   /(?:^|[;&|(]\s*|`|&&|\|\|)\s*rm\s+(?:-\w+\s+)*-\w*(?:r|f)/i,
   /(?:^|[;&|(]\s*|`|&&|\|\|)\s*(?:mkfs(?:\.\w+)?|dd\s+if=|shutdown|reboot|halt|poweroff|crontab|launchctl)\b/i,
   /(?:^|[;&|(]\s*|`|&&|\|\|)\s*git\s+(?:-C\s+\S+\s+)?push\b/i,
   /(?:^|[;&|(]\s*|`|&&|\|\|)\s*(?:npm|pnpm|yarn|cargo|gem|dotnet)\s+publish\b/i,
   /(?:^|\s|=|"|')\/(?:etc|usr|bin|sbin|boot|sys|proc|dev|lib32|lib64|private\/etc|System|Windows)(?:\/|\s|$|["'])/i,
+  // —— Windows / cmd ——
+  // 递归或强删：del /f /s /q、erase、rd /s /q、rmdir /s /q。
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*(?:del|erase)\s+(?:[\/-][a-z]\s+)*[\/-][fsq]/i,
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*(?:rd|rmdir)\s+(?:[\/-][a-z]\s+)*[\/-]s/i,
+  // 磁盘与引导区：format、diskpart、bcdedit、cipher /w（擦除空闲空间）。
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*(?:format|diskpart|bcdedit)\b/i,
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*cipher\s+\/w/i,
+  // —— Windows / PowerShell ——
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*(?:remove-item|clear-content)\b/i,
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*(?:restart-computer|stop-computer)\b/i,
+  // 注册表写入与导入（读取不拦）：reg add/delete/import、Set-ItemProperty HKLM: 等。
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*reg(?:\.exe)?\s+(?:add|delete|import|restore|load|unload)\b/i,
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*(?:set-itemproperty|new-itemproperty|remove-itemproperty|regedit)\b/i,
+  // 服务、进程与计划任务：sc delete/stop、net stop、taskkill、schtasks /delete。
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*sc(?:\.exe)?\s+(?:delete|stop|config)\b/i,
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*net\s+(?:stop|user)\b/i,
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*taskkill\b/i,
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*schtasks\b[^;&|]*\/(?:delete|create|change)\b/i,
+  // 权限与属主变更：icacls、takeown、cacls。
+  /(?:^|[;&|(]\s*|&&|\|\|)\s*(?:icacls|takeown|cacls)\b/i,
+  // Windows 系统目录：任意盘符或环境变量（C:\Windows、%SystemRoot%、Program Files）。
+  /(?:^|[\s="'])(?:[a-z]:[\\/]+(?:windows|program files(?: \(x86\))?|programdata)(?:[\\/]|$|["'\s]))/i,
+  /%systemroot%|%windir%|%programfiles(?:\(x86\))?%/i,
 ];
 
 export function isDangerousCommand(command) {
