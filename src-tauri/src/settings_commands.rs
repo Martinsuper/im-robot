@@ -171,6 +171,25 @@ pub(crate) fn update_skipped_update_version(
 }
 
 #[tauri::command]
+pub(crate) fn update_voice_assistant_settings(
+    app: AppHandle,
+    enabled: bool,
+    wake_word: String,
+    wake_tokens: String,
+) -> Result<AppSettings, String> {
+    let _transaction = storage::transaction();
+    let mut settings = read_settings(&app);
+    settings.voice_assistant_enabled = enabled;
+    settings.voice_assistant_wake_word = wake_word;
+    settings.voice_assistant_wake_tokens = wake_tokens;
+    persist_settings(&app, &settings)?;
+    for window in ["panel", "pet", "bubble"] {
+        let _ = app.emit_to(window, "settings-updated", &settings);
+    }
+    Ok(settings)
+}
+
+#[tauri::command]
 pub(crate) fn update_html_preview_enabled(
     app: AppHandle,
     enabled: bool,

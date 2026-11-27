@@ -86,13 +86,23 @@ impl Drop for SpeechPlayback {
 }
 
 pub(crate) fn speech_model_definitions() -> &'static [SpeechModelDefinition] {
-    &[SpeechModelDefinition {
-        id: "sense-voice",
-        name: "SenseVoice 中文优化",
-        file_name: "model.int8.onnx",
-        download_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
-        archive_dir: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
-    }]
+    &[
+        SpeechModelDefinition {
+            id: "sense-voice",
+            name: "SenseVoice 中文优化",
+            file_name: "model.int8.onnx",
+            download_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
+            archive_dir: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        },
+        // 常驻语音助手的唤醒词检测模型（见 voice_assistant::kws）。
+        SpeechModelDefinition {
+            id: "kws-wenetspeech",
+            name: "唤醒词检测（中文）",
+            file_name: "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+            download_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2",
+            archive_dir: "sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01",
+        },
+    ]
 }
 
 #[cfg(feature = "speech-recognition")]
@@ -100,6 +110,15 @@ pub(crate) fn speech_model_definition(model_id: &str) -> Option<&'static SpeechM
     speech_model_definitions()
         .iter()
         .find(|model| model.id == model_id)
+}
+
+/// 唤醒词检测模型定义（speech_model_definitions 第二项，顺序固定）。
+#[cfg(feature = "speech-recognition")]
+pub(crate) fn kws_model_definition() -> &'static SpeechModelDefinition {
+    speech_model_definitions()
+        .iter()
+        .find(|model| model.id == "kws-wenetspeech")
+        .expect("kws-wenetspeech 定义缺失")
 }
 
 pub(crate) fn speech_models_dir(app: &AppHandle) -> Result<PathBuf, String> {

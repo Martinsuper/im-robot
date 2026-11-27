@@ -40,7 +40,7 @@ import { ActionConfirmationCard, getConfirmationChoices } from "./ActionConfirma
 import { useTranslation } from "../i18n/I18nProvider";
 import { getBubbleCompanionMessage } from "./bubbleMessage";
 import type { ActionDraft, ChatEvent } from "./chatTypes";
-import type { AttachmentAction, AttachmentPreview, ChatHistoryEntry, PanelTab, ScreenshotPreview } from "../../types/appTypes";
+import type { AttachmentAction, AttachmentPreview, ChatHistoryEntry, PanelTab, ScreenshotPreview, VoiceAssistantEvent } from "../../types/appTypes";
 import { PetSprite, attachmentActionOptions, defaultAppSettings, formatBytes } from "../app/appShared";
 import {
   ACTIVITY_HEARTBEAT_SECONDS,
@@ -1499,6 +1499,29 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
   const currentFavoriteId = htmlPreviewSource ? findFavoriteId(favorites, htmlPreviewSource) : undefined;
   const selectedFavorite = selectedFavoriteId ? favorites.find((item) => item.id === selectedFavoriteId) : undefined;
 
+  // --- 语音助手状态胶囊 ---
+  const [voiceEvent, setVoiceEvent] = useState<VoiceAssistantEvent | null>(null);
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    const pending = listen<VoiceAssistantEvent>("voice-assistant-state", (event) => setVoiceEvent(event.payload));
+    return () => { void pending.then((unlisten) => unlisten()); };
+  }, []);
+  // 错误提示短暂展示后自动消失；正常阶段由下一个状态事件自然替换。
+  useEffect(() => {
+    if (!voiceEvent?.message || voiceEvent.stage !== "idle") return;
+    const timer = window.setTimeout(() => setVoiceEvent(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [voiceEvent]);
+  const voicePill = useMemo(() => {
+    if (!voiceEvent) return null;
+    const { stage, transcript, reply, message } = voiceEvent;
+    if (stage === "listening") return { stage, text: "在听…请说出你的指令" };
+    if (stage === "thinking") return { stage, text: transcript ? `「${transcript}」思考中…` : "思考中…" };
+    if (stage === "speaking") return { stage, text: reply ? `「${reply}」` : "播报中…" };
+    if (message) return { stage: "error", text: message };
+    return null;
+  }, [voiceEvent]);
+
   return (
     <div className={`conversation-workspace${workspaceOpen ? " conversation-workspace--open" : ""}`}
       style={{ "--workspace-panel-width": `${visiblePanelWidth}px` } as CSSProperties}>
@@ -1547,6 +1570,12 @@ export function BubbleWindow({ onWorkspaceState, conversationTitle, navigationRe
         setAwayFromBottom(away);
       }}>
         {historyError && <p role="alert">{historyError} <button type="button" onClick={refreshChatHistory}>重试加载历史</button></p>}
+        {voicePill && (
+          <section className={`voice-assistant-pill voice-assistant-pill--${voicePill.stage}`} role="status" aria-live="polite">
+            <span className="voice-assistant-pill__dot" />
+            <span>{voicePill.text}</span>
+          </section>
+        )}
         <TaskHistory busy={agentBusy} onInspect={(record) => inspectTask(record.requestId)} onResume={resumeTask} onRestart={restartTask} />
         {verificationOf && <section className="task-history" aria-label="只读核对模式">
           <strong>正在只读核对结果</strong>

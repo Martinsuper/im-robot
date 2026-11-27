@@ -44,8 +44,17 @@ for (const key of [
   "NSCalendarsUsageDescription",
   "NSCalendarsFullAccessUsageDescription",
   "NSCalendarsWriteOnlyAccessUsageDescription",
+  "NSMicrophoneUsageDescription",
 ])
   assert.ok(plist(key));
+const entitlements = run("codesign", [
+  "--display", "--entitlements", "-", "--xml", bundle,
+]);
+assert.match(
+  entitlements,
+  /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\s*\/>/,
+  "Signed app must retain the microphone entitlement",
+);
 const executable = path.join(contents, "MacOS/im-robot");
 const architecture = run("file", [executable]);
 assert.ok(

@@ -190,6 +190,39 @@ mod tests {
         }
     }
 
+    /// 诊断工具：对一份 memory.db 副本重放完整 soul 启动链，打印真实失败点。
+    /// 用法：PIKO_SOUL_DB_COPY=<副本路径> cargo test diagnose_soul_boot_chain -- --ignored --nocapture
+    #[test]
+    #[ignore = "diagnostic: requires PIKO_SOUL_DB_COPY pointing at a memory.db copy"]
+    fn diagnose_soul_boot_chain() {
+        let path = std::path::PathBuf::from(std::env::var_os("PIKO_SOUL_DB_COPY").unwrap());
+        let mut conn = Connection::open(&path).unwrap();
+        conn.execute_batch("PRAGMA busy_timeout=5000;").unwrap();
+        let result = migrate(&mut conn).and_then(|()| {
+            super::super::diagnostics::heal_quota_drift(&mut conn)?;
+            let had_delivery = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM soul_quota WHERE last_dispatch_at IS NOT NULL) OR EXISTS(SELECT 1 FROM soul_proactive_ledger WHERE dispatching_at IS NOT NULL)",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|e| e.to_string())?;
+            super::super::proactive::recover_restart(&mut conn, 0)?;
+            super::super::diagnostics::check_ledger(&conn)?;
+            Ok(had_delivery)
+        });
+        eprintln!("soul boot chain result: {result:?}");
+        let version: Option<i64> = conn
+            .query_row(
+                "SELECT version FROM soul_schema WHERE singleton=1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+            .unwrap_or(None);
+        eprintln!("soul_schema.version after chain: {version:?}");
+    }
+
     #[test]
     fn migration_is_idempotent_and_preserves_legacy_data() {
         let mut conn = Connection::open_in_memory().unwrap();

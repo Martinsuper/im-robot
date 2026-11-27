@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   BellRing,
   MessageCircle,
+  Mic,
   PawPrint,
   ShieldCheck,
   Volume2,
@@ -59,6 +60,14 @@ import { isTauriRuntime, runCommand } from "../../app/appRuntime";
  * `useAutoSave` + `update_preferences` / `update_work_rhythm_preferences` /
  * `update_quiet_mode` 那套即时保存。
  */
+
+/** 语音唤醒的预设唤醒词与对应拼音 token（须为唤醒模型 tokens.txt 中的 token）。 */
+const WAKE_WORD_PRESETS = [
+  { word: "你好皮可", tokens: "n ǐ h ǎo p í k ě" },
+  { word: "嗨皮可", tokens: "h āi p í k ě" },
+  { word: "皮可皮可", tokens: "p í k ě p í k ě" },
+];
+
 export function SettingsTab() {
   const toast = useToast();
   const { t } = useTranslation();
@@ -86,6 +95,11 @@ export function SettingsTab() {
   );
   const [savingCommandPermission, setSavingCommandPermission] = useState(false);
   const [autoCheckUpdates, setAutoCheckUpdates] = useState(settings.autoCheckUpdates);
+  const [voiceAssistantEnabled, setVoiceAssistantEnabled] = useState(
+    settings.voiceAssistantEnabled,
+  );
+  const [wakeWordDraft, setWakeWordDraft] = useState(settings.voiceAssistantWakeWord);
+  const [wakeTokensDraft, setWakeTokensDraft] = useState(settings.voiceAssistantWakeTokens);
 
   const [autostartEnabled, setAutostartEnabled] = useState(false);
   const [shortcutDraft, setShortcutDraft] = useState<string | null>(null);
@@ -121,6 +135,9 @@ export function SettingsTab() {
     setQuietMode(settings.quietMode);
     setAgentAutoApproveCommands(settings.agentAutoApproveCommands ?? false);
     setAutoCheckUpdates(settings.autoCheckUpdates);
+    setVoiceAssistantEnabled(settings.voiceAssistantEnabled);
+    setWakeWordDraft(settings.voiceAssistantWakeWord);
+    setWakeTokensDraft(settings.voiceAssistantWakeTokens);
   }, [settings]);
 
   // 语音模型、启动与通知状态。
@@ -433,6 +450,52 @@ export function SettingsTab() {
     }
   }
 
+  /** 「语音唤醒」：开关/唤醒词一次性保存，失败回滚并提示。 */
+  async function updateVoiceAssistant(
+    patch: Partial<{
+      enabled: boolean;
+      wakeWord: string;
+      wakeTokens: string;
+    }>,
+  ) {
+    const enabled = patch.enabled ?? voiceAssistantEnabled;
+    const wakeWord = patch.wakeWord ?? wakeWordDraft;
+    const wakeTokens = patch.wakeTokens ?? wakeTokensDraft;
+    setVoiceAssistantEnabled(enabled);
+    setWakeWordDraft(wakeWord);
+    setWakeTokensDraft(wakeTokens);
+    try {
+      const next = await runCommand(
+        "update_voice_assistant_settings",
+        { enabled, wakeWord, wakeTokens },
+        {
+          ...settings,
+          voiceAssistantEnabled: enabled,
+          voiceAssistantWakeWord: wakeWord,
+          voiceAssistantWakeTokens: wakeTokens,
+        },
+      );
+      applyServer(parseAppSettings(next));
+    } catch (error) {
+      setVoiceAssistantEnabled(settings.voiceAssistantEnabled);
+      setWakeWordDraft(settings.voiceAssistantWakeWord);
+      setWakeTokensDraft(settings.voiceAssistantWakeTokens);
+      toast.error(
+        `${toUserMessage(error, "语音唤醒设置保存失败")}`,
+      );
+    }
+  }
+
+  /** 「试听唤醒」：手动触发一次聆听，免喊唤醒词即可验证麦克风与链路。 */
+  async function triggerVoiceListen() {
+    try {
+      await runCommand("voice_assistant_trigger_listen");
+      toast.success("已触发试听，对着麦克风说点什么");
+    } catch (error) {
+      toast.error(`${toUserMessage(error, "试听触发失败")}`);
+    }
+  }
+
   /** 「关于 → 重新运行引导」。门禁本身在 shell（PanelWindow），这里只负责重置。 */
   async function rerunOnboarding() {
     try {
@@ -617,6 +680,11 @@ export function SettingsTab() {
                               中文优化
                             </span>
                           ) : null}
+                          {model.id === "kws-wenetspeech" ? (
+                            <span className="speech-model-item__badge">
+                              唤醒词
+                            </span>
+                          ) : null}
                         </strong>
                         <span>
                           {model.downloaded
@@ -662,6 +730,122 @@ export function SettingsTab() {
             )}
           </div>
         </details>
+      </SettingsGroup>
+      <SettingsGroup
+        id="voice-assistant"
+        icon={<Mic size={15} />}
+        title="语音唤醒"
+        description="常驻唤醒词监听，喊一声直接对话"
+        status={voiceAssistantEnabled ? `唤醒词「${wakeWordDraft}」` : "已关闭"}
+      >
+        <section className="panel-card">
+          <h2>语音助手</h2>
+          <div className="settings-form">
+            <label className="setting-toggle">
+              <input
+                type="checkbox"
+                checked={voiceAssistantEnabled}
+                onChange={(event) =>
+                  void updateVoiceAssistant({
+                    enabled: event.currentTarget.checked,
+                  })
+                }
+              />
+              <span>开启语音唤醒（将常驻使用麦克风）</span>
+            </label>
+            <p className="settings-note">
+              唤醒词检测完全在本地进行，音频不会上传；关闭开关或暂停主动感知时，麦克风会完全释放。
+            </p>
+            <label>
+              <span>唤醒词</span>
+              <select
+                value={
+                  WAKE_WORD_PRESETS.some((preset) => preset.word === wakeWordDraft)
+                    ? wakeWordDraft
+                    : "custom"
+                }
+                disabled={!voiceAssistantEnabled}
+                onChange={(event) => {
+                  const preset = WAKE_WORD_PRESETS.find(
+                    (item) => item.word === event.currentTarget.value,
+                  );
+                  if (preset) {
+                    void updateVoiceAssistant({
+                      wakeWord: preset.word,
+                      wakeTokens: preset.tokens,
+                    });
+                  } else {
+                    // 自定义：保留当前值供编辑，失焦时保存。
+                    setWakeWordDraft("");
+                    setWakeTokensDraft("");
+                  }
+                }}
+              >
+                {WAKE_WORD_PRESETS.map((preset) => (
+                  <option value={preset.word} key={preset.word}>
+                    {preset.word}
+                  </option>
+                ))}
+                <option value="custom">自定义…</option>
+              </select>
+            </label>
+            {!WAKE_WORD_PRESETS.some((preset) => preset.word === wakeWordDraft) ? (
+              <>
+                <label>
+                  <span>唤醒词文本</span>
+                  <input
+                    value={wakeWordDraft}
+                    maxLength={12}
+                    disabled={!voiceAssistantEnabled}
+                    onBlur={() =>
+                      void updateVoiceAssistant({
+                        wakeWord: wakeWordDraft,
+                        wakeTokens: wakeTokensDraft,
+                      })
+                    }
+                    onChange={(event) => setWakeWordDraft(event.currentTarget.value)}
+                  />
+                </label>
+                <label>
+                  <span>拼音 token（声调符号，空格分隔）</span>
+                  <input
+                    value={wakeTokensDraft}
+                    maxLength={64}
+                    disabled={!voiceAssistantEnabled}
+                    placeholder="n ǐ h ǎo p í k ě"
+                    onBlur={() =>
+                      void updateVoiceAssistant({
+                        wakeWord: wakeWordDraft,
+                        wakeTokens: wakeTokensDraft,
+                      })
+                    }
+                    onChange={(event) =>
+                      setWakeTokensDraft(event.currentTarget.value)
+                    }
+                  />
+                </label>
+                <p className="settings-note">
+                  自定义唤醒词需要按拼音声调符号填写 token（如 ǐ、ǎo、í、ě），
+                  无效 token 会在状态里提示。
+                </p>
+              </>
+            ) : null}
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="button-secondary"
+                disabled={!voiceAssistantEnabled}
+                onClick={() => void triggerVoiceListen()}
+              >
+                试听唤醒
+              </button>
+            </div>
+            <p className="settings-note">
+              唤醒需要「唤醒词检测（中文）」模型，可在上方「语音输入」中下载；
+              语音回复跟随「语音输出」设置，Piko 回答与任务记录保存在对话窗口。
+            </p>
+          </div>
+        </section>
       </SettingsGroup>
       <SettingsGroup
         id="notify"
