@@ -58,11 +58,16 @@ if (!existsSync(binary) || !existsSync(binaryStamp) || readFileSync(binaryStamp,
   try {
     const archivePath = path.join(temporary, archiveName);
     writeFileSync(archivePath, archive);
-    const extract = process.platform === "win32"
-      ? spawnSync("powershell.exe", ["-NoProfile", "-Command", "Expand-Archive -LiteralPath $env:PIKO_NODE_ARCHIVE -DestinationPath $env:PIKO_NODE_DEST"], {
-          env: { ...process.env, PIKO_NODE_ARCHIVE: archivePath, PIKO_NODE_DEST: temporary }, stdio: "inherit" })
-      : spawnSync("tar", ["-xzf", archivePath, "-C", temporary], { stdio: "inherit" });
-    if (extract.status !== 0) throw new Error("Unable to extract Node runtime");
+    // Windows 自带的 bsdtar（System32\tar.exe）原生支持 zip；不再走
+    // Expand-Archive —— windows-latest 镜像上的 Microsoft.PowerShell.Archive
+    // 在新版 .NET 下调用 3 参 ExtractToDirectory 重载失败，导致解包后
+    // node.exe 缺失（ENOENT）。保留 Expand-Archive 仅作 tar 不可用时的兜底。
+    let extract = spawnSync("tar", [process.platform === "win32" ? "-xf" : "-xzf", archivePath, "-C", temporary], { stdio: "inherit" });
+    if (extract.status !== 0 && process.platform === "win32") {
+      extract = spawnSync("powershell.exe", ["-NoProfile", "-Command", "Expand-Archive -LiteralPath $env:PIKO_NODE_ARCHIVE -DestinationPath $env:PIKO_NODE_DEST"], {
+        env: { ...process.env, PIKO_NODE_ARCHIVE: archivePath, PIKO_NODE_DEST: temporary }, stdio: "inherit" });
+    }
+    if (extract.status !== 0 || extract.error) throw new Error("Unable to extract Node runtime");
     cpSync(path.join(temporary, distribution, process.platform === "win32" ? "node.exe" : "bin/node"), binary);
     cpSync(path.join(temporary, distribution, "LICENSE"), path.join(destination, "NODE-LICENSE.txt"));
     chmodSync(binary, 0o755);
