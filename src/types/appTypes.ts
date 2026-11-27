@@ -41,6 +41,12 @@ export interface AppSettings {
   skippedUpdateVersion: string;
   /** 全局快捷键（打开对话窗口）。格式如 CmdOrCtrl+Shift+Space。 */
   globalShortcut: string;
+  /** 常驻语音助手：开启后本地持续监听唤醒词（纯本地、不上传音频）。 */
+  voiceAssistantEnabled: boolean;
+  /** 唤醒词显示文本，如「你好皮可」。 */
+  voiceAssistantWakeWord: string;
+  /** 唤醒词拼音 token 序列（声调符号形式，空格分隔）。 */
+  voiceAssistantWakeTokens: string;
   onboardingCompleted: boolean;
   onboardingVersion: string;
 }
@@ -63,6 +69,14 @@ export interface SpeechModelDownloadProgress {
   totalBytes?: number;
   percent?: number;
   completed: boolean;
+}
+
+/** 语音助手状态事件（voice-assistant-state）：stage ∈ idle/listening/thinking/speaking。 */
+export interface VoiceAssistantEvent {
+  stage: string;
+  transcript: string;
+  reply: string;
+  message: string;
 }
 
 export type UpdateStatus = T_app_updates_UpdateStatus_Output;

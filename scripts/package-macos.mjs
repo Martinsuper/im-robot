@@ -47,12 +47,26 @@ function walk(dir) {
 walk(app);
 if (!binaries.length) throw new Error('No Mach-O binaries found');
 for (const file of [...binaries, ...nested, app]) {
-  run('codesign', ['--force', '--sign', '-', '--timestamp=none', file]);
+  const args = ['--force', '--sign', '-', '--timestamp=none', '--preserve-metadata=entitlements'];
+  if (file === app) {
+    // Re-signing the outer bundle also replaces the main executable's signature.
+    // Keep the Tauri microphone entitlement and hardened-runtime setting.
+    if (config.bundle.macOS.hardenedRuntime !== false) args.push('--options', 'runtime');
+    if (config.bundle.macOS.entitlements) {
+      args.push('--entitlements', path.resolve(root, 'src-tauri', config.bundle.macOS.entitlements));
+    }
+  }
+  run('codesign', [...args, file]);
 }
 run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', app]);
 // Explicitly verify resource executables too; they are sealed as resources by
 // the outer bundle rather than necessarily treated as nested code.
 for (const file of binaries) run('codesign', ['--verify', '--strict', file]);
+// Local install/test cycles need the final signatures, without recreating archives.
+if (process.argv.includes('--sign-only')) {
+  console.log(`Signed and verified ${binaries.length} Mach-O files: ${app}`);
+  process.exit(0);
+}
 
 const stage = mkdtempSync(path.join(tmpdir(), 'piko-package-'));
 try {

@@ -76,6 +76,27 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=UserNotifications");
         println!("cargo:rustc-link-lib=framework=AppKit");
         println!("cargo:rerun-if-changed=src/soul_notifications.m");
+        let mic_obj = out_dir.join("mic_permission.o");
+        let status = std::process::Command::new("clang")
+            .args(["-c", "-fobjc-arc", "-fblocks", "-o"])
+            .arg(&mic_obj)
+            .arg("src/mic_permission.m")
+            .status()
+            .expect("compile mic permission");
+        assert!(status.success(), "compile mic permission failed");
+        let mic_lib = out_dir.join("libmic_permission.a");
+        let _ = std::fs::remove_file(&mic_lib);
+        let status = std::process::Command::new("ar")
+            .arg("rcs")
+            .arg(&mic_lib)
+            .arg(&mic_obj)
+            .status()
+            .expect("archive mic permission");
+        assert!(status.success(), "archive mic permission failed");
+        println!("cargo:rustc-link-lib=static=mic_permission");
+        println!("cargo:rustc-link-lib=framework=AVFoundation");
+        println!("cargo:rustc-link-lib=framework=Foundation");
+        println!("cargo:rerun-if-changed=src/mic_permission.m");
     }
 }
 

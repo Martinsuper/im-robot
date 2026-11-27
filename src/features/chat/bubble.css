@@ -250,3 +250,40 @@
   cursor: pointer;
 }
 .bubble-steer-mode button.is-active { color: #fff; border-color: #58796d; background: #58796d; }
+
+/* 语音助手状态胶囊：跟随 thread 滚动置顶，短暂展示唤醒/转写/播报进度。 */
+.voice-assistant-pill {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin: 0 auto 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 92%;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--piko-line);
+  background: var(--piko-paper);
+  font-size: 12px;
+  color: var(--piko-ink);
+  overflow-wrap: anywhere;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+.voice-assistant-pill__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--piko-accent);
+}
+.voice-assistant-pill--listening .voice-assistant-pill__dot,
+.voice-assistant-pill--speaking .voice-assistant-pill__dot {
+  animation: voice-pill-pulse 1.2s ease-in-out infinite;
+}
+.voice-assistant-pill--error .voice-assistant-pill__dot { background: #c2554f; }
+@keyframes voice-pill-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
