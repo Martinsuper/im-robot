@@ -1,4 +1,5 @@
 import { agentRuntimeFiles } from "./agent-runtime-files.mjs";
+import { extractNodeArchive } from "./node-archive.mjs";
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -58,12 +59,8 @@ if (!existsSync(binary) || !existsSync(binaryStamp) || readFileSync(binaryStamp,
   try {
     const archivePath = path.join(temporary, archiveName);
     writeFileSync(archivePath, archive);
-    const extract = process.platform === "win32"
-      ? spawnSync("powershell.exe", ["-NoProfile", "-Command", "Expand-Archive -LiteralPath $env:PIKO_NODE_ARCHIVE -DestinationPath $env:PIKO_NODE_DEST"], {
-          env: { ...process.env, PIKO_NODE_ARCHIVE: archivePath, PIKO_NODE_DEST: temporary }, stdio: "inherit" })
-      : spawnSync("tar", ["-xzf", archivePath, "-C", temporary], { stdio: "inherit" });
-    if (extract.status !== 0) throw new Error("Unable to extract Node runtime");
-    cpSync(path.join(temporary, distribution, process.platform === "win32" ? "node.exe" : "bin/node"), binary);
+    const extracted = extractNodeArchive({ archivePath, destination: temporary, distribution });
+    cpSync(extracted, binary);
     cpSync(path.join(temporary, distribution, "LICENSE"), path.join(destination, "NODE-LICENSE.txt"));
     chmodSync(binary, 0o755);
     writeFileSync(binaryStamp, nodeVersion);
