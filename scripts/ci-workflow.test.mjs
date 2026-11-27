@@ -27,6 +27,10 @@ test("native cache regression tests run and stale caches use a new namespace", (
   assert.match(workflow, /key: verify-native-cache-v2-\$\{\{ matrix\.os \}\}/);
 });
 
+test("Windows Agent runtime extraction regression test runs in CI", () => {
+  assert.match(frontend, /node --test scripts\/node-archive\.test\.mjs/);
+});
+
 test("Windows MSVC embeds Common Controls v6 in library test executables too", () => {
   const build = readFileSync(new URL("../src-tauri/build.rs", import.meta.url), "utf8");
   const manifest = readFileSync(new URL("../src-tauri/windows.manifest", import.meta.url), "utf8");
