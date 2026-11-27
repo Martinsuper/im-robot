@@ -34,6 +34,7 @@ jobs:
       - run: node --test scripts/window-config.test.mjs
       - run: node --test scripts/ci-workflow.test.mjs
       - run: node --test scripts/sherpa-cache.test.mjs
+      - run: node --test scripts/node-archive.test.mjs
       - run: node --test scripts/playwright-browser-probe.test.mjs
       - run: npm audit
       - run: cargo test --manifest-path tools/contracts/Cargo.toml
