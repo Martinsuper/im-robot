@@ -356,6 +356,10 @@ function PetWindowContent() {
       dispatch({ type: "CHAT_COMPLETED" });
       showCompanionNotice("focus_completed", "做完啦，来看看结果。", 3200);
     }
+    // P0-2：定时委托排队重试时给出「排队中」反馈，不抢占任务状态机。
+    if (event.type === "task" && event.phase === "queued") {
+      showCompanionNotice("task_queued", "任务在排队，空出位置就自动开始。", 3200);
+    }
   }, [quietMode, bondTier]);
 
   useEffect(() => {

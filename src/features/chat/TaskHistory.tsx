@@ -1,5 +1,6 @@
 import { TaskDiagnostics } from "./TaskDiagnostics";
 import { TaskStepsPanel } from "./TaskStepsPanel";
+import { TaskLogPanel } from "./AgentActivity";
 import { useEffect, useState } from "react";
 import { isTauriRuntime, runCommand } from "../app/appRuntime";
 import { toUserMessage } from "../../lib/errors";
@@ -55,6 +56,7 @@ export function TaskHistory({ busy, onInspect, onResume, onRestart }: { busy: bo
         {step.tool} · {step.status === "completed" ? "工具已返回" : labels[step.status] || step.status}
       </li>)}</ol> : <p>没有已记录的工具步骤；这不代表操作一定未发生。</p>}
       <TaskStepsPanel requestId={record.requestId} />
+      <TaskLogPanel requestId={record.requestId} />
       {["interrupted", "failed", "cancelled"].includes(record.status) && <TaskDiagnostics terminal={{ requestId: record.requestId, status: record.status === "cancelled" ? "cancelled" : "failed" }} />}
     </section>;
     })}

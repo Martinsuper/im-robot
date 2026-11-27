@@ -258,7 +258,11 @@ P0、P1、P2 已全部落地（契约见 [doc/design/18](../design/18-delegated-
 
 遗留边界（可接受，出现需求再升级）：
 
-- `agent_read_task_log` 依赖内存快照定位 workspace，应用重启后无法读取旧任务日志（需把 workspace 持久化进 journal）。
-- "重新发起"依赖内存快照的 prompt/cwd，重启后降级为提示（journal 按设计不复制 prompt）。
-- 定时任务到期遇配额/目录占用时优雅失败，无排队重试。
-- 高危命令拦截为尽力而为启发式；Windows 系统路径未覆盖。
+- 定时任务到期遇确定性错误（模型未配置、参数非法等）仍直接失败；仅配额/目录占用排队重试。
+- 高危命令拦截为尽力而为启发式；Windows 已覆盖 cmd/PowerShell 常见破坏性命令与系统路径，仍无法穷举脚本内动态拼接。
+
+1.4.0（P0）更新：
+
+- `TaskRecord` 持久化 `workspace`，`agent_read_task_log` 在内存快照缺失时回退 journal，重启后仍可读取旧任务日志。
+- 委托任务（coding）持久化 `restartPrompt`（上限 20k 字符），"重新发起"重启后不再降级；仍不落工具参数、输出或凭据。
+- 定时委托因并发配额/目录占用失败时进入 `queued`，按 30/60/120/240/300 秒退避有序重试，最多 5 次后落 `failed` 并注明原因；宠物侧新增 `phase=queued` 反馈。

@@ -32,6 +32,9 @@ export type ScheduledTaskRecord = {
   workspace?: string;
   scheduledAt?: unknown;
   status?: string;
+  /** P0-2：排队重试状态（queued）下的原因与已尝试次数。 */
+  reason?: string | null;
+  attempts?: number;
 };
 
 /** 任务日志（<workspace>/.piko/task-<requestId>.md，上限 256KB 截断）。 */
