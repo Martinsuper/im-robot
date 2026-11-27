@@ -60,7 +60,7 @@ assert(start >= 0, 'Application bootstrap must register its IPC commands');
 const end = bootstrap.indexOf('])', start);
 assert(end > start, 'IPC registry must be complete');
 const entries = bootstrap.slice(start + marker.length, end)
-  .replace(/\/\/[^\n]*/g, '').split(',').map(entry => entry.trim()).filter(Boolean);
+  .replace(/\/\/[^\n]*/g, '').replace(/#\[[^\]]+\]/g, '').split(',').map(entry => entry.trim()).filter(Boolean);
 assert(entries.length > 0, 'IPC registry must not be empty');
 for (const entry of entries) {
   assert.match(entry, /^\w+(?:::\w+)+$/, `IPC command must name its owning module: ${entry}`);
