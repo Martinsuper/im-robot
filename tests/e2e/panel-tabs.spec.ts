@@ -76,7 +76,7 @@ test("records compose on demand and do not cover memory or chat history", async 
   await expect(page.locator(".records-composer")).toHaveCount(0);
 });
 
-test("settings merges to four closed groups with one complete-backup entry", async ({
+test("settings merges to five closed groups with one complete-backup entry", async ({
   page,
 }) => {
   await page.goto("/?view=panel");
@@ -88,7 +88,13 @@ test("settings merges to four closed groups with one complete-backup entry", asy
     page.locator(
       ".tab--settings > .settings-group > summary > .settings-group__title",
     ),
-  ).toHaveText(["日常与外观", "AI 与对话", "提醒与陪伴", "系统与数据"]);
+  ).toHaveText([
+    "日常与外观",
+    "AI 与对话",
+    "语音唤醒",
+    "提醒与陪伴",
+    "系统与数据",
+  ]);
   await expect(page.locator("details.settings-group[open]")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "保存人格", exact: true }),
