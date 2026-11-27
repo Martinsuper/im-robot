@@ -314,7 +314,10 @@ fn persisted_baselines_survive_database_reopening() {
     synchronize(&db, &s).unwrap();
     let path = file(&s, &db, "m");
     let disk = dir.path().join("memory.db");
-    db.0.lock().unwrap().backup("main", &disk, None).unwrap();
+    db.0.lock()
+        .unwrap()
+        .backup("main", &disk, None::<fn(rusqlite::backup::Progress)>)
+        .unwrap();
     drop(db);
     replace(&path, "重启前", "重启后外部编辑");
     let reopened = MemoryDb(crate::data_gate::DataMutex::new(

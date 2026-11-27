@@ -118,7 +118,11 @@ async fn repository_documents_retrieval_and_isolation() {
     let database_file = temporary.path().join("evaluation.db");
     db.0.lock()
         .unwrap()
-        .backup("main", &database_file, None)
+        .backup(
+            "main",
+            &database_file,
+            None::<fn(rusqlite::backup::Progress)>,
+        )
         .unwrap();
     drop(db);
     let db = MemoryDb(crate::data_gate::DataMutex::new(

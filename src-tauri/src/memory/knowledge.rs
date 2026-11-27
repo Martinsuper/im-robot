@@ -1241,7 +1241,10 @@ mod tests {
         assert!(entries(&db, "", Some("another-project"))
             .unwrap()
             .is_empty());
-        db.0.lock().unwrap().backup("main", &db_path, None).unwrap();
+        db.0.lock()
+            .unwrap()
+            .backup("main", &db_path, None::<fn(rusqlite::backup::Progress)>)
+            .unwrap();
         drop(db);
         let reopened = MemoryDb(crate::data_gate::DataMutex::new(
             Connection::open(&db_path).unwrap(),
@@ -1813,7 +1816,10 @@ mod conversation_tests {
         }
         bind_conversation(&db, "chat", "r1", Some("piko")).unwrap();
         let path = dir.path().join("memory.db");
-        db.0.lock().unwrap().backup("main", &path, None).unwrap();
+        db.0.lock()
+            .unwrap()
+            .backup("main", &path, None::<fn(rusqlite::backup::Progress)>)
+            .unwrap();
         drop(db);
         let db = Arc::new(MemoryDb(crate::data_gate::DataMutex::new(
             Connection::open(path).unwrap(),
