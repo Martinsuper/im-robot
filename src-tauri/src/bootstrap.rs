@@ -241,6 +241,7 @@ pub(crate) fn run() {
             typing_activity::watch_typing_rollover(app.handle());
             watch_work_rhythm(app.handle());
             crate::app_updates::watch_update_checks(app.handle());
+            crate::voice_assistant::watch_voice_assistant(app.handle());
             crate::conversation_windows::restore(app.handle());
             crate::devices::restore_device_bridge(app.handle());
             Ok(())
@@ -342,10 +343,13 @@ pub(crate) fn run() {
             speech::get_speech_model_status,
             speech::download_speech_model,
             speech::transcribe_voice_input,
+            crate::voice_assistant::commands::get_voice_assistant_status,
+            crate::voice_assistant::commands::voice_assistant_trigger_listen,
             settings::commands::update_html_preview_enabled,
             settings::commands::update_agent_auto_approve_commands,
             settings::commands::update_auto_check_updates,
             settings::commands::update_skipped_update_version,
+            settings::commands::update_voice_assistant_settings,
             companion::generate_pet_companion_response,
             providers::commands::list_models,
             agent::agent_start,

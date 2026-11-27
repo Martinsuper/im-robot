@@ -272,6 +272,9 @@ export const defaultAppSettings: AppSettings = {
   autoCheckUpdates: true,
   skippedUpdateVersion: "",
   globalShortcut: "CmdOrCtrl+Shift+Space",
+  voiceAssistantEnabled: false,
+  voiceAssistantWakeWord: "你好皮可",
+  voiceAssistantWakeTokens: "n ǐ h ǎo p í k ě",
   onboardingCompleted: false,
   onboardingVersion: "",
 };

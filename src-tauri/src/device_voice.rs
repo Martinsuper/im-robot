@@ -285,7 +285,7 @@ async fn turn(
         tx,
         cancel,
         decisions,
-        device_confirmation,
+        device_confirmation.into(),
     )
     .await?;
     if cancel.is_cancelled() {
