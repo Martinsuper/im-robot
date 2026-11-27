@@ -323,7 +323,7 @@ fn capture(
         if entry.root == "sqlite" {
             db.0.lock()
                 .map_err(error)?
-                .backup("main", &target, None)
+                .backup("main", &target, None::<fn(rusqlite::backup::Progress)>)
                 .map_err(error)?;
         } else if entry.path == "app-settings.json" {
             let mut settings: crate::app_settings::AppSettings =

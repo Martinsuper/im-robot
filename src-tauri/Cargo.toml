@@ -60,12 +60,15 @@ tauri-plugin-autostart = "^2"
 xcap = "0.9.8"
 base64 = "0.22"
 tauri-plugin-dialog = "^2"
-rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+# rusqlite 0.41 起默认开启 wasm 版 sqlite（sqlite-wasm-rs），桌面端只用 bundled C SQLite：
+# 显式关闭默认特性，保持与 0.37 一致的 feature 集合（cache/bundled/backup）；
+# fallible_uint 恢复 u64/usize 的 ToSql/FromSql（0.41 起转为可选特性，越界时报错而非截断）。
+rusqlite = { version = "0.41", default-features = false, features = ["bundled", "backup", "cache", "fallible_uint"] }
 chrono = "0.4"
 chrono-tz = "0.10"
 iana-time-zone = "0.1"
-wasmtime = { version = "50.0.1", optional = true }
-wasmtime-wasi = { version = "50.0.1", optional = true }
+wasmtime = { version = "50.0.3", optional = true }
+wasmtime-wasi = { version = "50.0.3", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3"
