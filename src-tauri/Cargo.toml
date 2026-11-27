@@ -45,7 +45,7 @@ rodio = { version = "=0.21.1", default-features = false, features = ["playback"]
 # 常驻语音助手的麦克风采集（rodio 已传递依赖 cpal 0.16，这里显式声明不引入第二份编译）。
 cpal = "0.16"
 sherpa-onnx = { version = "1.13.2", default-features = false, features = ["static"], optional = true }
-bzip2 = { version = "0.4", optional = true }
+bzip2 = { version = "0.6", optional = true }
 tar = { version = "0.4", optional = true }
 tauri-plugin-notification = "^2"
 tauri-plugin-autostart = "^2"
