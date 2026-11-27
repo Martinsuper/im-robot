@@ -814,6 +814,7 @@ pub(crate) async fn start_passport_agent(
     request_id: String,
     conversation_id: String,
     prompt: String,
+    voice_confirmation: bool,
 ) -> Result<(), String> {
     let view = crate::conversation_views::conversation_get_view(
         app.clone(),
@@ -846,7 +847,7 @@ pub(crate) async fn start_passport_agent(
         verify_command: None,
         git_mode: None,
     };
-    start_agent(app.clone(), app.state(), input, true).await
+    start_agent_with_voice(app.clone(), app.state(), input, true, voice_confirmation).await
 }
 
 struct WorkspaceDirs {
@@ -1005,6 +1006,7 @@ fn build_model_prompt(
     app: &AppHandle,
     input: &mut AgentStartInput,
     passport: bool,
+    voice_confirmation: bool,
 ) -> Result<(String, String), String> {
     crate::memory::soul::settings::apply_pause_intent(app, &input.prompt);
     let attachments = app.state::<crate::attachments::TextAttachmentStore>();
@@ -1029,7 +1031,17 @@ fn build_model_prompt(
         attachment.as_ref(),
     )?;
     if passport {
-        model_prompt.push_str("\n[可信语音通道提示] 用户正在通过 Passport 提出请求。需要操作时调用实际工具，遵循现有确认流程；日程、提醒、备忘录和专注必须使用对应业务工具，不要为这些操作选择目录或调用文件命令。生成新文件时通过 piko_select_workspace 的 generated-files 用途使用默认 Piko 文件夹，无需用户选目录；读取或修改现有文件、项目时使用 existing-files 用途在桌面选择目标。文件/命令的操作授权仍在桌面完成。不要把尚待确认的操作说成完成。最终回复使用简短自然语言，尽量不超过120个汉字，适合朗读，不要使用表格或代码块；详细结果保留在桌面任务记录中。专注和休息使用 piko.focus 工具。");
+        let channel = if voice_confirmation {
+            "免手操作的桌面语音助手"
+        } else {
+            "Passport"
+        };
+        model_prompt.push_str(&format!("\n[可信语音通道提示] 用户正在通过{channel}提出请求。需要操作时调用实际工具，遵循现有确认流程；日程、提醒、备忘录和专注必须使用对应业务工具，不要为这些操作选择目录或调用文件命令。生成新文件时通过 piko_select_workspace 的 generated-files 用途使用默认 Piko 文件夹，无需用户选目录；读取或修改现有文件、项目时使用 existing-files 用途在桌面选择目标。不要把尚待确认的操作说成完成。最终回复使用简短自然语言，尽量不超过120个汉字，适合朗读，不要使用表格或代码块；详细结果保留在任务记录中。专注和休息使用 piko.focus 工具。"));
+        if voice_confirmation {
+            model_prompt.push_str("\n需要确认时直接调用工具生成草稿，由语音通道完整播报并收取确认或取消；文件及命令的授权同样由语音通道处理，不要求用户点击卡片。不要在调用工具前重复询问确认。未确认不能执行，也不能声称执行成功。最终口头回复尽量不超过80个汉字，直接说明结果。");
+        } else {
+            model_prompt.push_str("文件/命令的操作授权仍在桌面完成。");
+        }
     }
     if let Some(id) = &input.proactive_message_id {
         let db = app.state::<Arc<crate::memory::MemoryDb>>();
@@ -1248,8 +1260,18 @@ fn build_business_tools(app: &AppHandle, unified: bool, read_only: bool, resumin
 pub(crate) async fn start_agent(
     app: AppHandle,
     runtime: State<'_, AgentRuntime>,
+    input: AgentStartInput,
+    passport: bool,
+) -> Result<(), String> {
+    start_agent_with_voice(app, runtime, input, passport, false).await
+}
+
+async fn start_agent_with_voice(
+    app: AppHandle,
+    runtime: State<'_, AgentRuntime>,
     mut input: AgentStartInput,
     passport: bool,
+    voice_confirmation: bool,
 ) -> Result<(), String> {
     if !valid_id(&input.request_id) || !valid_id(&input.conversation_id) {
         return Err("无效的任务标识".into());
@@ -1273,7 +1295,8 @@ pub(crate) async fn start_agent(
         data_dir,
         cwd,
     } = resolve_workspace_dirs(&app, &input)?;
-    let (model_prompt, history_prompt) = build_model_prompt(&app, &mut input, passport)?;
+    let (model_prompt, history_prompt) =
+        build_model_prompt(&app, &mut input, passport, voice_confirmation)?;
     let images = collect_screenshot_images(&app, &mut input)?;
     let slot = runtime.0.lock().await;
     validate_task_start(
@@ -2288,7 +2311,7 @@ pub async fn agent_confirm_action(
     emit(
         &app,
         &request_id,
-        json!({"type":"action-resolved", "allowed":true}),
+        json!({"type":"action-resolved", "id":id, "allowed":true}),
     );
     let prepare = (|| -> Result<_, String> {
         let draft = app
@@ -2404,11 +2427,11 @@ pub async fn agent_reject_action(
         .await
         .remove(&id)
         .ok_or("确认卡片已失效")?;
-    crate::actions::commands::reject_chat_action(app.state(), id)?;
+    crate::actions::commands::reject_chat_action(app.state(), id.clone())?;
     emit(
         &app,
         &request_id,
-        json!({"type":"action-resolved", "allowed":false}),
+        json!({"type":"action-resolved", "id":id, "allowed":false}),
     );
     write_command(
         &task.stdin,

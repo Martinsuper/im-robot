@@ -25,6 +25,101 @@ pub(crate) struct Decision {
     pub nonce: String,
     pub allowed: bool,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConfirmationMode {
+    Desktop,
+    Device,
+    Voice,
+}
+impl From<bool> for ConfirmationMode {
+    fn from(enabled: bool) -> Self {
+        if enabled {
+            Self::Device
+        } else {
+            Self::Desktop
+        }
+    }
+}
+
+/// Voice must review the complete operation, without Passport font limits or truncation.
+fn voice_preview(heading: &str, arguments: &Value) -> (String, bool) {
+    let details = serde_json::to_string_pretty(arguments).unwrap_or_default();
+    reviewable_voice_message(format!("{heading}\n参数：{details}"))
+}
+fn reviewable_voice_message(message: String) -> (String, bool) {
+    if message.chars().count() > 360
+        || message.chars().any(|c| c.is_control() && c != '\n')
+        || crate::speech::text_for_speech(&message) != message
+    {
+        (
+            "操作内容过长或包含无法完整朗读的字符，本次不通过语音执行。".into(),
+            true,
+        )
+    } else {
+        (message, false)
+    }
+}
+
+fn action_preview(draft: &Value, mode: ConfirmationMode) -> (String, bool) {
+    if mode != ConfirmationMode::Voice {
+        return preview(draft, mode == ConfirmationMode::Device);
+    }
+    let summary = draft["summary"].as_str().unwrap_or("待确认操作");
+    let heading = if matches!(
+        draft["pluginId"].as_str(),
+        Some("piko.calendar" | "piko.reminders" | "piko.memos" | "piko.focus")
+    ) {
+        summary.to_string()
+    } else {
+        format!(
+            "{summary}。操作：{}，{}",
+            draft["pluginId"].as_str().unwrap_or("未知应用"),
+            draft["toolName"].as_str().unwrap_or("未知操作")
+        )
+    };
+    if draft["pluginId"] == "piko.calendar" && draft["toolName"] == "create_event" {
+        if let Some(calendar) = voice_calendar_preview(&draft["arguments"]) {
+            // Calendar preview preserves extra fields as well as exact time/offset.
+            return reviewable_voice_message(calendar);
+        }
+    }
+    voice_preview(&heading, &draft["arguments"])
+}
+
+fn voice_calendar_preview(args: &Value) -> Option<String> {
+    use chrono::Timelike;
+    let title = args["title"].as_str()?;
+    let start = chrono::DateTime::parse_from_rfc3339(args["startAt"].as_str()?).ok()?;
+    let end = chrono::DateTime::parse_from_rfc3339(args["endAt"].as_str()?).ok()?;
+    let time = |date: chrono::DateTime<chrono::FixedOffset>| {
+        let mut text = date.format("%Y年%-m月%-d日%-H点%M分").to_string();
+        if date.second() != 0 || date.nanosecond() != 0 {
+            text.push_str(&date.format("%S%.f秒").to_string());
+        }
+        if date.offset().local_minus_utc() == 8 * 3600 {
+            text.push_str("，北京时间");
+        } else {
+            text.push_str(&format!("，UTC时区{}", date.offset()));
+        }
+        text
+    };
+    let mut text = format!(
+        "创建日程。标题：{title}。开始：{}。结束：{}。",
+        time(start),
+        time(end)
+    );
+    let mut remaining = args.as_object()?.clone();
+    for key in ["title", "startAt", "endAt"] {
+        remaining.remove(key);
+    }
+    if !remaining.is_empty() {
+        text.push_str(&format!(
+            "其他参数：{}",
+            serde_json::to_string(&remaining).ok()?
+        ));
+    }
+    Some(text)
+}
 #[derive(Clone)]
 enum Kind {
     Action(String),
@@ -35,6 +130,13 @@ struct Pending {
     card: Confirmation,
     kind: Kind,
     since: Instant,
+}
+fn take_decision(pending: &mut VecDeque<Pending>, decision: &Decision) -> Option<Pending> {
+    pending.pop_front_if(|p| {
+        (!p.card.desktop_only || !decision.allowed)
+            && p.card.nonce == decision.nonce
+            && p.since.elapsed() <= Duration::from_secs(120)
+    })
 }
 fn identifiers(device: &str, session: Option<&str>, turn: &str) -> (String, String) {
     let context = session
@@ -204,7 +306,7 @@ pub(crate) async fn run(
     tx: &Sender<Update>,
     cancel: &CancellationToken,
     mut decisions: mpsc::Receiver<Decision>,
-    device_confirmation: bool,
+    confirmation_mode: ConfirmationMode,
 ) -> Result<String, String> {
     let DeviceTurn {
         device,
@@ -213,6 +315,14 @@ pub(crate) async fn run(
         prompt,
     } = input;
     let (conversation, request) = identifiers(device, session, turn);
+    let mut workspace = crate::conversation_views::conversation_get_view(
+        app.clone(),
+        app.state(),
+        conversation.clone(),
+    )
+    .ok()
+    .map(|view| view.cwd)
+    .filter(|cwd| !cwd.trim().is_empty());
     let (events_tx, mut events) = mpsc::channel::<Value>(128);
     let overflow = Arc::new(AtomicBool::new(false));
     let overflow_event = overflow.clone();
@@ -234,9 +344,15 @@ pub(crate) async fn run(
         request: request.clone(),
         finished: false,
     };
-    crate::agent::start_passport_agent(app.clone(), request.clone(), conversation.clone(), prompt)
-        .await
-        .map_err(|_| "任务代理未能启动，请在电脑检查模型配置和 Agent 运行时".to_string())?;
+    crate::agent::start_passport_agent(
+        app.clone(),
+        request.clone(),
+        conversation.clone(),
+        prompt,
+        confirmation_mode == ConfirmationMode::Voice,
+    )
+    .await
+    .map_err(|_| "任务代理未能启动，请在电脑检查模型配置和 Agent 运行时".to_string())?;
     let mut pending = VecDeque::<Pending>::new();
     let mut response = String::new();
     let mut timer = tokio::time::interval(Duration::from_millis(250));
@@ -258,11 +374,12 @@ pub(crate) async fn run(
             },
             decision=decisions.recv()=>{
                 let Some(decision)=decision else {return Err("设备确认通道已关闭".into());};
-                if let Some(p) = pending.pop_front_if(|p| !p.card.desktop_only && p.card.nonce==decision.nonce && p.since.elapsed()<=Duration::from_secs(120)) {
+                if let Some(p) = take_decision(&mut pending, &decision) {
                     let _=tx.send(Update::ConfirmationResolved(p.card.nonce.clone()));
                     let _=tx.send(Update::Stage("working"));
                     if let Err(message)=resolve(&app,&request,p.kind,decision.allowed).await {
-                        let _=tx.send(Update::Notice(message)); open_desktop(&app,&conversation).await?;
+                        let _=tx.send(Update::Notice(message));
+                        if confirmation_mode != ConfirmationMode::Voice { open_desktop(&app,&conversation).await?; }
                     }
                     notify_front(&pending,tx);
                 }
@@ -279,19 +396,36 @@ pub(crate) async fn run(
                     "action-proposed"=>{
                         let draft=&event["draft"]; let id=draft["id"].as_str().ok_or("操作确认缺少标识")?.to_owned();
                         if pending.iter().any(|p|matches!(&p.kind,Kind::Action(old) if old==&id)) {continue;}
-                        let (message,desktop_only)=preview(draft,device_confirmation);
+                        let (message,desktop_only)=action_preview(draft,confirmation_mode);
                         pending.push_back(Pending {card:Confirmation {nonce:nonce()?,message,desktop_only},kind:Kind::Action(id),since:Instant::now()});
                         if pending.len()>16 {return Err("待确认操作过多，请在电脑处理".into());}
-                        if desktop_only {open_desktop(&app,&conversation).await?;}
+                        if desktop_only && confirmation_mode != ConfirmationMode::Voice {open_desktop(&app,&conversation).await?;}
                         notify_front(&pending,tx);
                     },
                     "approval"=>{
                         let id=event["approvalId"].as_str().ok_or("授权缺少标识")?.to_owned();
                         if pending.iter().any(|p|matches!(&p.kind,Kind::Approval(old) if old==&id)) {continue;}
-                        pending.push_back(Pending {card:Confirmation {nonce:nonce()?,message:"文件或命令操作需要在电脑查看完整内容并授权。".into(),desktop_only:true},kind:Kind::Approval(id),since:Instant::now()});
-                        notify_front(&pending,tx); if let Err(e)=open_desktop(&app,&conversation).await{let _=tx.send(Update::Notice(e));}
+                        let (message,desktop_only) = if confirmation_mode == ConfirmationMode::Voice {
+                            if let Some(cwd) = workspace.as_deref() {
+                                let tool = match event["tool"].as_str().unwrap_or("未知工具") {
+                                    "bash" | "powershell" => "运行命令",
+                                    "write" => "写入文件",
+                                    "edit" => "修改文件",
+                                    tool => tool,
+                                };
+                                voice_preview(&format!("需要授权：{tool}。工作目录：{cwd}"), &event["arguments"])
+                            } else { ("无法确认文件操作的工作目录，本次不通过语音执行。".into(),true) }
+                        } else { ("文件或命令操作需要在电脑查看完整内容并授权。".into(),true) };
+                        pending.push_back(Pending {card:Confirmation {nonce:nonce()?,message,desktop_only},kind:Kind::Approval(id),since:Instant::now()});
+                        notify_front(&pending,tx);
+                        if confirmation_mode != ConfirmationMode::Voice {
+                            if let Err(e)=open_desktop(&app,&conversation).await{let _=tx.send(Update::Notice(e));}
+                        }
                     },
                     "workspace-required"=>{
+                        if confirmation_mode == ConfirmationMode::Voice {
+                            return Err("这项操作需要选择本地目录，当前语音任务已停止，未批准文件操作。".into());
+                        }
                         if !pending.iter().any(|p|matches!(p.kind,Kind::Workspace)) {
                             pending.push_back(Pending {card:Confirmation {nonce:nonce()?,message:"请在电脑的 Passport 语音任务窗口中选择工作目录。".into(),desktop_only:true},kind:Kind::Workspace,since:Instant::now()});
                             notify_front(&pending,tx); if let Err(e)=open_desktop(&app,&conversation).await{let _=tx.send(Update::Notice(e));}
@@ -302,6 +436,9 @@ pub(crate) async fn run(
                     let _=tx.send(Update::Notice("电脑端已更新任务要求，旧确认已失效。".into())); notify_front(&pending,tx);
                     },
                     "action-resolved"|"approval-resolved"|"approval-expired"|"workspace-resolved"=>{
+                        if event["type"] == "workspace-resolved" {
+                            workspace = event["cwd"].as_str().map(str::to_owned);
+                        }
                         pending.retain(|p|{
                         if resolved(&p.kind,&event){let _=tx.send(Update::ConfirmationResolved(p.card.nonce.clone()));false}else{true}
                     }); notify_front(&pending,tx);
@@ -324,6 +461,62 @@ pub(crate) async fn run(
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn voice_review_preserves_full_calendar_details_without_passport_font_limits() {
+        let draft = json!({"pluginId":"piko.calendar","toolName":"create_event","summary":"创建日程", "arguments":{"title":"𠮷野家聚餐","startAt":"2026-11-09T09:00:30.125+08:00","endAt":"2026-11-09T10:00:00+08:00","location":"会议室","notes":"请带材料"}});
+        let (message, desktop) = action_preview(&draft, ConfirmationMode::Voice);
+        assert!(!desktop);
+        for expected in [
+            "𠮷野家聚餐",
+            "2026年11月9日9点00分30.125秒",
+            "北京时间",
+            "会议室",
+            "请带材料",
+        ] {
+            assert!(message.contains(expected), "missing {expected}: {message}");
+        }
+        assert!(action_preview(&draft, ConfirmationMode::Device).1);
+        assert!(action_preview(&draft, ConfirmationMode::Desktop).1);
+        let mut long = draft.clone();
+        long["arguments"]["notes"] = json!("长".repeat(400));
+        assert!(action_preview(&long, ConfirmationMode::Voice).1);
+        assert!(reviewable_voice_message("标题含有\0控制字符".into()).1);
+        assert!(reviewable_voice_message("标题含有🍎表情".into()).1);
+    }
+    #[test]
+    fn only_current_unexpired_nonce_can_be_approved_and_cannot_be_replayed() {
+        let pending = |nonce: &str, desktop_only: bool, age: u64| Pending {
+            card: Confirmation {
+                nonce: nonce.into(),
+                message: "待确认".into(),
+                desktop_only,
+            },
+            kind: Kind::Action(nonce.into()),
+            since: Instant::now() - Duration::from_secs(age),
+        };
+        let approve = |nonce: &str| Decision {
+            nonce: nonce.into(),
+            allowed: true,
+        };
+        let mut queue = VecDeque::from([pending("first", false, 0), pending("second", false, 0)]);
+        assert!(take_decision(&mut queue, &approve("second")).is_none());
+        assert!(take_decision(&mut queue, &approve("first")).is_some());
+        assert!(take_decision(&mut queue, &approve("first")).is_none());
+        assert!(take_decision(&mut queue, &approve("second")).is_some());
+        queue.push_back(pending("expired", false, 121));
+        assert!(take_decision(&mut queue, &approve("expired")).is_none());
+        queue.clear();
+        queue.push_back(pending("unreviewable", true, 0));
+        assert!(take_decision(&mut queue, &approve("unreviewable")).is_none());
+        assert!(take_decision(
+            &mut queue,
+            &Decision {
+                nonce: "unreviewable".into(),
+                allowed: false
+            }
+        )
+        .is_some());
+    }
     #[test]
     fn complete_business_previews_are_device_reviewable_but_large_or_system_actions_are_not() {
         let small = json!({"pluginId":"piko.reminders","summary":"明天提醒买牛奶","arguments":{"title":"买牛奶","dueAt":"2026-10-25T09:00:00+08:00"}});

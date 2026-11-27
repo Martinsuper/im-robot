@@ -50,6 +50,16 @@ pub(crate) struct AppSettings {
     /// 全局快捷键（02 §3.3 / 06）：打开对话窗口。格式如 "CmdOrCtrl+Shift+Space"。
     #[serde(default = "default_global_shortcut")]
     pub(crate) global_shortcut: String,
+    /// 常驻语音助手总开关。默认关闭：开启后 Piko 会在本地持续监听麦克风检测唤醒词。
+    #[serde(default)]
+    pub(crate) voice_assistant_enabled: bool,
+    /// 唤醒词显示文本，如「你好皮可」。
+    #[serde(default = "default_voice_assistant_wake_word")]
+    pub(crate) voice_assistant_wake_word: String,
+    /// 唤醒词拼音 token 序列（声调符号形式，空格分隔），如 "n ǐ h ǎo p í k ě"。
+    /// 必须由唤醒模型 tokens.txt 中存在的 token 组成。
+    #[serde(default = "default_voice_assistant_wake_tokens")]
+    pub(crate) voice_assistant_wake_tokens: String,
     #[serde(default)]
     pub(crate) onboarding_completed: bool,
     #[serde(default)]
@@ -112,6 +122,9 @@ impl Default for AppSettings {
             agent_tool_timeout_minutes: default_agent_tool_timeout_minutes(),
             agent_auto_resume_enabled: default_agent_auto_resume_enabled(),
             global_shortcut: default_global_shortcut(),
+            voice_assistant_enabled: false,
+            voice_assistant_wake_word: default_voice_assistant_wake_word(),
+            voice_assistant_wake_tokens: default_voice_assistant_wake_tokens(),
             onboarding_completed: false,
             onboarding_version: String::new(),
         }
@@ -132,6 +145,14 @@ fn default_theme() -> String {
 
 fn default_global_shortcut() -> String {
     "CmdOrCtrl+Shift+Space".to_string()
+}
+
+fn default_voice_assistant_wake_word() -> String {
+    "你好皮可".to_string()
+}
+
+fn default_voice_assistant_wake_tokens() -> String {
+    "n ǐ h ǎo p í k ě".to_string()
 }
 
 fn default_agent_tool_timeout_minutes() -> u64 {
