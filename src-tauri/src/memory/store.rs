@@ -65,6 +65,9 @@ pub fn init_memory_db(app: &tauri::AppHandle) -> Result<MemoryDb, String> {
     // Soul failure must preserve the persistent memory database and ordinary chat.
     // Do not initialize soul tables in the volatile fallback below.
     let soul_result = super::soul::store::migrate(&mut conn).and_then(|()| {
+        // 旧版数据可能留下 total_used 与 category_used 求和的漂移；
+        // 先自愈再校验，避免一版历史数据永久封死 soul。
+        super::soul::diagnostics::heal_quota_drift(&mut conn)?;
         let had_delivery = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM soul_quota WHERE last_dispatch_at IS NOT NULL) OR EXISTS(SELECT 1 FROM soul_proactive_ledger WHERE dispatching_at IS NOT NULL)",
             [], |row| row.get::<_, bool>(0),
