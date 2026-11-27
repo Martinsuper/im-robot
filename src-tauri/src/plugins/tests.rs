@@ -145,3 +145,117 @@ fn accepts_only_read_only_declarative_plugins() {
     unsafe_package.manifest.tools[0].risk = "write".to_string();
     assert!(validate_declarative_plugin(&unsafe_package).is_err());
 }
+
+/// `execute_wasm_plugin` 的确定性用例：用 WAT 现场编译极小 WASI 模块，
+/// 覆盖合法 JSON 回传 / 空输出 / 非 JSON 输出 / 模块路径越界四条分支。
+#[cfg(feature = "wasm-plugins")]
+mod wasm_execution_tests {
+    use super::*;
+    use crate::plugins::declarative::execute_wasm_plugin;
+    use serde_json::json;
+    use std::path::Path;
+
+    const ECHO_MODULE: &str = r#"(module
+        (import "wasi_snapshot_preview1" "fd_read" (func $read (param i32 i32 i32 i32) (result i32)))
+        (import "wasi_snapshot_preview1" "fd_write" (func $write (param i32 i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (func (export "_start")
+            ;; 输入缓冲区放在 1024，避免覆盖 0..32 的 iovec/长度 metadata。
+            (i32.store (i32.const 0) (i32.const 1024))
+            (i32.store (i32.const 4) (i32.const 8192))
+            (drop (call $read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))
+            (i32.store (i32.const 16) (i32.const 1024))
+            (i32.store (i32.const 20) (i32.load (i32.const 8)))
+            (drop (call $write (i32.const 1) (i32.const 16) (i32.const 1) (i32.const 24)))
+        ))"#;
+
+    const SILENT_MODULE: &str = r#"(module (func (export "_start")))"#;
+
+    const PLAIN_TEXT_MODULE: &str = r#"(module
+        (import "wasi_snapshot_preview1" "fd_write" (func $write (param i32 i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (data (i32.const 100) "not json")
+        (func (export "_start")
+            (i32.store (i32.const 0) (i32.const 100))
+            (i32.store (i32.const 4) (i32.const 8))
+            (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))
+        ))"#;
+
+    fn package(module: Option<&str>) -> DeclarativePluginPackage {
+        DeclarativePluginPackage {
+            manifest: PluginManifest {
+                id: "piko.external.echo".into(),
+                name: "Echo".into(),
+                version: "1.0.0".into(),
+                description: "deterministic test plugin".into(),
+                tools: vec![PluginToolManifest {
+                    name: "lookup".into(),
+                    description: "echo input".into(),
+                    input_schema: json!({"type": "object"}),
+                    risk: "pure".into(),
+                    confirmation: "never".into(),
+                }],
+            },
+            responses: Default::default(),
+            runtime: Some("wasm".into()),
+            module: module.map(str::to_string),
+        }
+    }
+
+    fn write_module(directory: &Path, name: &str, source: &str) {
+        let bytes = wat::parse_str(source).expect("compile WAT");
+        std::fs::write(directory.join(name), bytes).expect("write wasm module");
+    }
+
+    fn run(package: &DeclarativePluginPackage, directory: &Path) -> Result<Value, String> {
+        let app = tauri::test::mock_app();
+        execute_wasm_plugin(
+            app.handle(),
+            directory,
+            package,
+            "lookup",
+            json!({"value": 42}),
+        )
+    }
+
+    #[test]
+    fn valid_json_stdout_is_returned_verbatim() {
+        let directory = tempfile::tempdir().unwrap();
+        write_module(directory.path(), "plugin.wasm", ECHO_MODULE);
+        let result = run(&package(Some("plugin.wasm")), directory.path()).unwrap();
+        assert_eq!(result["pluginId"], "piko.external.echo");
+        assert_eq!(result["toolName"], "lookup");
+        assert_eq!(result["arguments"]["value"], 42);
+        assert_eq!(result["manifest"]["id"], "piko.external.echo");
+    }
+
+    #[test]
+    fn empty_stdout_yields_a_minimal_success_envelope() {
+        let directory = tempfile::tempdir().unwrap();
+        write_module(directory.path(), "plugin.wasm", SILENT_MODULE);
+        let result = run(&package(Some("plugin.wasm")), directory.path()).unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["pluginId"], "piko.external.echo");
+        assert_eq!(result["toolName"], "lookup");
+        assert_eq!(result["stderr"], "");
+        assert!(result.get("raw").is_none());
+    }
+
+    #[test]
+    fn non_json_stdout_is_preserved_as_raw_text() {
+        let directory = tempfile::tempdir().unwrap();
+        write_module(directory.path(), "plugin.wasm", PLAIN_TEXT_MODULE);
+        let result = run(&package(Some("plugin.wasm")), directory.path()).unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["raw"], "not json");
+        assert_eq!(result["stderr"], "");
+    }
+
+    #[test]
+    fn module_path_outside_plugin_directory_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = run(&package(Some("../outside.wasm")), directory.path()).unwrap_err();
+        assert!(!error.is_empty());
+        assert!(run(&package(None), directory.path()).is_err());
+    }
+}

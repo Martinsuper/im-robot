@@ -40,6 +40,24 @@ test("Windows MSVC embeds Common Controls v6 in library test executables too", (
   assert.match(manifest, /version="6\.0\.0\.0"/);
 });
 
+test("vitest coverage is a required gate and its report is visible", () => {
+  assert.match(frontend, /^      - run: npm run test:coverage\s*$/m);
+  assert.doesNotMatch(frontend, /^      - run: npm run test\s*$/m);
+  assert.match(frontend, /Upload vitest coverage report/);
+  assert.match(frontend, /path: coverage\//);
+  assert.match(frontend, /if: always\(\)/);
+  assert.match(frontend, /node --test scripts\/playwright-browser-probe\.test\.mjs/);
+});
+
+test("cargo-audit is a hard gate with no skip switch", () => {
+  const security = workflow.split(/^  security:\s*$/m)[1];
+  assert.ok(security, "security job must exist");
+  assert.match(security, /cargo audit --file src-tauri\/Cargo\.lock/);
+  assert.match(security, /cargo audit --file tools\/contracts\/Cargo\.lock/);
+  assert.doesNotMatch(security, /continue-on-error:\s*true/);
+  assert.match(security, /continue-on-error:\s*false/);
+});
+
 test("parallel release builds cannot publish before verification succeeds", () => {
   const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   const prepare = release.split(/^  prepare:\s*$/m)[1]?.split(/^  [\w-]+:\s*$/m)[0];

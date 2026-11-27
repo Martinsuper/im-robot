@@ -33,6 +33,7 @@ preview/
 # Test / tooling artifacts
 test-results
 playwright-report
+coverage
 .understand-anything
 
 # Generated Pi runtime and native Node sidecar

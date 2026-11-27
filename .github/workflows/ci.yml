@@ -34,11 +34,20 @@ jobs:
       - run: node --test scripts/window-config.test.mjs
       - run: node --test scripts/ci-workflow.test.mjs
       - run: node --test scripts/sherpa-cache.test.mjs
+      - run: node --test scripts/playwright-browser-probe.test.mjs
       - run: npm audit
       - run: cargo test --manifest-path tools/contracts/Cargo.toml
       - run: npm run check
       - run: npm run lint
-      - run: npm run test
+      - run: npm run test:coverage
+      - name: Upload vitest coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-coverage
+          path: coverage/
+          if-no-files-found: warn
+          retention-days: 7
       - run: npm --prefix agent ci
       - run: npm --prefix agent audit
       - run: npm run test:agent
@@ -108,5 +117,8 @@ jobs:
           cache-targets: false
           key: cargo-audit-0.22.2
       - run: cargo install cargo-audit --version 0.22.2 --locked
+      # 安全门禁：任何审计失败都必须让 job 变红，禁止 continue-on-error 跳过。
       - run: cargo audit --file src-tauri/Cargo.lock
+        continue-on-error: false
       - run: cargo audit --file tools/contracts/Cargo.lock
+        continue-on-error: false

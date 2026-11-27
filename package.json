@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "build": "tsc && vite build",
     "build:tauri": "tsc && vite build --emptyOutDir false",
@@ -55,6 +56,7 @@
     "@tauri-apps/cli": "^2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^25.9.2",
+    "@vitest/coverage-v8": "^4.1.12",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@typescript-eslint/eslint-plugin": "^8.60.1",

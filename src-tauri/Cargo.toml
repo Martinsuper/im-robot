@@ -23,6 +23,14 @@ wasm-plugins = ["dep:wasmtime", "dep:wasmtime-wasi"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[dev-dependencies]
+# HTTP 全链路集成测试：mock 模型服务边界，验证 SSE 流式解析与工具调用回传。
+wiremock = "0.6"
+# 进程内 mock AppHandle，无需真实窗口即可执行沙箱插件。
+tauri = { version = "2", features = ["test"] }
+# 把 WAT 现场编译成 wasm 字节码，供沙箱插件确定性用例使用。
+wat = "1"
+
 [dependencies]
 tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 getrandom = "0.3"
