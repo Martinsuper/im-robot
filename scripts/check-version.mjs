@@ -1,6 +1,9 @@
 import fs from "node:fs";
 
 const packageVersion = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+const packageLock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+const packageLockVersion = packageLock.version;
+const packageLockRootVersion = packageLock.packages?.[""]?.version;
 const tauriVersion = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version;
 const cargoToml = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
 const inPackageSection = cargoToml.split("[package]")[1] ?? "";
@@ -11,11 +14,13 @@ const cargoVersion = inPackageSection
 
 const versions = {
   "package.json": packageVersion,
+  "package-lock.json": packageLockVersion,
+  "package-lock.json (packages[\"\"])": packageLockRootVersion,
   "src-tauri/tauri.conf.json": tauriVersion,
   "src-tauri/Cargo.toml": cargoVersion,
 };
 
-if (!packageVersion || !tauriVersion || !cargoVersion) {
+if (Object.values(versions).some((version) => !version)) {
   console.error("版本号校验失败：有文件无法解析出版本号。");
   console.error(versions);
   process.exit(1);
@@ -23,7 +28,7 @@ if (!packageVersion || !tauriVersion || !cargoVersion) {
 
 const values = new Set(Object.values(versions));
 if (values.size > 1) {
-  console.error("版本号校验失败：三处版本号不一致，发布前必须统一：");
+  console.error("版本号校验失败：各处版本号不一致，发布前必须统一：");
   for (const [file, version] of Object.entries(versions)) {
     console.error(`  ${file}: ${version}`);
   }
